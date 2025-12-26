@@ -1,0 +1,162 @@
+[
+    {
+        "name": "Эрмитаж (Зимний дворец)",
+        "description": "Главный музей России, бывшая резиденция российских императоров",
+        "latitude": 59.9398,
+        "longitude": 30.3146,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Hermitage_museum_Saint-Petersburg.jpg/1280px-Hermitage_museum_Saint-Petersburg.jpg",
+        "difficulty": 1
+    },
+    {
+        "name": "Петропавловская крепость",
+        "description": "Историческое ядро города, основана в 1703 году",
+        "latitude": 59.9500,
+        "longitude": 30.3167,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Peter_and_Paul_Fortress_in_SPB_03.jpg/1280px-Peter_and_Paul_Fortress_in_SPB_03.jpg",
+        "difficulty": 1
+    },
+    {
+        "name": "Исаакиевский собор",
+        "description": "Крупнейший православный храм Санкт-Петербурга",
+        "latitude": 59.9339,
+        "longitude": 30.3063,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Saint_Isaac%27s_Cathedral_in_SPB.jpeg/1280px-Saint_Isaac%27s_Cathedral_in_SPB.jpeg",
+        "difficulty": 1
+    },
+    {
+        "name": "Спас на Крови",
+        "description": "Храм Воскресения Христова, построен на месте покушения на Александра II",
+        "latitude": 59.9400,
+        "longitude": 30.3289,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Auferstehungskirche_%28Sankt_Petersburg%29.jpg/800px-Auferstehungskirche_%28Sankt_Petersburg%29.jpg",
+        "difficulty": 1
+    },
+    {
+        "name": "Казанский собор",
+        "description": "Кафедральный собор, построенный по образцу собора Святого Петра в Риме",
+        "latitude": 59.9343,
+        "longitude": 30.3245,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Kazan_Cathedral_SPb_%28img2%29.jpg/1280px-Kazan_Cathedral_SPb_%28img2%29.jpg",
+        "difficulty": 1
+    },
+    {
+        "name": "Дворцовая площадь",
+        "description": "Главная площадь города с Александровской колонной",
+        "latitude": 59.9390,
+        "longitude": 30.3150,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Palace_Square%2C_Saint_Petersburg%2C_Russia.jpg/1280px-Palace_Square%2C_Saint_Petersburg%2C_Russia.jpg",
+        "difficulty": 1
+    },
+    {
+        "name": "Медный всадник",
+        "description": "Памятник Петру I на Сенатской площади",
+        "latitude": 59.9364,
+        "longitude": 30.3022,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/The_Bronze_Horseman_%28St._Petersburg%2C_Russia%29.jpg/1024px-The_Bronze_Horseman_%28St._Petersburg%2C_Russia%29.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Невский проспект (Дом Зингера)",
+        "description": "Знаменитое здание с глобусом, ныне Дом книги",
+        "latitude": 59.9358,
+        "longitude": 30.3257,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Singer_House_SPB_01.jpg/800px-Singer_House_SPB_01.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Стрелка Васильевского острова",
+        "description": "Восточная оконечность острова с Ростральными колоннами",
+        "latitude": 59.9444,
+        "longitude": 30.3064,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Rostral_Column%2C_Saint_Petersburg%2C_Russia.jpg/1024px-Rostral_Column%2C_Saint_Petersburg%2C_Russia.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Летний сад",
+        "description": "Старейший парк Санкт-Петербурга, основан Петром I",
+        "latitude": 59.9453,
+        "longitude": 30.3358,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/57/Summer_Garden_02.jpg/1280px-Summer_Garden_02.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Крейсер Аврора",
+        "description": "Легендарный крейсер, корабль-музей на Петроградской набережной",
+        "latitude": 59.9554,
+        "longitude": 30.3378,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Aurora_Cruiser_Museum_StPetersburg.jpg/1280px-Aurora_Cruiser_Museum_StPetersburg.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Мариинский театр",
+        "description": "Всемирно известный театр оперы и балета",
+        "latitude": 59.9256,
+        "longitude": 30.2961,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Mariinsky_Theatre.jpg/1280px-Mariinsky_Theatre.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Смольный собор",
+        "description": "Собор Смольного монастыря в стиле елизаветинского барокко",
+        "latitude": 59.9489,
+        "longitude": 30.3956,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Smolny_Cathedral_SPB_%28img1%29.jpg/800px-Smolny_Cathedral_SPB_%28img1%29.jpg",
+        "difficulty": 3
+    },
+    {
+        "name": "Никольский морской собор",
+        "description": "Собор с колокольней на берегу Крюкова канала",
+        "latitude": 59.9217,
+        "longitude": 30.2997,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Naval_Cathedral_of_Saint_Nicholas_in_Saint_Petersburg.jpg/800px-Naval_Cathedral_of_Saint_Nicholas_in_Saint_Petersburg.jpg",
+        "difficulty": 3
+    },
+    {
+        "name": "Александро-Невская лавра",
+        "description": "Мужской православный монастырь в конце Невского проспекта",
+        "latitude": 59.9200,
+        "longitude": 30.3886,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f8/Alexander_Nevsky_Lavra_entrance.jpg/1024px-Alexander_Nevsky_Lavra_entrance.jpg",
+        "difficulty": 3
+    },
+    {
+        "name": "Кунсткамера",
+        "description": "Первый музей России, основан Петром I в 1714 году",
+        "latitude": 59.9414,
+        "longitude": 30.3044,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Kunstkamera_SPB.jpg/1280px-Kunstkamera_SPB.jpg",
+        "difficulty": 2
+    },
+    {
+        "name": "Михайловский замок",
+        "description": "Бывшая императорская резиденция Павла I",
+        "latitude": 59.9406,
+        "longitude": 30.3378,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Mikhailovsky_Castle.jpg/1280px-Mikhailovsky_Castle.jpg",
+        "difficulty": 3
+    },
+    {
+        "name": "Львиный мостик",
+        "description": "Пешеходный мост через канал Грибоедова",
+        "latitude": 59.9283,
+        "longitude": 30.3050,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Lion_Bridge_in_Saint_Petersburg.jpg/1280px-Lion_Bridge_in_Saint_Petersburg.jpg",
+        "difficulty": 4
+    },
+    {
+        "name": "Банковский мостик",
+        "description": "Пешеходный мост с грифонами через канал Грибоедова",
+        "latitude": 59.9325,
+        "longitude": 30.3242,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Bankovsky_Bridge_SPB.jpg/1280px-Bankovsky_Bridge_SPB.jpg",
+        "difficulty": 4
+    },
+    {
+        "name": "Елисеевский магазин",
+        "description": "Роскошный магазин в стиле модерн на Невском проспекте",
+        "latitude": 59.9340,
+        "longitude": 30.3381,
+        "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Elisseeff_Emporium.jpg/800px-Elisseeff_Emporium.jpg",
+        "difficulty": 3
+    }
+]

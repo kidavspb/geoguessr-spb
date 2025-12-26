@@ -1,0 +1,604 @@
+/* ===== Базовые стили ===== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary-color: #4a90d9;
+    --primary-hover: #357abd;
+    --secondary-color: #6c757d;
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --bg-color: #1a1a2e;
+    --bg-secondary: #16213e;
+    --text-color: #ffffff;
+    --text-muted: #adb5bd;
+    --border-color: #2d3a4f;
+    --card-bg: #0f3460;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, var(--bg-color) 0%, var(--bg-secondary) 100%);
+    color: var(--text-color);
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem;
+    min-height: 100vh;
+}
+
+/* ===== Заголовок ===== */
+.header {
+    text-align: center;
+    padding: 1rem 0;
+    margin-bottom: 1rem;
+}
+
+.header h1 {
+    font-size: 2rem;
+    margin-bottom: 0.25rem;
+    background: linear-gradient(90deg, #4a90d9, #e94560);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.subtitle {
+    color: var(--text-muted);
+    font-size: 1rem;
+}
+
+/* ===== Экраны ===== */
+.screen {
+    display: none;
+}
+
+.screen.active {
+    display: block;
+}
+
+/* ===== Стартовый экран ===== */
+.start-content {
+    max-width: 500px;
+    margin: 0 auto;
+    text-align: center;
+    padding: 2rem;
+    background: var(--card-bg);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.logo {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+}
+
+.start-content h2 {
+    margin-bottom: 1rem;
+}
+
+.start-content p {
+    color: var(--text-muted);
+    margin-bottom: 2rem;
+    line-height: 1.6;
+}
+
+.input-group {
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-muted);
+}
+
+.input-group input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-color);
+    font-size: 1rem;
+    transition: border-color 0.3s;
+}
+
+.input-group input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+/* Переключатель режима */
+.mode-toggle {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.mode-btn:hover:not(:disabled) {
+    border-color: var(--primary-color);
+    color: var(--text-color);
+}
+
+.mode-btn.active {
+    border-color: var(--primary-color);
+    background: rgba(74, 144, 217, 0.2);
+    color: var(--text-color);
+}
+
+.mode-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mode-hint {
+    display: block;
+    margin-top: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* ===== Кнопки ===== */
+.btn {
+    padding: 0.875rem 2rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-block;
+    text-decoration: none;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary-color), #e94560);
+    color: white;
+    width: 100%;
+    margin-bottom: 0.75rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(74, 144, 217, 0.4);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--text-muted);
+    border: 2px solid var(--border-color);
+    width: 100%;
+}
+
+.btn-secondary:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+/* ===== Игровой экран ===== */
+.game-info {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--card-bg);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.game-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+@media (max-width: 900px) {
+    .game-content {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Фото контейнер */
+.photo-container {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    aspect-ratio: 16 / 10;
+}
+
+.photo-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Контейнер локации (для фото и панорамы) */
+.location-container {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 400px;
+}
+
+.location-mode {
+    width: 100%;
+    height: 100%;
+}
+
+.location-mode.hidden {
+    display: none;
+}
+
+#photo-mode img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+#panorama-mode {
+    width: 100%;
+    height: 100%;
+}
+
+#panorama-player {
+    width: 100%;
+    height: 400px;
+    background: #1a1a2e;
+}
+
+@media (max-width: 900px) {
+    .location-container {
+        min-height: 300px;
+    }
+    
+    #panorama-player {
+        height: 300px;
+    }
+}
+
+.photo-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.photo-overlay.hidden {
+    display: none;
+}
+
+/* Карта контейнер */
+.map-container {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+#map {
+    width: 100%;
+    height: 400px;
+}
+
+@media (max-width: 900px) {
+    #map {
+        height: 300px;
+    }
+}
+
+.map-hint {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    pointer-events: none;
+}
+
+/* Панель действий */
+.action-bar {
+    text-align: center;
+}
+
+.action-bar .btn {
+    max-width: 300px;
+}
+
+/* ===== Экран результата ===== */
+.result-content {
+    max-width: 700px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.result-content h2 {
+    margin-bottom: 1.5rem;
+}
+
+.result-details {
+    background: var(--card-bg);
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+}
+
+.location-name {
+    margin-bottom: 0.5rem;
+}
+
+.location-name span {
+    color: var(--text-muted);
+    display: block;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+}
+
+.location-name strong {
+    font-size: 1.25rem;
+    color: var(--primary-color);
+}
+
+.location-description {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.stats {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-top: 1rem;
+}
+
+.stat {
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.result-map-container {
+    margin-bottom: 1rem;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+#result-map {
+    width: 100%;
+    height: 300px;
+}
+
+/* ===== Финальный экран ===== */
+.final-content {
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.final-content h2 {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+}
+
+.final-score {
+    background: var(--card-bg);
+    padding: 2rem;
+    border-radius: 16px;
+    margin-bottom: 1.5rem;
+}
+
+.score-label {
+    display: block;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.score-value {
+    display: block;
+    font-size: 3rem;
+    font-weight: bold;
+    background: linear-gradient(90deg, #4a90d9, #e94560);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.score-max {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.rounds-summary {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.round-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.round-item:last-child {
+    border-bottom: none;
+}
+
+.round-item .round-name {
+    flex: 1;
+}
+
+.round-item .round-distance {
+    color: var(--text-muted);
+    margin-right: 1rem;
+}
+
+.round-item .round-score {
+    font-weight: bold;
+    min-width: 60px;
+    text-align: right;
+}
+
+.final-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* ===== Таблица лидеров ===== */
+.leaderboard-content {
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.leaderboard-content h2 {
+    margin-bottom: 1.5rem;
+}
+
+.leaderboard-table {
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+}
+
+.leaderboard-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.leaderboard-row:last-child {
+    border-bottom: none;
+}
+
+.leaderboard-row.header {
+    background: var(--bg-secondary);
+    font-weight: bold;
+    color: var(--text-muted);
+}
+
+.leaderboard-rank {
+    width: 50px;
+    font-weight: bold;
+}
+
+.leaderboard-rank.gold {
+    color: #ffd700;
+}
+
+.leaderboard-rank.silver {
+    color: #c0c0c0;
+}
+
+.leaderboard-rank.bronze {
+    color: #cd7f32;
+}
+
+.leaderboard-name {
+    flex: 1;
+    text-align: left;
+}
+
+.leaderboard-score {
+    width: 80px;
+    text-align: right;
+    font-weight: bold;
+}
+
+.leaderboard-date {
+    width: 100px;
+    text-align: right;
+    color: var(--text-muted);
+}
+
+.leaderboard-empty {
+    padding: 2rem;
+    color: var(--text-muted);
+}
+
+/* ===== Анимации ===== */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.screen.active {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* ===== Цвета результата ===== */
+.score-excellent {
+    color: #28a745 !important;
+}
+
+.score-good {
+    color: #4a90d9 !important;
+}
+
+.score-average {
+    color: #ffc107 !important;
+}
+
+.score-poor {
+    color: #dc3545 !important;
+}

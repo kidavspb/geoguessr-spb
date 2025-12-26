@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoGuessr СПб — Угадай место в Петербурге</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Подключение Яндекс.Карт API v3 для карты -->
+    <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
+            onerror="console.error('Не удалось загрузить Яндекс.Карты API v3')"></script>
+    <!-- Подключение Яндекс.Карт API v2 для панорам -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey={{ yandex_api_key }}&lang=ru_RU"
+            onerror="console.error('Не удалось загрузить Яндекс.Карты API v2')"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Заголовок -->
+        <header class="header">
+            <h1>🏛️ GeoGuessr СПб</h1>
+            <p class="subtitle">Угадай место в Санкт-Петербурге</p>
+        </header>
+
+        <!-- Стартовый экран -->
+        <div id="start-screen" class="screen active">
+            <div class="start-content">
+                <div class="logo">🗺️</div>
+                <h2>Добро пожаловать!</h2>
+                <p>Вам покажут фотографию места в Петербурге.<br>Отметьте на карте, где это находится.</p>
+                
+                <div class="input-group">
+                    <label for="player-name">Ваше имя:</label>
+                    <input type="text" id="player-name" placeholder="Аноним" maxlength="50">
+                </div>
+
+                <div class="input-group">
+                    <label>Режим игры:</label>
+                    <div class="mode-toggle">
+                        <button type="button" class="mode-btn active" data-mode="panorama">
+                            🌐 Панорамы
+                        </button>
+                        <button type="button" class="mode-btn" data-mode="photo" disabled title="Скоро!">
+                            📷 Фото
+                        </button>
+                    </div>
+                    <small class="mode-hint">Панорамы — интерактивный обзор 360°</small>
+                </div>
+                
+                <button id="start-btn" class="btn btn-primary">Начать игру</button>
+                
+                <button id="show-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
+            </div>
+        </div>
+
+        <!-- Игровой экран -->
+        <div id="game-screen" class="screen">
+            <!-- Информация о раунде -->
+            <div class="game-info">
+                <div class="round-info">
+                    <span>Раунд: <strong id="current-round">1</strong> / <span id="total-rounds">5</span></span>
+                </div>
+                <div class="score-info">
+                    <span>Счёт: <strong id="total-score">0</strong></span>
+                </div>
+            </div>
+
+            <!-- Основной контент игры -->
+            <div class="game-content">
+                <!-- Контейнер локации (фото или панорама) -->
+                <div class="location-container">
+                    <!-- Режим фото -->
+                    <div id="photo-mode" class="location-mode hidden">
+                        <img id="location-photo" src="" alt="Угадай это место">
+                    </div>
+                    <!-- Режим панорамы -->
+                    <div id="panorama-mode" class="location-mode">
+                        <div id="panorama-player"></div>
+                    </div>
+                    <div class="photo-overlay" id="photo-overlay">
+                        <span>Загрузка...</span>
+                    </div>
+                </div>
+
+                <!-- Карта для выбора -->
+                <div class="map-container">
+                    <div id="map"></div>
+                    <div class="map-hint">Кликните на карте, чтобы отметить место</div>
+                </div>
+            </div>
+
+            <!-- Кнопка подтверждения -->
+            <div class="action-bar">
+                <button id="guess-btn" class="btn btn-primary" disabled>Подтвердить выбор</button>
+            </div>
+        </div>
+
+        <!-- Экран результата раунда -->
+        <div id="result-screen" class="screen">
+            <div class="result-content">
+                <h2 id="result-title">Результат</h2>
+                
+                <div class="result-details">
+                    <div class="location-name">
+                        <span>Это было:</span>
+                        <strong id="correct-location-name"></strong>
+                    </div>
+                    <p id="correct-location-description" class="location-description"></p>
+                    
+                    <div class="stats">
+                        <div class="stat">
+                            <span class="stat-label">Расстояние</span>
+                            <span class="stat-value" id="result-distance">0 м</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Очки за раунд</span>
+                            <span class="stat-value" id="result-score">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Карта с результатом -->
+                <div class="result-map-container">
+                    <div id="result-map"></div>
+                </div>
+
+                <button id="next-round-btn" class="btn btn-primary">Следующий раунд</button>
+            </div>
+        </div>
+
+        <!-- Экран финальных результатов -->
+        <div id="final-screen" class="screen">
+            <div class="final-content">
+                <h2>🎉 Игра окончена!</h2>
+                
+                <div class="final-score">
+                    <span class="score-label">Ваш итоговый счёт</span>
+                    <span class="score-value" id="final-score">0</span>
+                    <span class="score-max">из 25000</span>
+                </div>
+
+                <div id="rounds-summary" class="rounds-summary">
+                    <!-- Список раундов будет добавлен динамически -->
+                </div>
+
+                <div class="final-actions">
+                    <button id="play-again-btn" class="btn btn-primary">Играть снова</button>
+                    <button id="final-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Экран таблицы лидеров -->
+        <div id="leaderboard-screen" class="screen">
+            <div class="leaderboard-content">
+                <h2>🏆 Таблица лидеров</h2>
+                
+                <div id="leaderboard-table" class="leaderboard-table">
+                    <!-- Таблица будет добавлена динамически -->
+                </div>
+
+                <button id="back-btn" class="btn btn-secondary">Назад</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Яндекс.Карты загружается в head, наш скрипт после DOM -->
+    <script src="{{ url_for('static', filename='js/game.js') }}" defer></script>
+</body>
+</html>
