@@ -355,10 +355,15 @@ async function loadPanorama(latitude, longitude) {
             throw new Error('Панорама не найдена в этой точке');
         }
         
-        console.log('Найдена панорама:', panoramaResult[0]);
+        const panorama = panoramaResult[0];
+        console.log('Найдена панорама:', panorama);
+        
+        // Получаем реальные координаты панорамы и сохраняем на сервер
+        const position = panorama.getPosition();
+        await saveActualPoint(position[0], position[1]);
         
         // Создаём плеер панорамы
-        panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panoramaResult[0], {
+        panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, {
             controls: ['zoomControl', 'fullscreenControl'],
             direction: [0, 0], // Начальное направление взгляда (азимут, наклон)
             span: [130, 80],   // Угол обзора
@@ -382,9 +387,28 @@ async function loadPanorama(latitude, longitude) {
         try {
             await findNearestPanorama(latitude, longitude, overlay, panoramaContainer);
         } catch (fallbackError) {
-            overlay.querySelector('span').textContent = 'Панорама недоступна для этой точки';
+            overlay.querySelector('span').textContent = 'Панорама недоступна, пробуем другую точку...';
             console.error('Не удалось найти панораму:', fallbackError);
+            // Запрашиваем новую точку
+            setTimeout(() => loadCurrentLocation(), 1500);
         }
+    }
+}
+
+/**
+ * Сохранение реальных координат панорамы на сервере
+ */
+async function saveActualPoint(latitude, longitude) {
+    try {
+        await fetch('/api/game/set_actual_point', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ latitude, longitude })
+        });
+        console.log('Сохранены реальные координаты панорамы:', latitude, longitude);
+    } catch (error) {
+        console.error('Ошибка сохранения координат:', error);
     }
 }
 
@@ -398,16 +422,22 @@ async function findNearestPanorama(latitude, longitude, overlay, container) {
     const offsets = [
         [0.0005, 0], [-0.0005, 0], [0, 0.0005], [0, -0.0005],
         [0.001, 0], [-0.001, 0], [0, 0.001], [0, -0.001],
-        [0.0007, 0.0007], [-0.0007, 0.0007], [0.0007, -0.0007], [-0.0007, -0.0007]
+        [0.002, 0], [-0.002, 0], [0, 0.002], [0, -0.002],
+        [0.0015, 0.0015], [-0.0015, 0.0015], [0.0015, -0.0015], [-0.0015, -0.0015]
     ];
     
     for (const [latOffset, lonOffset] of offsets) {
         try {
             const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
             if (result.length > 0) {
+                const panorama = result[0];
                 console.log('Найдена ближайшая панорама со смещением:', latOffset, lonOffset);
                 
-                panoramaPlayer = new ymaps.panorama.Player(container, result[0], {
+                // Сохраняем реальные координаты найденной панорамы
+                const position = panorama.getPosition();
+                await saveActualPoint(position[0], position[1]);
+                
+                panoramaPlayer = new ymaps.panorama.Player(container, panorama, {
                     controls: ['zoomControl', 'fullscreenControl'],
                     direction: [0, 0],
                     span: [130, 80],

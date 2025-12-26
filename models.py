@@ -59,9 +59,11 @@ class GameRound(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('game_sessions.id'), nullable=False)
-    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=True)  # Nullable для случайных точек
     guess_latitude = db.Column(db.Float)
     guess_longitude = db.Column(db.Float)
+    actual_latitude = db.Column(db.Float)  # Реальные координаты панорамы
+    actual_longitude = db.Column(db.Float)
     distance_km = db.Column(db.Float)
     score = db.Column(db.Integer, default=0)
     round_number = db.Column(db.Integer, nullable=False)
@@ -76,6 +78,8 @@ class GameRound(db.Model):
             'location_id': self.location_id,
             'guess_latitude': self.guess_latitude,
             'guess_longitude': self.guess_longitude,
+            'actual_latitude': self.actual_latitude,
+            'actual_longitude': self.actual_longitude,
             'distance_km': self.distance_km,
             'score': self.score,
             'round_number': self.round_number

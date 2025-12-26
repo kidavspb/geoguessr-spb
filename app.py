@@ -25,6 +25,22 @@ MAX_SCORE_PER_ROUND = 5000
 # Максимальное расстояние для СПб (примерно 30 км диаметр города)
 MAX_DISTANCE_KM = 30
 
+# Границы Санкт-Петербурга для генерации случайных точек
+# Центральная часть города где гарантированно есть панорамы
+SPB_BOUNDS = {
+    'lat_min': 59.87,
+    'lat_max': 60.02,
+    'lon_min': 30.15,
+    'lon_max': 30.50
+}
+
+
+def generate_random_point():
+    """Генерация случайной точки в пределах СПб"""
+    lat = random.uniform(SPB_BOUNDS['lat_min'], SPB_BOUNDS['lat_max'])
+    lon = random.uniform(SPB_BOUNDS['lon_min'], SPB_BOUNDS['lon_max'])
+    return round(lat, 6), round(lon, 6)
+
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Вычисление расстояния между двумя точками по формуле гаверсинуса"""
@@ -72,23 +88,20 @@ def start_game():
         db.session.add(game_session)
         db.session.commit()
 
-        # Выбираем случайные локации для игры
-        all_locations = Location.query.all()
-        if len(all_locations) < ROUNDS_PER_GAME:
-            selected_locations = all_locations
-        else:
-            selected_locations = random.sample(all_locations, ROUNDS_PER_GAME)
+        # Генерируем случайные точки для игры
+        random_points = [generate_random_point() for _ in range(ROUNDS_PER_GAME)]
 
-        # Сохраняем ID локаций в сессии
+        # Сохраняем данные в сессии
         session['game_id'] = game_session.id
-        session['location_ids'] = [loc.id for loc in selected_locations]
+        session['random_points'] = random_points  # [(lat, lon), ...]
+        session['actual_points'] = [None] * ROUNDS_PER_GAME  # Реальные координаты панорам
         session['current_round'] = 0
 
         app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}')
 
         return jsonify({
             'game_id': game_session.id,
-            'total_rounds': len(selected_locations),
+            'total_rounds': ROUNDS_PER_GAME,
             'message': 'Игра началась!'
         })
     except Exception as e:
@@ -104,24 +117,41 @@ def get_current_location():
         return jsonify({'error': 'Игра не начата'}), 400
     
     current_round = session.get('current_round', 0)
-    location_ids = session.get('location_ids', [])
+    random_points = session.get('random_points', [])
     
-    if current_round >= len(location_ids):
+    if current_round >= len(random_points):
         return jsonify({'error': 'Игра завершена', 'game_over': True}), 400
     
-    location = Location.query.get(location_ids[current_round])
-    if not location:
-        return jsonify({'error': 'Локация не найдена'}), 404
+    lat, lon = random_points[current_round]
     
     return jsonify({
         'round': current_round + 1,
-        'total_rounds': len(location_ids),
-        'image_url': location.image_url,
-        'location_id': location.id,
-        # Координаты для режима панорамы
-        'latitude': location.latitude,
-        'longitude': location.longitude
+        'total_rounds': ROUNDS_PER_GAME,
+        # Координаты для поиска панорамы
+        'latitude': lat,
+        'longitude': lon
     })
+
+
+@app.route('/api/game/set_actual_point', methods=['POST'])
+def set_actual_point():
+    """Сохранить реальные координаты найденной панорамы"""
+    if 'game_id' not in session:
+        return jsonify({'error': 'Игра не начата'}), 400
+    
+    data = request.get_json()
+    if not data or 'latitude' not in data or 'longitude' not in data:
+        return jsonify({'error': 'Необходимо указать координаты'}), 400
+    
+    current_round = session.get('current_round', 0)
+    actual_points = session.get('actual_points', [])
+    
+    if current_round < len(actual_points):
+        actual_points[current_round] = (data['latitude'], data['longitude'])
+        session['actual_points'] = actual_points
+        session.modified = True
+    
+    return jsonify({'success': True})
 
 
 @app.route('/api/game/guess', methods=['POST'])
@@ -138,27 +168,31 @@ def submit_guess():
     guess_lon = data['longitude']
     
     current_round = session.get('current_round', 0)
-    location_ids = session.get('location_ids', [])
+    actual_points = session.get('actual_points', [])
+    random_points = session.get('random_points', [])
     game_id = session['game_id']
     
-    if current_round >= len(location_ids):
+    if current_round >= len(random_points):
         return jsonify({'error': 'Игра завершена'}), 400
     
-    location = Location.query.get(location_ids[current_round])
-    if not location:
-        return jsonify({'error': 'Локация не найдена'}), 404
+    # Используем реальные координаты панорамы, если они есть
+    # Иначе используем изначальные случайные координаты
+    if actual_points[current_round]:
+        actual_lat, actual_lon = actual_points[current_round]
+    else:
+        actual_lat, actual_lon = random_points[current_round]
     
     # Вычисляем расстояние и очки
     distance = haversine_distance(
         guess_lat, guess_lon,
-        location.latitude, location.longitude
+        actual_lat, actual_lon
     )
     score = calculate_score(distance)
     
-    # Сохраняем раунд в БД
+    # Сохраняем раунд в БД (location_id = None для случайных точек)
     game_round = GameRound(
         session_id=game_id,
-        location_id=location.id,
+        location_id=None,
         guess_latitude=guess_lat,
         guess_longitude=guess_lon,
         distance_km=distance,
@@ -175,7 +209,7 @@ def submit_guess():
     # Переходим к следующему раунду
     session['current_round'] = current_round + 1
     
-    is_game_over = session['current_round'] >= len(location_ids)
+    is_game_over = session['current_round'] >= ROUNDS_PER_GAME
     if is_game_over:
         game_session.completed_at = datetime.now(timezone.utc)
 
@@ -183,10 +217,10 @@ def submit_guess():
     
     return jsonify({
         'correct_location': {
-            'name': location.name,
-            'description': location.description,
-            'latitude': location.latitude,
-            'longitude': location.longitude
+            'name': f'Точка раунда {current_round + 1}',
+            'description': f'Случайное место в Санкт-Петербурге',
+            'latitude': actual_lat,
+            'longitude': actual_lon
         },
         'guess': {
             'latitude': guess_lat,
@@ -214,10 +248,9 @@ def get_results():
     rounds = GameRound.query.filter_by(session_id=game_session.id).all()
     rounds_data = []
     for r in rounds:
-        loc = Location.query.get(r.location_id)
         rounds_data.append({
             'round': r.round_number,
-            'location_name': loc.name if loc else 'Неизвестно',
+            'location_name': f'Раунд {r.round_number}',
             'distance_m': int(r.distance_km * 1000) if r.distance_km else 0,
             'score': r.score
         })
