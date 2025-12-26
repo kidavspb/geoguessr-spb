@@ -159,6 +159,43 @@ body {
     font-size: 0.8rem;
 }
 
+/* Переключатель сложности */
+.difficulty-toggle {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.difficulty-btn {
+    flex: 1;
+    padding: 0.6rem 0.5rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.difficulty-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--text-color);
+}
+
+.difficulty-btn.active {
+    border-color: var(--primary-color);
+    background: rgba(74, 144, 217, 0.2);
+    color: var(--text-color);
+}
+
+.difficulty-hint {
+    display: block;
+    margin-top: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
 /* ===== Кнопки ===== */
 .btn {
     padding: 0.875rem 2rem;

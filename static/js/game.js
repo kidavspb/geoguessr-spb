@@ -12,40 +12,42 @@ let gameData = {
     totalRounds: 5,
     currentRound: 1,
     totalScore: 0,
-    mode: 'panorama' // 'panorama' или 'photo'
+    difficulty: 'medium' // center, medium, hard
 };
 
 // Координаты центра СПб
 const SPB_CENTER = [59.9311, 30.3609];
 const DEFAULT_ZOOM = 11;
 
+// Описания сложности
+const DIFFICULTY_HINTS = {
+    'center': 'Центр — исторический центр города',
+    'medium': 'Средняя — центр и ближайшие районы',
+    'hard': 'Весь город — от центра до окраин'
+};
+
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
-    initModeToggle();
+    initDifficultyToggle();
     checkYandexMapsAPI();
 });
 
 /**
- * Инициализация переключателя режима
+ * Инициализация переключателя сложности
  */
-function initModeToggle() {
-    const modeBtns = document.querySelectorAll('.mode-btn');
-    modeBtns.forEach(btn => {
+function initDifficultyToggle() {
+    const difficultyBtns = document.querySelectorAll('.difficulty-btn');
+    difficultyBtns.forEach(btn => {
         btn.addEventListener('click', () => {
-            if (btn.disabled) return;
-            modeBtns.forEach(b => b.classList.remove('active'));
+            difficultyBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            gameData.mode = btn.dataset.mode;
+            gameData.difficulty = btn.dataset.difficulty;
             
             // Обновляем подсказку
-            const hint = document.querySelector('.mode-hint');
+            const hint = document.querySelector('.difficulty-hint');
             if (hint) {
-                if (gameData.mode === 'panorama') {
-                    hint.textContent = 'Панорамы — интерактивный обзор 360°';
-                } else {
-                    hint.textContent = 'Фото — статичные фотографии мест';
-                }
+                hint.textContent = DIFFICULTY_HINTS[gameData.difficulty];
             }
         });
     });
@@ -121,12 +123,15 @@ async function startGame() {
     const playerName = document.getElementById('player-name').value.trim() || 'Аноним';
     
     try {
-        console.log('Начинаем игру для игрока:', playerName);
+        console.log('Начинаем игру для игрока:', playerName, 'сложность:', gameData.difficulty);
         const response = await fetch('/api/game/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify({ player_name: playerName })
+            body: JSON.stringify({ 
+                player_name: playerName,
+                difficulty: gameData.difficulty
+            })
         });
         
         console.log('Ответ сервера:', response.status, response.statusText);
@@ -274,12 +279,8 @@ async function loadCurrentLocation() {
             gameData.currentRound = data.round;
             document.getElementById('current-round').textContent = data.round;
             
-            // Загружаем контент в зависимости от режима
-            if (gameData.mode === 'panorama') {
-                await loadPanorama(data.latitude, data.longitude);
-            } else {
-                loadPhoto(data.image_url);
-            }
+            // Загружаем панораму
+            await loadPanorama(data.latitude, data.longitude);
             
             // Сбрасываем карту
             resetMapForNewRound();

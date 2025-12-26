@@ -34,12 +34,48 @@ SPB_BOUNDS = {
     'lon_max': 30.50
 }
 
+# Центр СПб (Дворцовая площадь)
+SPB_CENTER = (59.939, 30.315)
 
-def generate_random_point():
-    """Генерация случайной точки в пределах СПб"""
-    lat = random.uniform(SPB_BOUNDS['lat_min'], SPB_BOUNDS['lat_max'])
-    lon = random.uniform(SPB_BOUNDS['lon_min'], SPB_BOUNDS['lon_max'])
-    return round(lat, 6), round(lon, 6)
+# Настройки для разных режимов сложности
+DIFFICULTY_SETTINGS = {
+    'center': {
+        'name': 'Центр',
+        'description': 'Исторический центр города',
+        'center': SPB_CENTER,
+        'std_lat': 0.015,  # ~1.5 км разброс
+        'std_lon': 0.025,
+    },
+    'medium': {
+        'name': 'Средняя',
+        'description': 'Центр и ближайшие районы',
+        'center': SPB_CENTER,
+        'std_lat': 0.03,   # ~3 км разброс
+        'std_lon': 0.05,
+    },
+    'hard': {
+        'name': 'Сложная',
+        'description': 'Весь город',
+        'center': SPB_CENTER,
+        'std_lat': 0.06,   # ~6 км разброс
+        'std_lon': 0.12,
+    }
+}
+
+
+def generate_random_point(difficulty='medium'):
+    """Генерация случайной точки с bias к центру СПб"""
+    settings = DIFFICULTY_SETTINGS.get(difficulty, DIFFICULTY_SETTINGS['medium'])
+    
+    # Генерируем точку с нормальным распределением вокруг центра
+    while True:
+        lat = random.gauss(settings['center'][0], settings['std_lat'])
+        lon = random.gauss(settings['center'][1], settings['std_lon'])
+        
+        # Проверяем, что точка в пределах города
+        if (SPB_BOUNDS['lat_min'] <= lat <= SPB_BOUNDS['lat_max'] and
+            SPB_BOUNDS['lon_min'] <= lon <= SPB_BOUNDS['lon_max']):
+            return round(lat, 6), round(lon, 6)
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -82,26 +118,29 @@ def start_game():
     try:
         data = request.get_json() or {}
         player_name = data.get('player_name', 'Аноним')
+        difficulty = data.get('difficulty', 'medium')  # center, medium, hard
 
         # Создаём новую игровую сессию
         game_session = GameSession(player_name=player_name)
         db.session.add(game_session)
         db.session.commit()
 
-        # Генерируем случайные точки для игры
-        random_points = [generate_random_point() for _ in range(ROUNDS_PER_GAME)]
+        # Генерируем случайные точки для игры с учётом сложности
+        random_points = [generate_random_point(difficulty) for _ in range(ROUNDS_PER_GAME)]
 
         # Сохраняем данные в сессии
         session['game_id'] = game_session.id
         session['random_points'] = random_points  # [(lat, lon), ...]
         session['actual_points'] = [None] * ROUNDS_PER_GAME  # Реальные координаты панорам
         session['current_round'] = 0
+        session['difficulty'] = difficulty
 
-        app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}')
+        app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, difficulty={difficulty}')
 
         return jsonify({
             'game_id': game_session.id,
             'total_rounds': ROUNDS_PER_GAME,
+            'difficulty': difficulty,
             'message': 'Игра началась!'
         })
     except Exception as e:

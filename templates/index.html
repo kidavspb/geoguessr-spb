@@ -25,7 +25,7 @@
             <div class="start-content">
                 <div class="logo">🗺️</div>
                 <h2>Добро пожаловать!</h2>
-                <p>Вам покажут фотографию места в Петербурге.<br>Отметьте на карте, где это находится.</p>
+                <p>Вам покажут панораму места в Петербурге.<br>Отметьте на карте, где это находится.</p>
                 
                 <div class="input-group">
                     <label for="player-name">Ваше имя:</label>
@@ -33,16 +33,19 @@
                 </div>
 
                 <div class="input-group">
-                    <label>Режим игры:</label>
-                    <div class="mode-toggle">
-                        <button type="button" class="mode-btn active" data-mode="panorama">
-                            🌐 Панорамы
+                    <label>Сложность:</label>
+                    <div class="difficulty-toggle">
+                        <button type="button" class="difficulty-btn" data-difficulty="center">
+                            🏛️ Центр
                         </button>
-                        <button type="button" class="mode-btn" data-mode="photo" disabled title="Скоро!">
-                            📷 Фото
+                        <button type="button" class="difficulty-btn active" data-difficulty="medium">
+                            🏙️ Средняя
+                        </button>
+                        <button type="button" class="difficulty-btn" data-difficulty="hard">
+                            🌆 Весь город
                         </button>
                     </div>
-                    <small class="mode-hint">Панорамы — интерактивный обзор 360°</small>
+                    <small class="difficulty-hint">Средняя — центр и ближайшие районы</small>
                 </div>
                 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
