@@ -8,6 +8,8 @@ let resultMap = null;
 let panoramaPlayer = null;
 let currentMarker = null;
 let guessCoords = null;
+let panoramaRetries = 0; // сколько раз перегенерировали точку из-за отсутствия панорамы
+const MAX_PANORAMA_RETRIES = 8;
 let gameData = {
     totalRounds: 5,
     currentRound: 1,
@@ -69,8 +71,6 @@ function checkYandexMapsAPI() {
                 warning.textContent = '⚠️ Внимание: Проблема с загрузкой карт. Проверьте подключение к интернету.';
                 startBtn.parentElement.insertBefore(warning, startBtn);
             }
-        } else {
-            console.log('Яндекс.Карты API загружен успешно');
         }
     }, 1000);
 }
@@ -123,7 +123,6 @@ async function startGame() {
     const playerName = document.getElementById('player-name').value.trim() || 'Аноним';
     
     try {
-        console.log('Начинаем игру для игрока:', playerName, 'сложность:', gameData.difficulty);
         const response = await fetch('/api/game/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -134,9 +133,7 @@ async function startGame() {
             })
         });
         
-        console.log('Ответ сервера:', response.status, response.statusText);
         const data = await response.json();
-        console.log('Данные ответа:', data);
 
         if (response.ok) {
             gameData.totalRounds = data.total_rounds;
@@ -263,17 +260,19 @@ async function loadCurrentLocation() {
     overlay.classList.remove('hidden');
     overlay.querySelector('span').textContent = 'Загрузка...';
     
+    panoramaRetries = 0; // новый раунд — сбрасываем счётчик попыток поиска панорамы
+
     try {
         const response = await fetch('/api/game/location', {
             credentials: 'same-origin'
         });
         const data = await response.json();
-        
+
         if (data.game_over) {
             showFinalResults();
             return;
         }
-        
+
         if (response.ok) {
             // Обновляем информацию о раунде
             gameData.currentRound = data.round;
@@ -347,7 +346,6 @@ async function loadPanorama(latitude, longitude) {
             }
         });
         
-        console.log('Ищем панораму для координат:', latitude, longitude);
         
         // Ищем ближайшую панораму к заданной точке
         const panoramaResult = await ymaps.panorama.locate([latitude, longitude]);
@@ -357,7 +355,6 @@ async function loadPanorama(latitude, longitude) {
         }
         
         const panorama = panoramaResult[0];
-        console.log('Найдена панорама:', panorama);
         
         // Получаем реальные координаты панорамы и сохраняем на сервер
         const position = panorama.getPosition();
@@ -388,12 +385,49 @@ async function loadPanorama(latitude, longitude) {
         try {
             await findNearestPanorama(latitude, longitude, overlay, panoramaContainer);
         } catch (fallbackError) {
-            overlay.querySelector('span').textContent = 'Панорама недоступна, пробуем другую точку...';
             console.error('Не удалось найти панораму:', fallbackError);
-            // Запрашиваем новую точку
-            setTimeout(() => loadCurrentLocation(), 1500);
+
+            // Защита от бесконечного цикла: ограничиваем число перегенераций.
+            if (panoramaRetries >= MAX_PANORAMA_RETRIES) {
+                overlay.querySelector('span').textContent =
+                    'Не удалось найти панораму поблизости. Начните игру заново.';
+                return;
+            }
+
+            panoramaRetries++;
+            overlay.querySelector('span').textContent =
+                'Здесь нет панорамы, выбираем другое место...';
+
+            // Просим сервер сгенерировать НОВУЮ точку для этого раунда
+            // (раньше повторялась та же точка — отсюда бесконечный цикл).
+            const newPoint = await skipLocation();
+            if (newPoint) {
+                await loadPanorama(newPoint.latitude, newPoint.longitude);
+            } else {
+                overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
+            }
         }
     }
+}
+
+/**
+ * Запросить у сервера новую точку для текущего раунда
+ * (когда в текущей точке нет панорамы).
+ */
+async function skipLocation() {
+    try {
+        const response = await fetch('/api/game/skip_location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin'
+        });
+        if (response.ok) {
+            return await response.json();
+        }
+    } catch (error) {
+        console.error('Ошибка перегенерации точки:', error);
+    }
+    return null;
 }
 
 /**
@@ -407,7 +441,6 @@ async function saveActualPoint(latitude, longitude) {
             credentials: 'same-origin',
             body: JSON.stringify({ latitude, longitude })
         });
-        console.log('Сохранены реальные координаты панорамы:', latitude, longitude);
     } catch (error) {
         console.error('Ошибка сохранения координат:', error);
     }
@@ -432,7 +465,6 @@ async function findNearestPanorama(latitude, longitude, overlay, container) {
             const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
             if (result.length > 0) {
                 const panorama = result[0];
-                console.log('Найдена ближайшая панорама со смещением:', latOffset, lonOffset);
                 
                 // Сохраняем реальные координаты найденной панорамы
                 const position = panorama.getPosition();
