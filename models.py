@@ -1,7 +1,15 @@
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timezone
 
 db = SQLAlchemy()
+
+
+def utcnow():
+    """Текущее время в UTC (timezone-aware).
+
+    Замена устаревшего datetime.utcnow (deprecated в Python 3.12).
+    """
+    return datetime.now(timezone.utc)
 
 
 class Location(db.Model):
@@ -15,7 +23,7 @@ class Location(db.Model):
     longitude = db.Column(db.Float, nullable=False)
     image_url = db.Column(db.String(500), nullable=False)
     difficulty = db.Column(db.Integer, default=1)  # 1-5 сложность
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     
     def to_dict(self):
         return {
@@ -37,7 +45,7 @@ class GameSession(db.Model):
     player_name = db.Column(db.String(100), default='Аноним')
     total_score = db.Column(db.Integer, default=0)
     rounds_played = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     completed_at = db.Column(db.DateTime)
     
     rounds = db.relationship('GameRound', backref='session', lazy=True)
@@ -67,7 +75,7 @@ class GameRound(db.Model):
     distance_km = db.Column(db.Float)
     score = db.Column(db.Integer, default=0)
     round_number = db.Column(db.Integer, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     
     location = db.relationship('Location', backref='rounds')
     
