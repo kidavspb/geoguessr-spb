@@ -163,7 +163,7 @@ def index():
 @app.route('/favicon.ico')
 def favicon():
     """Фавиконка для запросов к корню сайта (браузеры/краулеры идут на /favicon.ico)."""
-    return send_from_directory(app.static_folder, 'favicon.ico',
+    return send_from_directory(os.path.join(app.static_folder, 'favicons'), 'favicon.ico',
                                mimetype='image/vnd.microsoft.icon')
 
 
