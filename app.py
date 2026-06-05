@@ -2,7 +2,7 @@ import os
 import math
 import random
 from datetime import datetime, timezone
-from flask import Flask, render_template, jsonify, request, session
+from flask import Flask, render_template, jsonify, request, session, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 from models import db, Location, GameSession, GameRound
@@ -158,6 +158,13 @@ def parse_coords(data):
 def index():
     """Главная страница с игрой"""
     return render_template('index.html', yandex_api_key=YANDEX_MAPS_API_KEY)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    """Фавиконка для запросов к корню сайта (браузеры/краулеры идут на /favicon.ico)."""
+    return send_from_directory(app.static_folder, 'favicon.ico',
+                               mimetype='image/vnd.microsoft.icon')
 
 
 @app.route('/api/game/start', methods=['POST'])
