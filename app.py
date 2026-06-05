@@ -17,7 +17,10 @@ def _env_bool(name, default=False):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///geoguessr_spb.db'
+# URI базы можно переопределить через DATABASE_URL (12-factor): удобно для
+# тестов (отдельная/временная БД) и для смены СУБД, не трогая код.
+# По умолчанию — прежний sqlite-файл в папке instance/.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///geoguessr_spb.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Безопасность cookie сессии.
@@ -38,9 +41,33 @@ YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
 
 db.init_app(app)
 
-# Создаём таблицы при старте, если их ещё нет (идемпотентно).
+
+def _ensure_schema():
+    """Лёгкая идемпотентная миграция для уже существующих SQLite-баз.
+
+    `db.create_all()` создаёт только отсутствующие таблицы, но не добавляет
+    новые колонки в уже существующие. Поэтому колонку `difficulty` в
+    `game_sessions` (добавленную позже) дописываем вручную, если её ещё нет.
+    Безопасно запускать на каждом старте: при наличии колонки ничего не делает.
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(db.engine)
+    if 'game_sessions' not in inspector.get_table_names():
+        return  # таблицы ещё нет — create_all создаст её сразу с колонкой
+    columns = {col['name'] for col in inspector.get_columns('game_sessions')}
+    if 'difficulty' not in columns:
+        db.session.execute(text(
+            "ALTER TABLE game_sessions ADD COLUMN difficulty VARCHAR(10) DEFAULT 'medium'"
+        ))
+        db.session.commit()
+        app.logger.info('Миграция: добавлена колонка game_sessions.difficulty')
+
+
+# Создаём таблицы при старте, если их ещё нет (идемпотентно), и
+# догоняем схему существующей БД до актуальной.
 with app.app_context():
     db.create_all()
+    _ensure_schema()
 
 # Константы игры
 ROUNDS_PER_GAME = 5
@@ -84,6 +111,12 @@ DIFFICULTY_SETTINGS = {
         'std_lon': 0.12,
     }
 }
+
+
+def difficulty_name(difficulty):
+    """Человекочитаемое название режима сложности (для UI/ответов API)."""
+    settings = DIFFICULTY_SETTINGS.get(difficulty)
+    return settings['name'] if settings else difficulty
 
 
 def generate_random_point(difficulty='medium'):
@@ -177,8 +210,8 @@ def start_game():
         if difficulty not in DIFFICULTY_SETTINGS:
             difficulty = 'medium'
 
-        # Создаём новую игровую сессию
-        game_session = GameSession(player_name=player_name)
+        # Создаём новую игровую сессию (с фиксацией режима сложности)
+        game_session = GameSession(player_name=player_name, difficulty=difficulty)
         db.session.add(game_session)
         db.session.commit()
 
@@ -336,12 +369,16 @@ def submit_guess():
         )
         score = calculate_score(distance)
 
-        # Сохраняем раунд в БД (location_id = None для случайных точек)
+        # Сохраняем раунд в БД (location_id = None для случайных точек).
+        # actual_* — реальная точка, по которой считались очки (панорама либо,
+        # если её не нашли, серверная случайная точка).
         game_round = GameRound(
             session_id=game_id,
             location_id=None,
             guess_latitude=guess_lat,
             guess_longitude=guess_lon,
+            actual_latitude=actual_lat,
+            actual_longitude=actual_lon,
             distance_km=distance,
             score=score,
             round_number=current_round + 1
@@ -413,25 +450,37 @@ def get_results():
         'total_score': game_session.total_score,
         'max_possible_score': ROUNDS_PER_GAME * MAX_SCORE_PER_ROUND,
         'rounds_played': game_session.rounds_played,
+        'difficulty': game_session.difficulty,
+        'difficulty_name': difficulty_name(game_session.difficulty),
         'rounds': rounds_data
     })
 
 
 @app.route('/api/leaderboard', methods=['GET'])
 def get_leaderboard():
-    """Получить таблицу лидеров"""
-    top_games = GameSession.query\
-        .filter(GameSession.completed_at.isnot(None))\
-        .order_by(GameSession.total_score.desc())\
-        .limit(10)\
-        .all()
-    
+    """Получить таблицу лидеров.
+
+    Необязательный параметр ?difficulty=center|medium|hard фильтрует таблицу
+    по режиму сложности — разные режимы не сравнимы напрямую, поэтому без
+    фильтра показываем все, но в каждой строке отдаём режим для контекста.
+    """
+    query = GameSession.query.filter(GameSession.completed_at.isnot(None))
+
+    difficulty = request.args.get('difficulty')
+    if difficulty in DIFFICULTY_SETTINGS:
+        query = query.filter(GameSession.difficulty == difficulty)
+
+    top_games = query.order_by(GameSession.total_score.desc()).limit(10).all()
+
     return jsonify({
+        'difficulty': difficulty if difficulty in DIFFICULTY_SETTINGS else 'all',
         'leaderboard': [
             {
                 'rank': i + 1,
                 'player_name': game.player_name,
                 'total_score': game.total_score,
+                'difficulty': game.difficulty,
+                'difficulty_name': difficulty_name(game.difficulty),
                 'date': game.completed_at.strftime('%d.%m.%Y') if game.completed_at else None
             }
             for i, game in enumerate(top_games)

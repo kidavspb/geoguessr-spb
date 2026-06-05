@@ -81,19 +81,28 @@ function checkYandexMapsAPI() {
 function initEventListeners() {
     // Стартовый экран
     document.getElementById('start-btn').addEventListener('click', startGame);
-    document.getElementById('show-leaderboard-btn').addEventListener('click', showLeaderboard);
-    
+    document.getElementById('show-leaderboard-btn').addEventListener('click', openLeaderboard);
+
     // Игровой экран
     document.getElementById('guess-btn').addEventListener('click', submitGuess);
-    
+
     // Экран результата
     document.getElementById('next-round-btn').addEventListener('click', nextRound);
-    
+
     // Финальный экран
     document.getElementById('play-again-btn').addEventListener('click', () => {
         showScreen('start-screen');
     });
-    document.getElementById('final-leaderboard-btn').addEventListener('click', showLeaderboard);
+    document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
+
+    // Фильтр таблицы лидеров по сложности
+    document.querySelectorAll('.lb-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.lb-filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            showLeaderboard(btn.dataset.difficulty);
+        });
+    });
     
     // Таблица лидеров
     document.getElementById('back-btn').addEventListener('click', () => {
@@ -724,18 +733,35 @@ async function showFinalResults() {
 }
 
 /**
- * Показ таблицы лидеров
+ * Открыть таблицу лидеров заново: сбрасываем фильтр на «Все».
  */
-async function showLeaderboard() {
+function openLeaderboard() {
+    document.querySelectorAll('.lb-filter-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.difficulty === 'all');
+    });
+    showLeaderboard('all');
+}
+
+/**
+ * Показ таблицы лидеров. difficulty: 'all' | 'center' | 'medium' | 'hard'.
+ * Бейдж сложности показываем только в общем списке — в отфильтрованном он избыточен.
+ */
+async function showLeaderboard(difficulty = 'all') {
+    const url = difficulty && difficulty !== 'all'
+        ? `/api/leaderboard?difficulty=${encodeURIComponent(difficulty)}`
+        : '/api/leaderboard';
+
     try {
-        const response = await fetch('/api/leaderboard', {
+        const response = await fetch(url, {
             credentials: 'same-origin'
         });
         const data = await response.json();
-        
+
         const tableContainer = document.getElementById('leaderboard-table');
         tableContainer.innerHTML = '';
-        
+
+        const showBadge = (difficulty === 'all');
+
         if (data.leaderboard && data.leaderboard.length > 0) {
             // Заголовок
             const header = document.createElement('div');
@@ -747,20 +773,24 @@ async function showLeaderboard() {
                 <span class="leaderboard-date">Дата</span>
             `;
             tableContainer.appendChild(header);
-            
+
             // Строки
             data.leaderboard.forEach(entry => {
                 const row = document.createElement('div');
                 row.className = 'leaderboard-row';
-                
+
                 let rankClass = '';
                 if (entry.rank === 1) rankClass = 'gold';
                 else if (entry.rank === 2) rankClass = 'silver';
                 else if (entry.rank === 3) rankClass = 'bronze';
-                
+
+                const badge = showBadge && entry.difficulty_name
+                    ? `<span class="lb-badge lb-badge-${escapeHtml(entry.difficulty || '')}">${escapeHtml(entry.difficulty_name)}</span>`
+                    : '';
+
                 row.innerHTML = `
                     <span class="leaderboard-rank ${rankClass}">${entry.rank}</span>
-                    <span class="leaderboard-name">${escapeHtml(entry.player_name)}</span>
+                    <span class="leaderboard-name">${escapeHtml(entry.player_name)}${badge}</span>
                     <span class="leaderboard-score">${entry.total_score}</span>
                     <span class="leaderboard-date">${entry.date || ''}</span>
                 `;
@@ -769,7 +799,7 @@ async function showLeaderboard() {
         } else {
             tableContainer.innerHTML = '<div class="leaderboard-empty">Пока нет результатов</div>';
         }
-        
+
         showScreen('leaderboard-screen');
     } catch (error) {
         console.error('Ошибка загрузки таблицы лидеров:', error);

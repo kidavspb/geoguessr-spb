@@ -45,6 +45,9 @@ class GameSession(db.Model):
     player_name = db.Column(db.String(100), default='Аноним')
     total_score = db.Column(db.Integer, default=0)
     rounds_played = db.Column(db.Integer, default=0)
+    # Режим сложности, в котором сыграна игра (center / medium / hard).
+    # Нужен, чтобы таблица лидеров была честной: разные режимы не сравнимы напрямую.
+    difficulty = db.Column(db.String(10), default='medium')
     created_at = db.Column(db.DateTime, default=utcnow)
     completed_at = db.Column(db.DateTime)
     
@@ -56,6 +59,7 @@ class GameSession(db.Model):
             'player_name': self.player_name,
             'total_score': self.total_score,
             'rounds_played': self.rounds_played,
+            'difficulty': self.difficulty,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None
         }

@@ -161,7 +161,15 @@
         <div id="leaderboard-screen" class="screen">
             <div class="leaderboard-content">
                 <h2>🏆 Таблица лидеров</h2>
-                
+
+                <!-- Фильтр по сложности: режимы не сравнимы напрямую -->
+                <div class="leaderboard-filter" id="leaderboard-filter">
+                    <button type="button" class="lb-filter-btn active" data-difficulty="all">Все</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="center">🏛️ Центр</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="medium">🏙️ Средняя</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="hard">🌆 Весь город</button>
+                </div>
+
                 <div id="leaderboard-table" class="leaderboard-table">
                     <!-- Таблица будет добавлена динамически -->
                 </div>

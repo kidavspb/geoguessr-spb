@@ -544,6 +544,66 @@ body {
     margin-bottom: 1.5rem;
 }
 
+/* Фильтр таблицы лидеров по сложности */
+.leaderboard-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.lb-filter-btn {
+    flex: 1;
+    min-width: 70px;
+    padding: 0.5rem 0.5rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.lb-filter-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--text-color);
+}
+
+.lb-filter-btn.active {
+    border-color: var(--primary-color);
+    background: rgba(74, 144, 217, 0.2);
+    color: var(--text-color);
+}
+
+/* Бейдж режима сложности рядом с именем игрока */
+.lb-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    vertical-align: middle;
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.lb-badge-center {
+    background: rgba(40, 167, 69, 0.25);
+    color: #6ee7a0;
+}
+
+.lb-badge-medium {
+    background: rgba(74, 144, 217, 0.25);
+    color: #8ec5ff;
+}
+
+.lb-badge-hard {
+    background: rgba(233, 69, 96, 0.25);
+    color: #ff9aab;
+}
+
 .leaderboard-table {
     background: var(--card-bg);
     border-radius: 12px;
