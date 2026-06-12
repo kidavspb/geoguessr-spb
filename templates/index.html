@@ -13,7 +13,7 @@
     <link rel="icon" href="{{ url_for('static', filename='favicons/favicon.ico') }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicons/apple-touch-icon.png') }}">
     <link rel="preload" href="{{ url_for('static', filename='fonts/ALS_SPb.woff2') }}" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version }}">
     <!-- Подключение Яндекс.Карт API v3 для карты -->
     <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
             onerror="console.error('Не удалось загрузить Яндекс.Карты API v3')"></script>
@@ -102,6 +102,9 @@
             <aside class="result-panel">
                 <h2 id="result-title" class="result-title">Результат</h2>
 
+                <!-- Панорама, по которой угадывали: можно осмотреться ещё раз -->
+                <div class="result-pano hidden" id="result-pano"></div>
+
                 <div class="result-score-block">
                     <div class="result-score"><span id="result-score">0</span> <span id="result-score-word">очков</span></div>
                 </div>
@@ -173,6 +176,6 @@
     </div>
 
     <!-- Яндекс.Карты загружается в head, наш скрипт после DOM -->
-    <script src="{{ url_for('static', filename='js/game.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}?v={{ asset_version }}" defer></script>
 </body>
 </html>

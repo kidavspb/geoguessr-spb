@@ -6,6 +6,8 @@
 let map = null;
 let resultMap = null;
 let panoramaPlayer = null;
+let lastPanorama = null;      // панорама текущего раунда — для круга на экране результата
+let resultPanoPlayer = null;  // мини-плеер в круге
 let currentMarker = null;
 let guessCoords = null;
 let panoramaRetries = 0; // сколько раз перегенерировали точку из-за отсутствия панорамы
@@ -380,7 +382,8 @@ async function loadPanorama(latitude, longitude) {
         }
         
         const panorama = panoramaResult[0];
-        
+        lastPanorama = panorama;
+
         // Получаем реальные координаты панорамы и сохраняем на сервер
         const position = panorama.getPosition();
         await saveActualPoint(position[0], position[1]);
@@ -490,7 +493,8 @@ async function findNearestPanorama(latitude, longitude, overlay, container) {
             const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
             if (result.length > 0) {
                 const panorama = result[0];
-                
+                lastPanorama = panorama;
+
                 // Сохраняем реальные координаты найденной панорамы
                 const position = panorama.getPosition();
                 await saveActualPoint(position[0], position[1]);
@@ -637,8 +641,49 @@ async function showRoundResult(data) {
 
     showScreen('result-screen');
 
-    // Показываем карту с результатом
+    // Панорама раунда в круге + карта с результатом
+    showResultPano();
     await showResultMap(data);
+}
+
+/**
+ * Мини-плеер с панорамой раунда в круглом окне панели результата:
+ * к месту можно вернуться и осмотреться ещё раз
+ */
+function showResultPano() {
+    const container = document.getElementById('result-pano');
+    destroyResultPano();
+    container.innerHTML = '';
+
+    if (!lastPanorama || typeof ymaps === 'undefined') {
+        container.classList.add('hidden');
+        return;
+    }
+
+    try {
+        resultPanoPlayer = new ymaps.panorama.Player(container, lastPanorama, {
+            controls: [],
+            suppressMapOpenBlock: true
+        });
+        container.classList.remove('hidden');
+    } catch (error) {
+        console.error('Не удалось показать панораму в результате:', error);
+        container.classList.add('hidden');
+    }
+}
+
+/**
+ * Уничтожить мини-плеер при уходе с экрана результата
+ */
+function destroyResultPano() {
+    if (resultPanoPlayer) {
+        try {
+            resultPanoPlayer.destroy();
+        } catch (error) {
+            // плеер мог уже умереть вместе с DOM-узлом
+        }
+        resultPanoPlayer = null;
+    }
 }
 
 /**
@@ -677,12 +722,14 @@ async function showResultMap(data) {
     };
     const mercYInv = (y) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
 
-    const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.003) / 360;
-    const spanY = Math.max(Math.abs(mercY(correctLat) - mercY(guessLat)), 0.000012);
+    // Минимальные охваты ~50 м: при точном попадании не упираемся в ноль,
+    // а при маленьком промахе карта приближается к кварталу, не к городу
+    const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.0009) / 360;
+    const spanY = Math.max(Math.abs(mercY(correctLat) - mercY(guessLat)), 0.0000012);
     const availW = Math.max(stageW - panelRight - padPx * 2, 200);
     const availH = Math.max(stageH - panelBottom - padPx * 2, 200);
     // Округляем вниз: дробный zoom карта округлит вверх, и точки выйдут за кадр
-    const zoom = Math.floor(Math.max(3, Math.min(17,
+    const zoom = Math.floor(Math.max(3, Math.min(18,
         Math.min(
             Math.log2(availW / TILE / spanLon),
             Math.log2(availH / TILE / spanY)
@@ -738,6 +785,7 @@ async function showResultMap(data) {
  * Переход к следующему раунду
  */
 function nextRound() {
+    destroyResultPano();
     showScreen('game-screen');
     loadCurrentLocation();
 }
@@ -746,6 +794,7 @@ function nextRound() {
  * Показ финальных результатов
  */
 async function showFinalResults() {
+    destroyResultPano();
     try {
         const response = await fetch('/api/game/results', {
             credentials: 'same-origin'

@@ -130,7 +130,7 @@ h1, h2 {
     color: var(--blue);
 }
 
-/* ===== Стартовый экран ===== */
+/* ===== Стартовый экран: тёмно-синий, как фон логотипа ===== */
 .start-layout,
 .page-layout {
     min-height: 100vh;
@@ -149,6 +149,77 @@ h1, h2 {
     background: var(--card-bg);
     border-radius: var(--radius-card);
     box-shadow: var(--shadow-card);
+}
+
+#start-screen {
+    background: var(--navy);
+}
+
+#start-screen .start-card {
+    background: transparent;
+    box-shadow: none;
+}
+
+#start-screen .brand-title {
+    color: var(--cream);
+}
+
+#start-screen .start-tagline {
+    color: rgba(253, 250, 228, 0.75);
+}
+
+#start-screen .input-group label {
+    color: rgba(253, 250, 228, 0.7);
+}
+
+#start-screen .input-group input {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(253, 250, 228, 0.25);
+    color: var(--cream);
+}
+
+#start-screen .input-group input::placeholder {
+    color: rgba(253, 250, 228, 0.4);
+}
+
+#start-screen .input-group input:focus {
+    border-color: var(--green-light);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+#start-screen .difficulty-btn {
+    background: transparent;
+    border-color: rgba(253, 250, 228, 0.25);
+    color: rgba(253, 250, 228, 0.75);
+}
+
+#start-screen .difficulty-btn:hover {
+    border-color: var(--cream);
+    color: var(--cream);
+}
+
+#start-screen .difficulty-btn.active {
+    background: var(--cream);
+    border-color: var(--cream);
+    color: var(--navy);
+}
+
+#start-screen .difficulty-hint {
+    color: rgba(253, 250, 228, 0.55);
+}
+
+#start-screen .btn-secondary {
+    border-color: rgba(253, 250, 228, 0.3);
+    color: rgba(253, 250, 228, 0.8);
+}
+
+#start-screen .btn-secondary:hover {
+    border-color: var(--cream);
+    color: var(--cream);
+}
+
+#start-screen .api-warning {
+    color: var(--yellow);
 }
 
 .start-logo {
@@ -375,14 +446,21 @@ h1, h2 {
     font-size: 1rem;
 }
 
-/* Карта-оверлей: компактная, разворачивается при наведении */
+/* Карта-оверлей: компактная и полупрозрачная, чтобы не закрывать
+   панораму; разворачивается и проявляется при наведении */
 .map-panel {
     position: absolute;
     right: 1rem;
     bottom: 1rem;
     width: min(340px, calc(100vw - 2rem));
     z-index: 10;
-    transition: width 0.25s ease;
+    opacity: 0.55;
+    transition: width 0.25s ease, opacity 0.2s ease;
+}
+
+.map-panel:hover,
+.map-panel:focus-within {
+    opacity: 1;
 }
 
 .map-wrap {
@@ -474,6 +552,35 @@ h1, h2 {
     color: var(--cream);
     font-size: 1.9rem;
     text-align: center;
+}
+
+/* Круглое окно с панорамой, по которой только что угадывали:
+   живой мини-плеер, можно осмотреться ещё раз */
+.result-pano {
+    width: 190px;
+    height: 190px;
+    border-radius: 50%;
+    overflow: hidden;
+    margin: 0 auto;
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35),
+                0 0 0 4px rgba(253, 250, 228, 0.15);
+}
+
+.result-pano.hidden {
+    display: none;
+}
+
+/* В маленьком круге прячем кнопки плеера (зум, фулскрин, промо) —
+   остаётся только сама панорама и копирайт */
+.result-pano [class*="gotoymaps"],
+.result-pano [class*="panorama-control__zoom"],
+.result-pano [class*="panorama-control__fullscreen"],
+.result-pano [class*="panorama-control__close"],
+.result-pano [class*="panorama-control__name"],
+.result-pano [class*="panorama-control__inception"] {
+    display: none !important;
 }
 
 .result-score-block {
@@ -795,12 +902,14 @@ h1, h2 {
         padding: 0.45rem 0.6rem;
     }
 
-    /* Карта снизу фиксированной высоты, без hover-разворота */
+    /* Карта снизу фиксированной высоты, без hover-разворота;
+       на тач-экране полупрозрачность только мешала бы */
     .map-panel {
         left: 0.75rem;
         right: 0.75rem;
         bottom: 0.75rem;
         width: auto;
+        opacity: 1;
     }
 
     .map-panel:hover,
@@ -829,6 +938,11 @@ h1, h2 {
 
     .result-title {
         font-size: 1.5rem;
+    }
+
+    .result-pano {
+        width: 120px;
+        height: 120px;
     }
 
     .result-panel-spacer {
