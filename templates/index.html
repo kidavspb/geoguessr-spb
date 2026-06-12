@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GeoGuessr СПб — Угадай место в Петербурге</title>
+    <meta name="theme-color" content="#231c62">
+    <meta name="description" content="Петербургский следопыт — игра-угадайка: осмотрись на панораме и отметь на карте, где в Санкт-Петербурге ты оказался.">
+    <title>Петербургский следопыт — угадай место в Санкт-Петербурге</title>
     <!-- Фавиконка приложения -->
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicons/favicon.svg') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicons/favicon-32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicons/favicon-16.png') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicons/favicon.ico') }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicons/apple-touch-icon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preload" href="{{ url_for('static', filename='fonts/ALS_SPb.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version }}">
     <!-- Подключение Яндекс.Карт API v3 для карты -->
     <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
             onerror="console.error('Не удалось загрузить Яндекс.Карты API v3')"></script>
@@ -19,131 +22,122 @@
             onerror="console.error('Не удалось загрузить Яндекс.Карты API v2')"></script>
 </head>
 <body>
-    <div class="container">
-        <!-- Заголовок -->
-        <header class="header">
-            <h1>🏛️ GeoGuessr СПб</h1>
-            <p class="subtitle">Угадай место в Санкт-Петербурге</p>
-        </header>
+    <!-- Стартовый экран -->
+    <div id="start-screen" class="screen active">
+        <main class="start-layout">
+            <div class="start-card">
+                <img class="start-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="Логотип «Петербургский следопыт»">
+                <h1 class="brand-title">Петербургский следопыт</h1>
+                <p class="start-tagline">Осмотрись на панораме, вспомни город<br>и отметь на карте, где ты оказался.</p>
 
-        <!-- Стартовый экран -->
-        <div id="start-screen" class="screen active">
-            <div class="start-content">
-                <div class="logo">🗺️</div>
-                <h2>Добро пожаловать!</h2>
-                <p>Вам покажут панораму места в Петербурге.<br>Отметьте на карте, где это находится.</p>
-                
                 <div class="input-group">
-                    <label for="player-name">Ваше имя:</label>
-                    <input type="text" id="player-name" placeholder="Аноним" maxlength="50">
+                    <label for="player-name">Твоё имя</label>
+                    <input type="text" id="player-name" placeholder="Аноним" maxlength="50" autocomplete="nickname">
                 </div>
 
                 <div class="input-group">
-                    <label>Сложность:</label>
+                    <label>Сложность</label>
                     <div class="difficulty-toggle">
-                        <button type="button" class="difficulty-btn" data-difficulty="center">
-                            🏛️ Центр
-                        </button>
-                        <button type="button" class="difficulty-btn active" data-difficulty="medium">
-                            🏙️ Средняя
-                        </button>
-                        <button type="button" class="difficulty-btn" data-difficulty="hard">
-                            🌆 Весь город
-                        </button>
+                        <button type="button" class="difficulty-btn" data-difficulty="center">Центр</button>
+                        <button type="button" class="difficulty-btn active" data-difficulty="medium">Средняя</button>
+                        <button type="button" class="difficulty-btn" data-difficulty="hard">Весь город</button>
                     </div>
                     <small class="difficulty-hint">Средняя — центр и ближайшие районы</small>
                 </div>
-                
+
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
-                
                 <button id="show-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
             </div>
-        </div>
+        </main>
+    </div>
 
-        <!-- Игровой экран -->
-        <div id="game-screen" class="screen">
-            <!-- Информация о раунде -->
-            <div class="game-info">
-                <div class="round-info">
-                    <span>Раунд: <strong id="current-round">1</strong> / <span id="total-rounds">5</span></span>
+    <!-- Игровой экран: панорама во весь экран, карта — оверлей в углу -->
+    <div id="game-screen" class="screen">
+        <div class="game-stage">
+            <!-- Контейнер локации (фото или панорама) -->
+            <div class="location-container">
+                <!-- Режим фото -->
+                <div id="photo-mode" class="location-mode hidden">
+                    <img id="location-photo" src="" alt="Угадай это место">
                 </div>
-                <div class="score-info">
-                    <span>Счёт: <strong id="total-score">0</strong></span>
+                <!-- Режим панорамы -->
+                <div id="panorama-mode" class="location-mode">
+                    <div id="panorama-player"></div>
+                </div>
+                <div class="photo-overlay" id="photo-overlay">
+                    <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="" class="overlay-logo">
+                    <span>Загрузка…</span>
                 </div>
             </div>
 
-            <!-- Основной контент игры -->
-            <div class="game-content">
-                <!-- Контейнер локации (фото или панорама) -->
-                <div class="location-container">
-                    <!-- Режим фото -->
-                    <div id="photo-mode" class="location-mode hidden">
-                        <img id="location-photo" src="" alt="Угадай это место">
-                    </div>
-                    <!-- Режим панорамы -->
-                    <div id="panorama-mode" class="location-mode">
-                        <div id="panorama-player"></div>
-                    </div>
-                    <div class="photo-overlay" id="photo-overlay">
-                        <span>Загрузка...</span>
-                    </div>
+            <!-- Плашки поверх панорамы -->
+            <div class="hud-top">
+                <div class="hud-brand">
+                    <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="">
+                    <span>Петербургский следопыт</span>
                 </div>
+                <div class="hud-chips">
+                    <div class="hud-chip">Раунд&nbsp;<strong id="current-round">1</strong>&thinsp;/&thinsp;<span id="total-rounds">5</span></div>
+                    <div class="hud-chip">Счёт&nbsp;<strong id="total-score">0</strong></div>
+                </div>
+            </div>
 
-                <!-- Карта для выбора -->
-                <div class="map-container">
+            <!-- Карта для выбора: разворачивается при наведении -->
+            <div class="map-panel" id="map-panel">
+                <div class="map-wrap">
                     <div id="map"></div>
-                    <div class="map-hint">Кликните на карте, чтобы отметить место</div>
+                    <div class="map-hint" id="map-hint">Кликни по карте, чтобы отметить место</div>
                 </div>
-            </div>
-
-            <!-- Кнопка подтверждения -->
-            <div class="action-bar">
-                <button id="guess-btn" class="btn btn-primary" disabled>Подтвердить выбор</button>
+                <button id="guess-btn" class="btn btn-primary btn-answer" disabled>Ответ</button>
             </div>
         </div>
+    </div>
 
-        <!-- Экран результата раунда -->
-        <div id="result-screen" class="screen">
-            <div class="result-content">
-                <h2 id="result-title">Результат</h2>
-                
-                <div class="result-details">
-                    <div class="location-name">
-                        <span>Это было:</span>
-                        <strong id="correct-location-name"></strong>
-                    </div>
-                    <p id="correct-location-description" class="location-description"></p>
-                    
-                    <div class="stats">
-                        <div class="stat">
-                            <span class="stat-label">Расстояние</span>
-                            <span class="stat-value" id="result-distance">0 м</span>
-                        </div>
-                        <div class="stat">
-                            <span class="stat-label">Очки за раунд</span>
-                            <span class="stat-value" id="result-score">0</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Карта с результатом -->
-                <div class="result-map-container">
-                    <div id="result-map"></div>
-                </div>
-
-                <button id="next-round-btn" class="btn btn-primary">Следующий раунд</button>
+    <!-- Экран результата раунда: карта во весь экран, панель справа -->
+    <div id="result-screen" class="screen">
+        <div class="result-stage">
+            <div class="result-map-container">
+                <div id="result-map"></div>
             </div>
-        </div>
+            <aside class="result-panel">
+                <h2 id="result-title" class="result-title">Результат</h2>
 
-        <!-- Экран финальных результатов -->
-        <div id="final-screen" class="screen">
-            <div class="final-content">
-                <h2>🎉 Игра окончена!</h2>
-                
+                <!-- Панорама, по которой угадывали: можно осмотреться ещё раз -->
+                <div class="result-pano hidden" id="result-pano"></div>
+
+                <div class="result-score-block">
+                    <div class="result-score"><span id="result-score">0</span> <span id="result-score-word">очков</span></div>
+                </div>
+
+                <p class="result-miss">Ты промахнулся на <span class="miss-distance" id="result-distance">0 м</span> от точки съёмки</p>
+
+                <div class="result-location hidden" id="result-location">
+                    <span>Это было:</span>
+                    <strong id="correct-location-name"></strong>
+                </div>
+
+                <div class="fact-card hidden" id="fact-card">
+                    <div class="fact-title"><span class="fact-icon">i</span> Знал ли ты, что …</div>
+                    <p class="fact-body" id="correct-location-description"></p>
+                </div>
+
+                <div class="result-panel-spacer"></div>
+                <button id="next-round-btn" class="btn btn-primary">Продолжить</button>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Экран финальных результатов -->
+    <div id="final-screen" class="screen">
+        <main class="page-layout">
+            <div class="page-card final-content">
+                <img class="page-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="">
+                <h2>Игра окончена!</h2>
+
                 <div class="final-score">
-                    <span class="score-label">Ваш итоговый счёт</span>
+                    <span class="score-label">Твой итоговый счёт</span>
                     <span class="score-value" id="final-score">0</span>
-                    <span class="score-max">из 25000</span>
+                    <span class="score-max">из 25 000</span>
                 </div>
 
                 <div id="rounds-summary" class="rounds-summary">
@@ -155,19 +149,21 @@
                     <button id="final-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
                 </div>
             </div>
-        </div>
+        </main>
+    </div>
 
-        <!-- Экран таблицы лидеров -->
-        <div id="leaderboard-screen" class="screen">
-            <div class="leaderboard-content">
-                <h2>🏆 Таблица лидеров</h2>
+    <!-- Экран таблицы лидеров -->
+    <div id="leaderboard-screen" class="screen">
+        <main class="page-layout">
+            <div class="page-card leaderboard-content">
+                <h2>Таблица лидеров</h2>
 
                 <!-- Фильтр по сложности: режимы не сравнимы напрямую -->
                 <div class="leaderboard-filter" id="leaderboard-filter">
                     <button type="button" class="lb-filter-btn active" data-difficulty="all">Все</button>
-                    <button type="button" class="lb-filter-btn" data-difficulty="center">🏛️ Центр</button>
-                    <button type="button" class="lb-filter-btn" data-difficulty="medium">🏙️ Средняя</button>
-                    <button type="button" class="lb-filter-btn" data-difficulty="hard">🌆 Весь город</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="center">Центр</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="medium">Средняя</button>
+                    <button type="button" class="lb-filter-btn" data-difficulty="hard">Весь город</button>
                 </div>
 
                 <div id="leaderboard-table" class="leaderboard-table">
@@ -176,10 +172,10 @@
 
                 <button id="back-btn" class="btn btn-secondary">Назад</button>
             </div>
-        </div>
+        </main>
     </div>
 
     <!-- Яндекс.Карты загружается в head, наш скрипт после DOM -->
-    <script src="{{ url_for('static', filename='js/game.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}?v={{ asset_version }}" defer></script>
 </body>
 </html>

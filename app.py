@@ -187,6 +187,23 @@ def parse_coords(data):
     return lat, lon
 
 
+@app.context_processor
+def inject_asset_version():
+    """Кэш-бастер для CSS/JS: версия — свежайший mtime файлов статики.
+
+    Считается на каждый запрос, чтобы правки статики подхватывались
+    браузерами и без перезапуска сервиса.
+    """
+    version = 0
+    for rel in ('css/style.css', 'js/game.js'):
+        path = os.path.join(app.static_folder, rel)
+        try:
+            version = max(version, int(os.path.getmtime(path)))
+        except OSError:
+            pass
+    return {'asset_version': version}
+
+
 @app.route('/')
 def index():
     """Главная страница с игрой"""
