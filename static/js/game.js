@@ -21,6 +21,33 @@ let gameData = {
 const SPB_CENTER = [59.9311, 30.3609];
 const DEFAULT_ZOOM = 11;
 
+// Фирменные пины (из логотипа): красный — реальная точка, синий — догадка игрока
+const PIN_RED = '/static/img/pin.svg';
+const PIN_NAVY = '/static/img/pin-navy.svg';
+
+/**
+ * Склонение существительного по числу: plural(3, ['очко', 'очка', 'очков'])
+ */
+function plural(n, forms) {
+    const abs = Math.abs(n) % 100;
+    const last = abs % 10;
+    if (abs > 10 && abs < 20) return forms[2];
+    if (last === 1) return forms[0];
+    if (last >= 2 && last <= 4) return forms[1];
+    return forms[2];
+}
+
+/**
+ * Создать DOM-элемент фирменного пина для маркера на карте
+ */
+function createPinElement(src) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.className = 'map-pin';
+    img.alt = '';
+    return img;
+}
+
 // Описания сложности
 const DIFFICULTY_HINTS = {
     'center': 'Центр — исторический центр города',
@@ -67,8 +94,8 @@ function checkYandexMapsAPI() {
             const startBtn = document.getElementById('start-btn');
             if (startBtn) {
                 const warning = document.createElement('div');
-                warning.style.cssText = 'color: #e94560; margin-top: 10px; font-size: 14px;';
-                warning.textContent = '⚠️ Внимание: Проблема с загрузкой карт. Проверьте подключение к интернету.';
+                warning.className = 'api-warning';
+                warning.textContent = '⚠️ Проблема с загрузкой карт. Проверьте подключение к интернету.';
                 startBtn.parentElement.insertBefore(warning, startBtn);
             }
         }
@@ -231,33 +258,22 @@ async function initMap() {
 function placeMarker(coordinates) {
     const [lon, lat] = coordinates;
     guessCoords = { latitude: lat, longitude: lon };
-    
+
     // Удаляем старый маркер
     if (currentMarker) {
         map.removeChild(currentMarker);
     }
-    
-    // Создаём элемент маркера
-    const markerElement = document.createElement('div');
-    markerElement.style.cssText = `
-        width: 24px;
-        height: 24px;
-        background: #e94560;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        cursor: pointer;
-        transform: translate(-50%, -50%);
-    `;
-    
-    // Добавляем новый маркер
+
+    // Добавляем новый маркер — фирменный синий пин
     currentMarker = new ymaps3.YMapMarker({
         coordinates: [lon, lat]
-    }, markerElement);
-    
+    }, createPinElement(PIN_NAVY));
+
     map.addChild(currentMarker);
-    
-    // Активируем кнопку
+
+    // Прячем подсказку и активируем кнопку
+    const hint = document.getElementById('map-hint');
+    if (hint) hint.classList.add('hidden');
     document.getElementById('guess-btn').disabled = false;
 }
 
@@ -510,7 +526,11 @@ function resetMapForNewRound() {
     }
     guessCoords = null;
     document.getElementById('guess-btn').disabled = true;
-    
+
+    // Возвращаем подсказку
+    const hint = document.getElementById('map-hint');
+    if (hint) hint.classList.remove('hidden');
+
     // Центрируем карту
     if (map) {
         map.setLocation({
@@ -559,46 +579,64 @@ async function submitGuess() {
 async function showRoundResult(data) {
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
-    
-    // Заполняем информацию
-    document.getElementById('correct-location-name').textContent = data.correct_location.name;
-    document.getElementById('correct-location-description').textContent = data.correct_location.description || '';
-    
+
+    // Название места показываем только если оно осмысленное,
+    // а не сгенерированное («Точка раунда N»)
+    const name = (data.correct_location.name || '').trim();
+    const locationBlock = document.getElementById('result-location');
+    if (name && !/^Точка раунда/i.test(name)) {
+        document.getElementById('correct-location-name').textContent = name;
+        locationBlock.classList.remove('hidden');
+    } else {
+        locationBlock.classList.add('hidden');
+    }
+
+    // Карточку «Знал ли ты, что …» показываем только с настоящим фактом,
+    // а не с заглушкой «Случайное место …»
+    const description = (data.correct_location.description || '').trim();
+    const factCard = document.getElementById('fact-card');
+    if (description && !/^Случайное место/i.test(description)) {
+        document.getElementById('correct-location-description').textContent = description;
+        factCard.classList.remove('hidden');
+    } else {
+        factCard.classList.add('hidden');
+    }
+
     // Форматирование расстояния
-    const distanceText = data.distance_m < 1000 
-        ? `${data.distance_m} м` 
+    const distanceText = data.distance_m < 1000
+        ? `${data.distance_m} ${plural(data.distance_m, ['метр', 'метра', 'метров'])}`
         : `${data.distance_km} км`;
     document.getElementById('result-distance').textContent = distanceText;
-    
-    // Очки с цветом
-    const scoreElement = document.getElementById('result-score');
-    scoreElement.textContent = data.score;
-    scoreElement.className = 'stat-value ' + getScoreClass(data.score);
-    
+
+    // Очки за раунд
+    document.getElementById('result-score').textContent = data.score;
+    document.getElementById('result-score-word').textContent =
+        plural(data.score, ['очко', 'очка', 'очков']);
+
     // Заголовок результата
     const title = document.getElementById('result-title');
     if (data.score >= 4500) {
-        title.textContent = '🎯 Отлично!';
+        title.textContent = 'В яблочко!';
     } else if (data.score >= 3000) {
-        title.textContent = '👍 Хорошо!';
+        title.textContent = 'Отлично!';
     } else if (data.score >= 1000) {
-        title.textContent = '😐 Неплохо';
+        title.textContent = 'Неплохо';
     } else {
-        title.textContent = '😅 Далековато...';
+        title.textContent = 'Далековато…';
     }
-    
+
     // Кнопка следующего раунда
     const nextBtn = document.getElementById('next-round-btn');
     if (data.is_game_over) {
         nextBtn.textContent = 'Посмотреть результаты';
         nextBtn.onclick = showFinalResults;
     } else {
-        nextBtn.textContent = 'Следующий раунд';
+        nextBtn.textContent = 'Продолжить';
         nextBtn.onclick = nextRound;
     }
-    
+
     showScreen('result-screen');
-    
+
     // Показываем карту с результатом
     await showResultMap(data);
 }
@@ -608,64 +646,67 @@ async function showRoundResult(data) {
  */
 async function showResultMap(data) {
     await ymaps3.ready;
-    
+
     const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
-    
+
     const mapContainer = document.getElementById('result-map');
     mapContainer.innerHTML = '';
-    
+
     const correctLon = data.correct_location.longitude;
     const correctLat = data.correct_location.latitude;
     const guessLon = data.guess.longitude;
     const guessLat = data.guess.latitude;
-    
-    // Центр между двумя точками
-    const centerLon = (correctLon + guessLon) / 2;
-    const centerLat = (correctLat + guessLat) / 2;
-    
+
+    // Сами вписываем обе точки в кадр: встроенное вписывание bounds в v3
+    // срабатывает до того, как карта узнаёт размер контейнера.
+    // Панель результата закрывает часть карты (справа на десктопе, снизу
+    // на мобильной раскладке) — учитываем это и в масштабе, и в центре.
+    const isMobile = window.innerWidth <= 720;
+    const stageW = window.innerWidth;
+    const stageH = window.innerHeight;
+    const panelRight = isMobile ? 0 : Math.min(380, stageW);
+    const panelBottom = isMobile ? stageH * 0.62 : 0;
+    const padPx = 70;
+
+    const TILE = 256;
+    const clampLat = (lat) => Math.max(-85, Math.min(85, lat));
+    // Нормированная меркаторская Y-координата (0..1)
+    const mercY = (lat) => {
+        const rad = clampLat(lat) * Math.PI / 180;
+        return (1 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / Math.PI) / 2;
+    };
+    const mercYInv = (y) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
+
+    const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.003) / 360;
+    const spanY = Math.max(Math.abs(mercY(correctLat) - mercY(guessLat)), 0.000012);
+    const availW = Math.max(stageW - panelRight - padPx * 2, 200);
+    const availH = Math.max(stageH - panelBottom - padPx * 2, 200);
+    // Округляем вниз: дробный zoom карта округлит вверх, и точки выйдут за кадр
+    const zoom = Math.floor(Math.max(3, Math.min(17,
+        Math.min(
+            Math.log2(availW / TILE / spanLon),
+            Math.log2(availH / TILE / spanY)
+        )
+    )));
+
+    // Геометрический центр двух точек, сдвинутый так, чтобы он оказался
+    // в середине свободной от панели области
+    const worldPx = TILE * Math.pow(2, zoom);
+    const centerLon = (correctLon + guessLon) / 2 + (panelRight / 2) * (360 / worldPx);
+    const centerY = (mercY(correctLat) + mercY(guessLat)) / 2 + (panelBottom / 2) / worldPx;
+    const centerLat = mercYInv(centerY);
+
     resultMap = new YMap(mapContainer, {
         location: {
             center: [centerLon, centerLat],
-            zoom: 13
+            zoom
         }
     });
-    
+
     resultMap.addChild(new YMapDefaultSchemeLayer());
     resultMap.addChild(new YMapDefaultFeaturesLayer());
-    
-    // Маркер правильной точки (зелёный)
-    const correctMarkerEl = document.createElement('div');
-    correctMarkerEl.style.cssText = `
-        width: 28px;
-        height: 28px;
-        background: #28a745;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        transform: translate(-50%, -50%);
-    `;
-    const correctMarker = new YMapMarker({
-        coordinates: [correctLon, correctLat]
-    }, correctMarkerEl);
-    resultMap.addChild(correctMarker);
-    
-    // Маркер угаданной точки (красный)
-    const guessMarkerEl = document.createElement('div');
-    guessMarkerEl.style.cssText = `
-        width: 24px;
-        height: 24px;
-        background: #e94560;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        transform: translate(-50%, -50%);
-    `;
-    const guessMarker = new YMapMarker({
-        coordinates: [guessLon, guessLat]
-    }, guessMarkerEl);
-    resultMap.addChild(guessMarker);
-    
-    // Линия между точками
+
+    // Пунктирная линия между догадкой и реальной точкой
     const lineFeature = new YMapFeature({
         geometry: {
             type: 'LineString',
@@ -675,10 +716,22 @@ async function showResultMap(data) {
             ]
         },
         style: {
-            stroke: [{ color: '#e94560', width: 3, dash: [5, 5] }]
+            stroke: [{ color: '#231c62', width: 3, dash: [6, 6] }]
         }
     });
     resultMap.addChild(lineFeature);
+
+    // Реальная точка — фирменный красный пин
+    const correctMarker = new YMapMarker({
+        coordinates: [correctLon, correctLat]
+    }, createPinElement(PIN_RED));
+    resultMap.addChild(correctMarker);
+
+    // Догадка игрока — синий пин
+    const guessMarker = new YMapMarker({
+        coordinates: [guessLon, guessLat]
+    }, createPinElement(PIN_NAVY));
+    resultMap.addChild(guessMarker);
 }
 
 /**
@@ -711,12 +764,17 @@ async function showFinalResults() {
                     const item = document.createElement('div');
                     item.className = 'round-item';
                     
-                    const distanceText = round.distance_m < 1000 
-                        ? `${round.distance_m} м` 
+                    const distanceText = round.distance_m < 1000
+                        ? `${round.distance_m} м`
                         : `${(round.distance_m / 1000).toFixed(1)} км`;
-                    
+
+                    // Без дублирования, когда имя локации — заглушка «Раунд N»
+                    const roundLabel = /^Раунд \d+$/i.test(round.location_name || '')
+                        ? `Раунд ${round.round}`
+                        : `${round.round}. ${round.location_name}`;
+
                     item.innerHTML = `
-                        <span class="round-name">${round.round}. ${round.location_name}</span>
+                        <span class="round-name">${roundLabel}</span>
                         <span class="round-distance">${distanceText}</span>
                         <span class="round-score ${getScoreClass(round.score)}">${round.score}</span>
                     `;

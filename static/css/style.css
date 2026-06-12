@@ -1,4 +1,17 @@
-/* ===== Базовые стили ===== */
+/* ============================================================
+   Петербургский следопыт — дизайн-система
+   Палитра из логотипа: тёмно-синий, зелёный, голубой, красный,
+   кремовый. Акцентный шрифт — ALS SPb (только заголовки и цифры).
+   ============================================================ */
+
+@font-face {
+    font-family: 'ALS SPb';
+    src: url('../fonts/ALS_SPb.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -6,53 +19,43 @@
 }
 
 :root {
-    --primary-color: #4a90d9;
-    --primary-hover: #357abd;
-    --secondary-color: #6c757d;
-    --success-color: #28a745;
-    --danger-color: #dc3545;
-    --warning-color: #ffc107;
-    --bg-color: #1a1a2e;
-    --bg-secondary: #16213e;
-    --text-color: #ffffff;
-    --text-muted: #adb5bd;
-    --border-color: #2d3a4f;
-    --card-bg: #0f3460;
+    /* Фирменные цвета */
+    --navy: #231c62;
+    --navy-soft: #3a338a;
+    --green: #6ab946;
+    --green-light: #7bc94c;
+    --green-dark: #5da940;
+    --blue: #2656aa;
+    --red: #e93d32;
+    --yellow: #ffc629;
+    --cream: #fdfae4;
+
+    /* Роли */
+    --bg-color: #f6f3e4;
+    --card-bg: #ffffff;
+    --text-color: #231c62;
+    --text-muted: #6f6b94;
+    --border-color: #e4e0cd;
+
+    --radius-card: 20px;
+    --radius-control: 12px;
+    --shadow-card: 0 10px 30px rgba(35, 28, 98, 0.10);
+    --shadow-chip: 0 4px 14px rgba(35, 28, 98, 0.18);
+    --font-accent: 'ALS SPb', 'Segoe UI', sans-serif;
+    --font-body: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, var(--bg-color) 0%, var(--bg-secondary) 100%);
+    font-family: var(--font-body);
+    background: var(--bg-color);
     color: var(--text-color);
     min-height: 100vh;
 }
 
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 1rem;
-    min-height: 100vh;
-}
-
-/* ===== Заголовок ===== */
-.header {
-    text-align: center;
-    padding: 1rem 0;
-    margin-bottom: 1rem;
-}
-
-.header h1 {
-    font-size: 2rem;
-    margin-bottom: 0.25rem;
-    background: linear-gradient(90deg, #4a90d9, #e94560);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.subtitle {
-    color: var(--text-muted);
-    font-size: 1rem;
+h1, h2 {
+    font-family: var(--font-accent);
+    font-weight: normal;
+    color: var(--navy);
 }
 
 /* ===== Экраны ===== */
@@ -62,29 +65,111 @@ body {
 
 .screen.active {
     display: block;
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Кнопки ===== */
+.btn {
+    padding: 0.875rem 2rem;
+    border: none;
+    border-radius: 999px;
+    font-family: var(--font-body);
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+    display: inline-block;
+    text-decoration: none;
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+}
+
+.btn-primary:disabled {
+    background: #b5b2a0;
+    color: rgba(255, 255, 255, 0.85);
+    box-shadow: none;
+}
+
+.btn-primary {
+    background: linear-gradient(180deg, var(--green-light), var(--green-dark));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45),
+                0 6px 16px rgba(106, 185, 70, 0.40);
+    color: #fff;
+    text-transform: lowercase;
+    width: 100%;
+    margin-bottom: 0.75rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    filter: brightness(1.05);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45),
+                0 8px 20px rgba(106, 185, 70, 0.50);
+}
+
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--text-muted);
+    border: 2px solid var(--border-color);
+    width: 100%;
+}
+
+.btn-secondary:hover {
+    border-color: var(--blue);
+    color: var(--blue);
 }
 
 /* ===== Стартовый экран ===== */
-.start-content {
-    max-width: 500px;
-    margin: 0 auto;
+.start-layout,
+.page-layout {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.start-card,
+.page-card {
+    width: 100%;
+    max-width: 480px;
     text-align: center;
-    padding: 2rem;
+    padding: 2.5rem 2rem 2rem;
     background: var(--card-bg);
-    border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
 }
 
-.logo {
-    font-size: 4rem;
+.start-logo {
+    width: 132px;
+    height: auto;
     margin-bottom: 1rem;
 }
 
-.start-content h2 {
-    margin-bottom: 1rem;
+.page-logo {
+    width: 72px;
+    height: auto;
+    margin-bottom: 0.75rem;
 }
 
-.start-content p {
+.brand-title {
+    font-size: 2.1rem;
+    line-height: 1.15;
+    margin-bottom: 0.75rem;
+}
+
+.start-tagline {
     color: var(--text-muted);
     margin-bottom: 2rem;
     line-height: 1.6;
@@ -99,64 +184,28 @@ body {
     display: block;
     margin-bottom: 0.5rem;
     color: var(--text-muted);
+    font-size: 0.9rem;
 }
 
 .input-group input {
     width: 100%;
     padding: 0.75rem 1rem;
     border: 2px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-secondary);
+    border-radius: var(--radius-control);
+    background: var(--cream);
     color: var(--text-color);
     font-size: 1rem;
     transition: border-color 0.3s;
 }
 
+.input-group input::placeholder {
+    color: #aaa68f;
+}
+
 .input-group input:focus {
     outline: none;
-    border-color: var(--primary-color);
-}
-
-/* Переключатель режима */
-.mode-toggle {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-}
-
-.mode-btn {
-    flex: 1;
-    padding: 0.75rem 1rem;
-    border: 2px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-secondary);
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all 0.3s;
-}
-
-.mode-btn:hover:not(:disabled) {
-    border-color: var(--primary-color);
-    color: var(--text-color);
-}
-
-.mode-btn.active {
-    border-color: var(--primary-color);
-    background: rgba(74, 144, 217, 0.2);
-    color: var(--text-color);
-}
-
-.mode-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.mode-hint {
-    display: block;
-    margin-top: 0.5rem;
-    color: var(--text-muted);
-    font-size: 0.8rem;
+    border-color: var(--blue);
+    background: #fff;
 }
 
 /* Переключатель сложности */
@@ -170,23 +219,24 @@ body {
     flex: 1;
     padding: 0.6rem 0.5rem;
     border: 2px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-secondary);
+    border-radius: 999px;
+    background: #fff;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.3s;
+    transition: all 0.2s;
 }
 
 .difficulty-btn:hover {
-    border-color: var(--primary-color);
-    color: var(--text-color);
+    border-color: var(--blue);
+    color: var(--blue);
 }
 
 .difficulty-btn.active {
-    border-color: var(--primary-color);
-    background: rgba(74, 144, 217, 0.2);
-    color: var(--text-color);
+    border-color: var(--navy);
+    background: var(--navy);
+    color: var(--cream);
 }
 
 .difficulty-hint {
@@ -196,93 +246,35 @@ body {
     font-size: 0.8rem;
 }
 
-/* ===== Кнопки ===== */
-.btn {
-    padding: 0.875rem 2rem;
-    border: none;
-    border-radius: 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s;
-    display: inline-block;
-    text-decoration: none;
-}
-
-.btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary-color), #e94560);
-    color: white;
-    width: 100%;
-    margin-bottom: 0.75rem;
-}
-
-.btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 15px rgba(74, 144, 217, 0.4);
-}
-
-.btn-secondary {
-    background: transparent;
-    color: var(--text-muted);
-    border: 2px solid var(--border-color);
-    width: 100%;
-}
-
-.btn-secondary:hover {
-    border-color: var(--primary-color);
-    color: var(--primary-color);
+/* Предупреждение о проблемах с картами */
+.api-warning {
+    color: var(--red);
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
 }
 
 /* ===== Игровой экран ===== */
-.game-info {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: var(--card-bg);
-    border-radius: 8px;
-    margin-bottom: 1rem;
-}
-
-.game-content {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-@media (max-width: 900px) {
-    .game-content {
-        grid-template-columns: 1fr;
-    }
-}
-
-/* Фото контейнер */
-.photo-container {
-    position: relative;
-    background: var(--card-bg);
-    border-radius: 12px;
+.game-stage {
+    position: fixed;
+    inset: 0;
+    background: var(--navy);
     overflow: hidden;
-    aspect-ratio: 16 / 10;
 }
 
-.photo-container img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-/* Контейнер локации (для фото и панорамы) */
 .location-container {
-    position: relative;
-    background: var(--card-bg);
-    border-radius: 12px;
-    overflow: hidden;
-    min-height: 400px;
+    position: absolute;
+    inset: 0;
+    /* Запираем огромные z-index внутренних элементов панорамы Яндекса,
+       чтобы они не перекрывали наши плашки и кнопку ответа */
+    isolation: isolate;
+    z-index: 1;
+}
+
+/* Промо-кнопка «Перейти в Яндекс.Карты» в панораме: suppressMapOpenBlock
+   не всегда срабатывает — прячем дополнительно */
+#panorama-player [class*="map-open"],
+#panorama-player [class*="gotoymaps"] {
+    display: none !important;
 }
 
 .location-mode {
@@ -300,203 +292,319 @@ body {
     object-fit: cover;
 }
 
-#panorama-mode {
+#panorama-mode,
+#panorama-player {
     width: 100%;
     height: 100%;
 }
 
-#panorama-player {
-    width: 100%;
-    height: 400px;
-    background: #1a1a2e;
-}
-
-@media (max-width: 900px) {
-    .location-container {
-        min-height: 300px;
-    }
-    
-    #panorama-player {
-        height: 300px;
-    }
-}
-
+/* Оверлей загрузки панорамы */
 .photo-overlay {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+    inset: 0;
+    background: var(--cream);
     display: flex;
+    flex-direction: column;
+    gap: 1rem;
     align-items: center;
     justify-content: center;
-    color: var(--text-muted);
+    color: var(--navy);
+    font-size: 1.05rem;
+    z-index: 5;
 }
 
 .photo-overlay.hidden {
     display: none;
 }
 
-/* Карта контейнер */
-.map-container {
+.overlay-logo {
+    width: 96px;
+    animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1);    opacity: 1; }
+    50%      { transform: scale(0.92); opacity: 0.75; }
+}
+
+/* Плашки поверх панорамы */
+.hud-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.hud-brand,
+.hud-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 999px;
+    padding: 0.45rem 1rem;
+    box-shadow: var(--shadow-chip);
+    color: var(--navy);
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.hud-brand img {
+    width: 26px;
+    height: auto;
+}
+
+.hud-brand span {
+    font-family: var(--font-accent);
+    font-size: 1rem;
+}
+
+.hud-chips {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.hud-chip strong {
+    font-size: 1rem;
+}
+
+/* Карта-оверлей: компактная, разворачивается при наведении */
+.map-panel {
+    position: absolute;
+    right: 1rem;
+    bottom: 1rem;
+    width: min(340px, calc(100vw - 2rem));
+    z-index: 10;
+    transition: width 0.25s ease;
+}
+
+.map-wrap {
     position: relative;
-    background: var(--card-bg);
-    border-radius: 12px;
+    height: 220px;
+    border-radius: 14px;
     overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    border: 3px solid rgba(255, 255, 255, 0.9);
+    transition: height 0.25s ease;
+    background: var(--cream);
+}
+
+.map-panel:hover,
+.map-panel:focus-within {
+    width: min(560px, calc(100vw - 2rem));
+}
+
+.map-panel:hover .map-wrap,
+.map-panel:focus-within .map-wrap {
+    height: min(400px, 55vh);
 }
 
 #map {
     width: 100%;
-    height: 400px;
-}
-
-@media (max-width: 900px) {
-    #map {
-        height: 300px;
-    }
+    height: 100%;
 }
 
 .map-hint {
     position: absolute;
-    bottom: 1rem;
+    top: 0.75rem;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.8);
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    font-size: 0.875rem;
+    background: rgba(35, 28, 98, 0.85);
+    color: var(--cream);
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
     pointer-events: none;
+    white-space: nowrap;
+    z-index: 5;
 }
 
-/* Панель действий */
-.action-bar {
-    text-align: center;
+.map-hint.hidden {
+    display: none;
 }
 
-.action-bar .btn {
-    max-width: 300px;
-}
-
-/* ===== Экран результата ===== */
-.result-content {
-    max-width: 700px;
-    margin: 0 auto;
-    text-align: center;
-}
-
-.result-content h2 {
-    margin-bottom: 1.5rem;
-}
-
-.result-details {
-    background: var(--card-bg);
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin-bottom: 1rem;
-}
-
-.location-name {
-    margin-bottom: 0.5rem;
-}
-
-.location-name span {
-    color: var(--text-muted);
+.btn-answer {
     display: block;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
+    margin: 0.75rem 0 0;
+    font-size: 1.15rem;
 }
 
-.location-name strong {
-    font-size: 1.25rem;
-    color: var(--primary-color);
-}
-
-.location-description {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 1rem;
-}
-
-.stats {
-    display: flex;
-    justify-content: center;
-    gap: 2rem;
-    margin-top: 1rem;
-}
-
-.stat {
-    text-align: center;
-}
-
-.stat-label {
-    display: block;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-}
-
-.stat-value {
-    font-size: 1.5rem;
-    font-weight: bold;
+/* ===== Экран результата раунда ===== */
+.result-stage {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-color);
 }
 
 .result-map-container {
-    margin-bottom: 1rem;
-    border-radius: 12px;
-    overflow: hidden;
+    position: absolute;
+    inset: 0;
 }
 
 #result-map {
     width: 100%;
-    height: 300px;
+    height: 100%;
 }
 
-/* ===== Финальный экран ===== */
-.final-content {
-    max-width: 600px;
-    margin: 0 auto;
+.result-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(380px, 100vw);
+    background: var(--navy);
+    color: var(--cream);
+    padding: 2rem 1.75rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    overflow-y: auto;
+    box-shadow: -12px 0 36px rgba(35, 28, 98, 0.35);
+    z-index: 10;
+}
+
+.result-title {
+    color: var(--cream);
+    font-size: 1.9rem;
     text-align: center;
 }
 
+.result-score-block {
+    text-align: center;
+}
+
+.result-score {
+    font-family: var(--font-accent);
+    font-size: 2rem;
+    color: var(--yellow);
+    display: inline-block;
+    padding-bottom: 0.5rem;
+    border-bottom: 4px solid var(--yellow);
+}
+
+.result-miss {
+    text-align: center;
+    font-size: 0.95rem;
+    color: rgba(253, 250, 228, 0.85);
+    line-height: 1.9;
+}
+
+.miss-distance {
+    background: var(--cream);
+    color: var(--navy);
+    font-weight: 700;
+    padding: 0.15rem 0.6rem;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
+.result-location {
+    text-align: center;
+    font-size: 0.95rem;
+}
+
+.result-location span {
+    color: rgba(253, 250, 228, 0.7);
+    display: block;
+    margin-bottom: 0.2rem;
+}
+
+.result-location.hidden {
+    display: none;
+}
+
+/* Карточка «Знал ли ты, что …» */
+.fact-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 1rem;
+}
+
+.fact-card.hidden {
+    display: none;
+}
+
+.fact-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--navy);
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+}
+
+.fact-icon {
+    flex: 0 0 auto;
+    width: 1.3rem;
+    height: 1.3rem;
+    border: 2px solid var(--navy);
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-style: italic;
+    font-family: Georgia, serif;
+}
+
+.fact-body {
+    background: var(--yellow);
+    color: var(--navy);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.result-panel-spacer {
+    flex: 1;
+}
+
+/* ===== Финальный экран ===== */
 .final-content h2 {
     font-size: 2rem;
     margin-bottom: 1.5rem;
 }
 
 .final-score {
-    background: var(--card-bg);
-    padding: 2rem;
-    border-radius: 16px;
+    background: var(--navy);
+    color: var(--cream);
+    padding: 1.75rem 2rem;
+    border-radius: var(--radius-card);
     margin-bottom: 1.5rem;
 }
 
 .score-label {
     display: block;
-    color: var(--text-muted);
+    color: rgba(253, 250, 228, 0.75);
     margin-bottom: 0.5rem;
 }
 
 .score-value {
     display: block;
-    font-size: 3rem;
-    font-weight: bold;
-    background: linear-gradient(90deg, #4a90d9, #e94560);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-family: var(--font-accent);
+    font-size: 3.2rem;
+    line-height: 1.1;
+    color: var(--yellow);
 }
 
 .score-max {
-    color: var(--text-muted);
+    color: rgba(253, 250, 228, 0.75);
     font-size: 0.9rem;
 }
 
 .rounds-summary {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 1rem;
+    background: var(--cream);
+    border-radius: var(--radius-control);
+    padding: 0.5rem 1rem;
     margin-bottom: 1.5rem;
     text-align: left;
 }
@@ -504,7 +612,8 @@ body {
 .round-item {
     display: flex;
     justify-content: space-between;
-    padding: 0.75rem;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -530,17 +639,12 @@ body {
 .final-actions {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.25rem;
 }
 
 /* ===== Таблица лидеров ===== */
-.leaderboard-content {
-    max-width: 600px;
-    margin: 0 auto;
-    text-align: center;
-}
-
 .leaderboard-content h2 {
+    font-size: 1.9rem;
     margin-bottom: 1.5rem;
 }
 
@@ -555,25 +659,26 @@ body {
 .lb-filter-btn {
     flex: 1;
     min-width: 70px;
-    padding: 0.5rem 0.5rem;
+    padding: 0.5rem;
     border: 2px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-secondary);
+    border-radius: 999px;
+    background: #fff;
     color: var(--text-muted);
     font-size: 0.85rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.3s;
+    transition: all 0.2s;
 }
 
 .lb-filter-btn:hover {
-    border-color: var(--primary-color);
-    color: var(--text-color);
+    border-color: var(--blue);
+    color: var(--blue);
 }
 
 .lb-filter-btn.active {
-    border-color: var(--primary-color);
-    background: rgba(74, 144, 217, 0.2);
-    color: var(--text-color);
+    border-color: var(--navy);
+    background: var(--navy);
+    color: var(--cream);
 }
 
 /* Бейдж режима сложности рядом с именем игрока */
@@ -585,28 +690,28 @@ body {
     font-size: 0.7rem;
     font-weight: 600;
     vertical-align: middle;
-    color: var(--text-color);
-    background: rgba(255, 255, 255, 0.12);
+    color: var(--navy);
+    background: rgba(35, 28, 98, 0.08);
 }
 
 .lb-badge-center {
-    background: rgba(40, 167, 69, 0.25);
-    color: #6ee7a0;
+    background: rgba(106, 185, 70, 0.18);
+    color: #3e7d22;
 }
 
 .lb-badge-medium {
-    background: rgba(74, 144, 217, 0.25);
-    color: #8ec5ff;
+    background: rgba(38, 86, 170, 0.14);
+    color: var(--blue);
 }
 
 .lb-badge-hard {
-    background: rgba(233, 69, 96, 0.25);
-    color: #ff9aab;
+    background: rgba(233, 61, 50, 0.12);
+    color: var(--red);
 }
 
 .leaderboard-table {
-    background: var(--card-bg);
-    border-radius: 12px;
+    background: var(--cream);
+    border-radius: var(--radius-control);
     overflow: hidden;
     margin-bottom: 1.5rem;
 }
@@ -614,7 +719,7 @@ body {
 .leaderboard-row {
     display: flex;
     justify-content: space-between;
-    padding: 1rem;
+    padding: 0.9rem 1rem;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -623,27 +728,21 @@ body {
 }
 
 .leaderboard-row.header {
-    background: var(--bg-secondary);
+    background: var(--navy);
+    color: var(--cream);
     font-weight: bold;
-    color: var(--text-muted);
+    border-bottom: none;
 }
 
 .leaderboard-rank {
     width: 50px;
+    text-align: left;
     font-weight: bold;
 }
 
-.leaderboard-rank.gold {
-    color: #ffd700;
-}
-
-.leaderboard-rank.silver {
-    color: #c0c0c0;
-}
-
-.leaderboard-rank.bronze {
-    color: #cd7f32;
-}
+.leaderboard-rank.gold   { color: #d4a017; }
+.leaderboard-rank.silver { color: #8e8e9e; }
+.leaderboard-rank.bronze { color: #b06b3b; }
 
 .leaderboard-name {
     flex: 1;
@@ -662,40 +761,77 @@ body {
     color: var(--text-muted);
 }
 
+.leaderboard-row.header .leaderboard-date {
+    color: rgba(253, 250, 228, 0.75);
+}
+
 .leaderboard-empty {
     padding: 2rem;
     color: var(--text-muted);
 }
 
-/* ===== Анимации ===== */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
+/* ===== Маркеры на карте ===== */
+.map-pin {
+    width: 34px;
+    height: auto;
+    transform: translate(-50%, -100%);
+    filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35));
+    pointer-events: none;
+}
+
+/* ===== Цвета результата (итоговый список раундов) ===== */
+.score-excellent { color: var(--green) !important; }
+.score-good      { color: var(--blue) !important; }
+.score-average   { color: #c79a00 !important; }
+.score-poor      { color: var(--red) !important; }
+
+/* ===== Мобильная раскладка ===== */
+@media (max-width: 720px) {
+    .hud-brand span {
+        display: none;
     }
-    to {
-        opacity: 1;
-        transform: translateY(0);
+
+    .hud-brand {
+        padding: 0.45rem 0.6rem;
     }
-}
 
-.screen.active {
-    animation: fadeIn 0.3s ease-out;
-}
+    /* Карта снизу фиксированной высоты, без hover-разворота */
+    .map-panel {
+        left: 0.75rem;
+        right: 0.75rem;
+        bottom: 0.75rem;
+        width: auto;
+    }
 
-/* ===== Цвета результата ===== */
-.score-excellent {
-    color: #28a745 !important;
-}
+    .map-panel:hover,
+    .map-panel:focus-within {
+        width: auto;
+    }
 
-.score-good {
-    color: #4a90d9 !important;
-}
+    .map-wrap,
+    .map-panel:hover .map-wrap,
+    .map-panel:focus-within .map-wrap {
+        height: 36vh;
+    }
 
-.score-average {
-    color: #ffc107 !important;
-}
+    /* Результат: панель — нижний лист поверх карты */
+    .result-panel {
+        top: auto;
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 62vh;
+        border-radius: 20px 20px 0 0;
+        padding: 1.25rem 1.25rem 1rem;
+        gap: 0.9rem;
+        box-shadow: 0 -10px 30px rgba(35, 28, 98, 0.35);
+    }
 
-.score-poor {
-    color: #dc3545 !important;
+    .result-title {
+        font-size: 1.5rem;
+    }
+
+    .result-panel-spacer {
+        flex: 0;
+    }
 }
