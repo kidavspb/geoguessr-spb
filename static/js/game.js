@@ -56,6 +56,23 @@ function createPinElement(src) {
     return img;
 }
 
+/**
+ * Меркаторская математика для ручного вписывания точек в кадр:
+ * встроенное вписывание bounds в API v3 срабатывает до того,
+ * как карта узнаёт размер контейнера.
+ */
+const TILE_SIZE = 256;
+
+function mercatorY(lat) {
+    const clamped = Math.max(-85, Math.min(85, lat));
+    const rad = clamped * Math.PI / 180;
+    return (1 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / Math.PI) / 2;
+}
+
+function mercatorYInv(y) {
+    return (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
+}
+
 // Описания сложности
 const DIFFICULTY_HINTS = {
     'center': 'Центр — исторический центр города',
@@ -397,34 +414,59 @@ async function loadCurrentLocation() {
 }
 
 /**
- * Загрузка фото (режим photo)
+ * Дождаться загрузки JS API v2 (панорамы). Скрипт подключён в <head>,
+ * но мог ещё не доехать по сети.
  */
-function loadPhoto(imageUrl) {
-    const overlay = document.getElementById('photo-overlay');
-    
-    // Показываем режим фото, скрываем панораму
-    document.getElementById('photo-mode').classList.remove('hidden');
-    document.getElementById('panorama-mode').classList.add('hidden');
-    
-    const img = document.getElementById('location-photo');
-    img.onload = () => {
-        overlay.classList.add('hidden');
-    };
-    img.onerror = () => {
-        overlay.querySelector('span').textContent = 'Ошибка загрузки фото';
-    };
-    img.src = imageUrl;
+function ymapsV2Ready() {
+    return new Promise((resolve, reject) => {
+        if (typeof ymaps !== 'undefined' && ymaps.ready) {
+            ymaps.ready(resolve);
+            return;
+        }
+        let attempts = 0;
+        const checkYmaps = setInterval(() => {
+            attempts++;
+            if (typeof ymaps !== 'undefined' && ymaps.ready) {
+                clearInterval(checkYmaps);
+                ymaps.ready(resolve);
+            } else if (attempts > 50) {
+                clearInterval(checkYmaps);
+                reject(new Error('API v2 не загружен'));
+            }
+        }, 100);
+    });
 }
 
 /**
- * Загрузка панорамы Яндекс (режим panorama) через API v2
+ * Найти панораму: сначала в самой точке, затем по сетке смещений вокруг
+ * (до ~200 м). Возвращает панораму или null.
+ */
+async function locatePanorama(latitude, longitude) {
+    const offsets = [
+        [0, 0],
+        [0.0005, 0], [-0.0005, 0], [0, 0.0005], [0, -0.0005],
+        [0.001, 0], [-0.001, 0], [0, 0.001], [0, -0.001],
+        [0.002, 0], [-0.002, 0], [0, 0.002], [0, -0.002],
+        [0.0015, 0.0015], [-0.0015, 0.0015], [0.0015, -0.0015], [-0.0015, -0.0015]
+    ];
+
+    for (const [latOffset, lonOffset] of offsets) {
+        try {
+            const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
+            if (result.length > 0) return result[0];
+        } catch (e) {
+            // точка без покрытия — пробуем следующее смещение
+        }
+    }
+    return null;
+}
+
+/**
+ * Загрузка панорамы Яндекс через API v2.
+ * Если панорамы нет и рядом — просит у сервера новую точку раунда (до лимита).
  */
 async function loadPanorama(latitude, longitude) {
     const overlay = document.getElementById('photo-overlay');
-    
-    // Показываем режим панорамы, скрываем фото
-    document.getElementById('photo-mode').classList.add('hidden');
-    document.getElementById('panorama-mode').classList.remove('hidden');
 
     // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
     // продолжает жить, опрашивает вырванный из DOM элемент и заваливает
@@ -432,91 +474,53 @@ async function loadPanorama(latitude, longitude) {
     destroyPanoramaPlayer();
     const panoramaContainer = document.getElementById('panorama-player');
     panoramaContainer.innerHTML = '';
-    
-    try {
-        // Ждём загрузки ymaps (API v2)
-        await new Promise((resolve, reject) => {
-            if (typeof ymaps !== 'undefined' && ymaps.ready) {
-                ymaps.ready(resolve);
-            } else {
-                // Ждём загрузки API
-                let attempts = 0;
-                const checkYmaps = setInterval(() => {
-                    attempts++;
-                    if (typeof ymaps !== 'undefined' && ymaps.ready) {
-                        clearInterval(checkYmaps);
-                        ymaps.ready(resolve);
-                    } else if (attempts > 50) {
-                        clearInterval(checkYmaps);
-                        reject(new Error('API v2 не загружен'));
-                    }
-                }, 100);
-            }
-        });
-        
-        
-        // Ищем ближайшую панораму к заданной точке
-        const panoramaResult = await ymaps.panorama.locate([latitude, longitude]);
-        
-        if (panoramaResult.length === 0) {
-            throw new Error('Панорама не найдена в этой точке');
-        }
-        
-        const panorama = panoramaResult[0];
-        lastPanorama = panorama;
 
-        // Получаем реальные координаты панорамы и сохраняем на сервер
-        const position = panorama.getPosition();
-        await saveActualPoint(position[0], position[1]);
-        
-        // Создаём плеер панорамы
-        panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, {
-            controls: ['zoomControl', 'fullscreenControl'],
-            direction: [0, 0], // Начальное направление взгляда (азимут, наклон)
-            span: [130, 80],   // Угол обзора
-            suppressMapOpenBlock: true // Скрыть кнопку "Открыть в Яндекс.Картах"
-        });
-        
-        // Ждём загрузки панорамы
-        panoramaPlayer.events.add('panoramachange', () => {
-            overlay.classList.add('hidden');
-        });
-        
-        // Также скрываем оверлей через таймаут на случай если событие не сработает
-        setTimeout(() => {
-            overlay.classList.add('hidden');
-        }, 2000);
-        
+    try {
+        await ymapsV2Ready();
     } catch (error) {
         console.error('Ошибка загрузки панорамы:', error);
-        
-        // Пробуем найти ближайшую панораму в радиусе
-        try {
-            await findNearestPanorama(latitude, longitude, overlay, panoramaContainer);
-        } catch (fallbackError) {
-            console.error('Не удалось найти панораму:', fallbackError);
-
-            // Защита от бесконечного цикла: ограничиваем число перегенераций.
-            if (panoramaRetries >= MAX_PANORAMA_RETRIES) {
-                overlay.querySelector('span').textContent =
-                    'Не удалось найти панораму поблизости. Начните игру заново.';
-                return;
-            }
-
-            panoramaRetries++;
-            overlay.querySelector('span').textContent =
-                'Здесь нет панорамы, выбираем другое место...';
-
-            // Просим сервер сгенерировать НОВУЮ точку для этого раунда
-            // (раньше повторялась та же точка — отсюда бесконечный цикл).
-            const newPoint = await skipLocation();
-            if (newPoint) {
-                await loadPanorama(newPoint.latitude, newPoint.longitude);
-            } else {
-                overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
-            }
-        }
+        overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
+        return;
     }
+
+    const panorama = await locatePanorama(latitude, longitude);
+
+    if (!panorama) {
+        // Панорамы нет — защищаемся от бесконечного цикла перегенераций
+        if (panoramaRetries >= MAX_PANORAMA_RETRIES) {
+            overlay.querySelector('span').textContent =
+                'Не удалось найти панораму поблизости. Начните игру заново.';
+            return;
+        }
+        panoramaRetries++;
+        overlay.querySelector('span').textContent = 'Здесь нет панорамы, выбираем другое место...';
+
+        const newPoint = await skipLocation();
+        if (newPoint) {
+            await loadPanorama(newPoint.latitude, newPoint.longitude);
+        } else {
+            overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
+        }
+        return;
+    }
+
+    lastPanorama = panorama;
+
+    // Реальные координаты панорамы — на сервер (по ним считаются очки)
+    const position = panorama.getPosition();
+    await saveActualPoint(position[0], position[1]);
+
+    panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, {
+        controls: ['zoomControl', 'fullscreenControl'],
+        direction: [0, 0], // Начальное направление взгляда (азимут, наклон)
+        span: [130, 80],   // Угол обзора
+        suppressMapOpenBlock: true // Скрыть кнопку «Открыть в Яндекс.Картах»
+    });
+
+    // Прячем оверлей по факту загрузки (и по таймауту — на случай, если
+    // событие не сработает)
+    panoramaPlayer.events.add('panoramachange', () => overlay.classList.add('hidden'));
+    setTimeout(() => overlay.classList.add('hidden'), 2000);
 }
 
 /**
@@ -553,52 +557,6 @@ async function saveActualPoint(latitude, longitude) {
     } catch (error) {
         console.error('Ошибка сохранения координат:', error);
     }
-}
-
-/**
- * Поиск ближайшей панорамы в радиусе
- */
-async function findNearestPanorama(latitude, longitude, overlay, container) {
-    overlay.querySelector('span').textContent = 'Поиск ближайшей панорамы...';
-    
-    // Пробуем несколько точек вокруг оригинальной
-    const offsets = [
-        [0.0005, 0], [-0.0005, 0], [0, 0.0005], [0, -0.0005],
-        [0.001, 0], [-0.001, 0], [0, 0.001], [0, -0.001],
-        [0.002, 0], [-0.002, 0], [0, 0.002], [0, -0.002],
-        [0.0015, 0.0015], [-0.0015, 0.0015], [0.0015, -0.0015], [-0.0015, -0.0015]
-    ];
-    
-    for (const [latOffset, lonOffset] of offsets) {
-        try {
-            const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
-            if (result.length > 0) {
-                const panorama = result[0];
-                lastPanorama = panorama;
-
-                // Сохраняем реальные координаты найденной панорамы
-                const position = panorama.getPosition();
-                await saveActualPoint(position[0], position[1]);
-                
-                panoramaPlayer = new ymaps.panorama.Player(container, panorama, {
-                    controls: ['zoomControl', 'fullscreenControl'],
-                    direction: [0, 0],
-                    span: [130, 80],
-                    suppressMapOpenBlock: true
-                });
-                
-                setTimeout(() => {
-                    overlay.classList.add('hidden');
-                }, 1500);
-                
-                return;
-            }
-        } catch (e) {
-            // Продолжаем поиск
-        }
-    }
-    
-    throw new Error('Панорама не найдена в радиусе');
 }
 
 /**
@@ -730,17 +688,14 @@ async function showRoundResult(data) {
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
 
-    // Название места показываем только если оно осмысленное,
-    // а не сгенерированное («Точка раунда N»)
-    const name = (data.correct_location.name || '').trim();
+    // Адрес точки («Это было: …»): серверный, а если сервер без ключа
+    // геокодера — клиентский, через JS API v2 с обычным ключом карт
     const locationBlock = document.getElementById('result-location');
-    if (name && !/^Точка раунда/i.test(name)) {
-        document.getElementById('correct-location-name').textContent = name;
+    if (data.address) {
+        document.getElementById('correct-location-name').textContent = data.address;
         locationBlock.classList.remove('hidden');
     } else {
         locationBlock.classList.add('hidden');
-        // Сервер адрес не дал (нет ключа HTTP-геокодера) — пробуем геокодировать
-        // на клиенте через JS API v2, он работает с обычным ключом карт
         clientReverseGeocode(
             data.correct_location.latitude,
             data.correct_location.longitude
@@ -750,17 +705,6 @@ async function showRoundResult(data) {
                 locationBlock.classList.remove('hidden');
             }
         });
-    }
-
-    // Карточку «Знал ли ты, что …» показываем только с настоящим фактом,
-    // а не с заглушкой «Случайное место …»
-    const description = (data.correct_location.description || '').trim();
-    const factCard = document.getElementById('fact-card');
-    if (description && !/^Случайное место/i.test(description)) {
-        document.getElementById('correct-location-description').textContent = description;
-        factCard.classList.remove('hidden');
-    } else {
-        factCard.classList.add('hidden');
     }
 
     // Строка промаха: обычный текст или сообщение о таймауте
@@ -916,10 +860,9 @@ async function showResultMap(data) {
     const guessLon = data.guess.longitude;
     const guessLat = data.guess.latitude;
 
-    // Сами вписываем обе точки в кадр: встроенное вписывание bounds в v3
-    // срабатывает до того, как карта узнаёт размер контейнера.
-    // Панель результата закрывает часть карты (справа на десктопе, снизу
-    // на мобильной раскладке) — учитываем это и в масштабе, и в центре.
+    // Сами вписываем обе точки в кадр. Панель результата закрывает часть
+    // карты (справа на десктопе, снизу на мобильной раскладке) — учитываем
+    // это и в масштабе, и в центре.
     const isMobile = window.innerWidth <= 720;
     const stageW = window.innerWidth;
     const stageH = window.innerHeight;
@@ -927,35 +870,26 @@ async function showResultMap(data) {
     const panelBottom = isMobile ? stageH * 0.62 : 0;
     const padPx = 70;
 
-    const TILE = 256;
-    const clampLat = (lat) => Math.max(-85, Math.min(85, lat));
-    // Нормированная меркаторская Y-координата (0..1)
-    const mercY = (lat) => {
-        const rad = clampLat(lat) * Math.PI / 180;
-        return (1 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / Math.PI) / 2;
-    };
-    const mercYInv = (y) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
-
     // Минимальные охваты ~50 м: при точном попадании не упираемся в ноль,
     // а при маленьком промахе карта приближается к кварталу, не к городу
     const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.0009) / 360;
-    const spanY = Math.max(Math.abs(mercY(correctLat) - mercY(guessLat)), 0.0000012);
+    const spanY = Math.max(Math.abs(mercatorY(correctLat) - mercatorY(guessLat)), 0.0000012);
     const availW = Math.max(stageW - panelRight - padPx * 2, 200);
     const availH = Math.max(stageH - panelBottom - padPx * 2, 200);
     // Округляем вниз: дробный zoom карта округлит вверх, и точки выйдут за кадр
     const zoom = Math.floor(Math.max(3, Math.min(18,
         Math.min(
-            Math.log2(availW / TILE / spanLon),
-            Math.log2(availH / TILE / spanY)
+            Math.log2(availW / TILE_SIZE / spanLon),
+            Math.log2(availH / TILE_SIZE / spanY)
         )
     )));
 
     // Геометрический центр двух точек, сдвинутый так, чтобы он оказался
     // в середине свободной от панели области
-    const worldPx = TILE * Math.pow(2, zoom);
+    const worldPx = TILE_SIZE * Math.pow(2, zoom);
     const centerLon = (correctLon + guessLon) / 2 + (panelRight / 2) * (360 / worldPx);
-    const centerY = (mercY(correctLat) + mercY(guessLat)) / 2 + (panelBottom / 2) / worldPx;
-    const centerLat = mercYInv(centerY);
+    const centerY = (mercatorY(correctLat) + mercatorY(guessLat)) / 2 + (panelBottom / 2) / worldPx;
+    const centerLat = mercatorYInv(centerY);
 
     resultMap = new YMap(mapContainer, {
         location: {
@@ -1034,10 +968,9 @@ async function showFinalResults() {
                             ? `${round.distance_m} м`
                             : `${(round.distance_m / 1000).toFixed(1)} км`);
 
-                    // Без дублирования, когда имя локации — заглушка «Раунд N»
-                    const roundLabel = /^Раунд \d+$/i.test(round.location_name || '')
-                        ? `Раунд ${round.round}`
-                        : `${round.round}. ${escapeHtml(round.location_name)}`;
+                    const roundLabel = round.address
+                        ? `${round.round}. ${escapeHtml(round.address)}`
+                        : `Раунд ${round.round}`;
 
                     item.innerHTML = `
                         <span class="round-name">${roundLabel}</span>
@@ -1181,16 +1114,8 @@ async function renderFinalMap(rounds) {
 
         // Вписываем все точки в контейнер (той же меркаторской математикой,
         // что и карта результата раунда)
-        const TILE = 256;
-        const mercY = (lat) => {
-            const clamped = Math.max(-85, Math.min(85, lat));
-            const rad = clamped * Math.PI / 180;
-            return (1 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / Math.PI) / 2;
-        };
-        const mercYInv = (y) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
-
         const lons = points.map(p => p[0]);
-        const ys = points.map(p => mercY(p[1]));
+        const ys = points.map(p => mercatorY(p[1]));
         const spanLon = Math.max(Math.max(...lons) - Math.min(...lons), 0.002) / 360;
         const spanY = Math.max(Math.max(...ys) - Math.min(...ys), 0.000003);
         const width = container.clientWidth || 400;
@@ -1198,12 +1123,12 @@ async function renderFinalMap(rounds) {
         const pad = 36;
         const zoom = Math.floor(Math.max(3, Math.min(16,
             Math.min(
-                Math.log2((width - pad * 2) / TILE / spanLon),
-                Math.log2((height - pad * 2) / TILE / spanY)
+                Math.log2((width - pad * 2) / TILE_SIZE / spanLon),
+                Math.log2((height - pad * 2) / TILE_SIZE / spanY)
             )
         )));
         const centerLon = (Math.max(...lons) + Math.min(...lons)) / 2;
-        const centerLat = mercYInv((Math.max(...ys) + Math.min(...ys)) / 2);
+        const centerLat = mercatorYInv((Math.max(...ys) + Math.min(...ys)) / 2);
 
         finalMap = new YMap(container, {
             location: { center: [centerLon, centerLat], zoom }

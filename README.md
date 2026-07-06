@@ -123,18 +123,18 @@ pytest
 
 ```
 geoguessr-spb/
-├── app.py              # Flask-приложение, API endpoints
+├── app.py              # Flask-приложение: конфигурация, миграции, HTTP-роуты
+├── game_logic.py       # Чистая игровая логика: константы, расчёты, валидация
+├── pool.py             # Пул проверенных точек с панорамами
+├── geocoder.py         # Обратное геокодирование (адрес точки ответа)
 ├── models.py           # Модели БД (SQLAlchemy)
 ├── migrations/         # Alembic-миграции схемы БД (Flask-Migrate)
-├── seed_db.py          # (опционально) заполнение БД списком известных мест
 ├── requirements.txt    # Прод-зависимости
 ├── requirements-dev.txt# Зависимости для тестов
 ├── pytest.ini          # Конфиг pytest
 ├── Dockerfile          # Прод-образ (gunicorn)
 ├── docker-compose.yml  # Локальный/прод запуск в Docker
 ├── .github/workflows/  # CI: pytest на каждый push
-├── data/
-│   └── locations.json  # Справочный датасет мест СПб (для seed_db, в игре не обязателен)
 ├── static/
 │   ├── css/style.css   # Стили интерфейса
 │   ├── js/game.js      # Игровая логика (JS)
@@ -164,7 +164,6 @@ geoguessr-spb/
 | GET | `/api/challenge/<token>` | Информация о челлендже для приглашённого игрока |
 | GET | `/api/player/stats?name=` | Статистика игрока: игр, лучший и средний счёт |
 | GET | `/api/leaderboard` | Таблица лидеров (фильтр `?difficulty=center\|medium\|hard`) |
-| GET | `/api/locations/count` | Кол-во справочных локаций в БД |
 
 ## 🛡️ Защита от накрутки
 

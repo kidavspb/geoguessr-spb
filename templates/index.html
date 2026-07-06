@@ -66,13 +66,8 @@
     <!-- Игровой экран: панорама во весь экран, карта — оверлей в углу -->
     <div id="game-screen" class="screen">
         <div class="game-stage">
-            <!-- Контейнер локации (фото или панорама) -->
+            <!-- Панорама текущего раунда -->
             <div class="location-container">
-                <!-- Режим фото -->
-                <div id="photo-mode" class="location-mode hidden">
-                    <img id="location-photo" src="" alt="Угадай это место">
-                </div>
-                <!-- Режим панорамы -->
                 <div id="panorama-mode" class="location-mode">
                     <div id="panorama-player"></div>
                 </div>
@@ -127,11 +122,6 @@
                 <div class="result-location hidden" id="result-location">
                     <span>Это было:</span>
                     <strong id="correct-location-name"></strong>
-                </div>
-
-                <div class="fact-card hidden" id="fact-card">
-                    <div class="fact-title"><span class="fact-icon">i</span> Знал ли ты, что …</div>
-                    <p class="fact-body" id="correct-location-description"></p>
                 </div>
 
                 <div class="result-panel-spacer"></div>

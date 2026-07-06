@@ -121,7 +121,7 @@ def test_choose_round_points_uses_pool(app, app_module, monkeypatch):
         db.session.commit()
 
         # random() < POOL_USE_PROBABILITY всегда → каждая точка берётся из пула
-        monkeypatch.setattr(app_module.random, 'random', lambda: 0.0)
+        monkeypatch.setattr('random.random', lambda: 0.0)
         points = app_module.choose_round_points('center', 5)
 
     assert len(points) == 5

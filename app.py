@@ -1,12 +1,15 @@
+"""GeoGuessr СПб («Петербургский следопыт») — Flask-приложение и API.
+
+Структура проекта:
+  game_logic.py — чистая игровая логика (константы, расчёты, валидация)
+  pool.py       — пул проверенных точек с панорамами
+  geocoder.py   — обратное геокодирование (адрес точки ответа)
+  models.py     — модели БД
+  app.py        — конфигурация, миграции, rate limiting, HTTP-роуты
+"""
 import os
-import json
-import math
-import random
 import secrets
-import urllib.parse
-import urllib.request
-from datetime import datetime, timezone
-from functools import lru_cache
+from datetime import timezone
 
 from flask import Flask, render_template, jsonify, request, session, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -15,7 +18,20 @@ from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembi
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-from models import db, Location, GameSession, GameRound, VerifiedPoint, utcnow
+from models import db, GameSession, GameRound, utcnow
+# Ре-экспорт логики в неймспейс app: роуты используют её напрямую,
+# а тесты обращаются к функциям и константам через модуль app.
+from game_logic import (
+    ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND, MAX_DISTANCE_KM,
+    MAX_SKIPS_PER_ROUND, MAX_ACTUAL_POINT_DRIFT_KM,
+    TIME_LIMIT_GRACE_SECONDS, TIME_LIMIT_MIN, TIME_LIMIT_MAX,
+    SPB_BOUNDS, SPB_CENTER, DIFFICULTY_SETTINGS,
+    difficulty_name, generate_random_point, haversine_distance,
+    calculate_score, parse_coords, parse_time_limit,
+)
+from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
+    choose_round_points, add_verified_point
+from geocoder import reverse_geocode
 
 # Загружаем переменные окружения из .env
 load_dotenv()
@@ -29,7 +45,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 # URI базы можно переопределить через DATABASE_URL (12-factor): удобно для
 # тестов (отдельная/временная БД) и для смены СУБД, не трогая код.
-# По умолчанию — прежний sqlite-файл в папке instance/.
+# По умолчанию — sqlite-файл в папке instance/.
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///geoguessr_spb.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -46,12 +62,8 @@ app.config.update(
 # чтобы корректно видеть схему (https) и реальный IP клиента.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# API ключ Яндекс Карт из переменной окружения
+# API ключ Яндекс Карт (для JS API на странице)
 YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
-# Ключ HTTP-геокодера Яндекса (отдельный сервис; если не задан — пробуем ключ карт,
-# если и его нет — обратное геокодирование просто отключено).
-YANDEX_GEOCODER_API_KEY = os.environ.get('YANDEX_GEOCODER_API_KEY',
-                                         os.environ.get('YANDEX_MAPS_API_KEY', ''))
 
 db.init_app(app)
 migrate = Migrate(app, db, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations'))
@@ -66,8 +78,8 @@ limiter = Limiter(
     enabled=_env_bool('RATELIMIT_ENABLED', True),
 )
 
-# Ревизия, соответствующая схеме, которую раньше создавал db.create_all()
-# (+ колонка difficulty из старого ручного _ensure_schema).
+# Ревизия, соответствующая схеме последней версии до перехода на Alembic
+# (создавалась через db.create_all()).
 BASELINE_REVISION = '5f7875fb0c81'
 
 
@@ -80,18 +92,10 @@ def _run_migrations():
         ревизией и накатываем остальное;
       * БД уже под Alembic — обычный upgrade (no-op, если она актуальна).
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import inspect
     inspector = inspect(db.engine)
     tables = inspector.get_table_names()
     if 'game_sessions' in tables and 'alembic_version' not in tables:
-        # Совсем старые БД могли не иметь колонки difficulty (её дописывал
-        # вручную старый _ensure_schema) — дотягиваем до baseline-схемы.
-        columns = {col['name'] for col in inspector.get_columns('game_sessions')}
-        if 'difficulty' not in columns:
-            db.session.execute(text(
-                "ALTER TABLE game_sessions ADD COLUMN difficulty VARCHAR(10) DEFAULT 'medium'"
-            ))
-            db.session.commit()
         _alembic_stamp(revision=BASELINE_REVISION)
         app.logger.info('БД без Alembic: помечена ревизией %s', BASELINE_REVISION)
     _alembic_upgrade()
@@ -104,246 +108,16 @@ if _env_bool('AUTO_MIGRATE', True):
     with app.app_context():
         _run_migrations()
 
-# Константы игры
-ROUNDS_PER_GAME = 5
-MAX_SCORE_PER_ROUND = 5000
-# Максимальное расстояние для СПб (примерно 30 км диаметр города)
-MAX_DISTANCE_KM = 30
 
-# Серверный предел перегенераций точки на раунд (клиент сдаётся после 8):
-# без него можно бесконечно рероллить точку, пока не выпадет знакомое место.
-MAX_SKIPS_PER_ROUND = 10
-
-# Запас к лимиту времени на сетевые задержки и загрузку панорамы.
-TIME_LIMIT_GRACE_SECONDS = 20
-# Допустимые границы лимита времени на раунд (секунды).
-TIME_LIMIT_MIN, TIME_LIMIT_MAX = 30, 600
-
-# Пул проверенных точек: начинаем использовать, когда точек достаточно,
-# и оставляем долю свежесгенерированных, чтобы пул продолжал расти.
-POOL_MIN_SIZE = 15
-POOL_USE_PROBABILITY = 0.7
-# Максимальное расстояние точки пула от центра для режима сложности (км);
-# None — без ограничения (весь город).
-POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
-
-# Границы Санкт-Петербурга для генерации случайных точек
-# Центральная часть города где гарантированно есть панорамы
-SPB_BOUNDS = {
-    'lat_min': 59.87,
-    'lat_max': 60.02,
-    'lon_min': 30.15,
-    'lon_max': 30.50
-}
-
-# Центр СПб (Дворцовая площадь)
-SPB_CENTER = (59.939, 30.315)
-
-# Настройки для разных режимов сложности
-DIFFICULTY_SETTINGS = {
-    'center': {
-        'name': 'Центр',
-        'description': 'Исторический центр города',
-        'center': SPB_CENTER,
-        'std_lat': 0.015,  # ~1.5 км разброс
-        'std_lon': 0.025,
-    },
-    'medium': {
-        'name': 'Средняя',
-        'description': 'Центр и ближайшие районы',
-        'center': SPB_CENTER,
-        'std_lat': 0.03,   # ~3 км разброс
-        'std_lon': 0.05,
-    },
-    'hard': {
-        'name': 'Сложная',
-        'description': 'Весь город',
-        'center': SPB_CENTER,
-        'std_lat': 0.06,   # ~6 км разброс
-        'std_lon': 0.12,
-    }
-}
-
-
-def difficulty_name(difficulty):
-    """Человекочитаемое название режима сложности (для UI/ответов API)."""
-    settings = DIFFICULTY_SETTINGS.get(difficulty)
-    return settings['name'] if settings else difficulty
-
-
-def generate_random_point(difficulty='medium'):
-    """Генерация случайной точки с bias к центру СПб"""
-    settings = DIFFICULTY_SETTINGS.get(difficulty, DIFFICULTY_SETTINGS['medium'])
-
-    # Генерируем точку с нормальным распределением вокруг центра
-    while True:
-        lat = random.gauss(settings['center'][0], settings['std_lat'])
-        lon = random.gauss(settings['center'][1], settings['std_lon'])
-
-        # Проверяем, что точка в пределах города
-        if (SPB_BOUNDS['lat_min'] <= lat <= SPB_BOUNDS['lat_max'] and
-            SPB_BOUNDS['lon_min'] <= lon <= SPB_BOUNDS['lon_max']):
-            return round(lat, 6), round(lon, 6)
-
-
-def choose_round_points(difficulty, count):
-    """Точки для раундов игры: смесь пула проверенных панорам и новых случайных.
-
-    Пока пул мал — все точки случайные (как раньше). Когда точек достаточно,
-    большинство раундов стартует с проверенной точки (панорама точно есть,
-    без перебора), но часть по-прежнему генерируется — так пул растёт.
-    """
-    query = VerifiedPoint.query
-    radius = POOL_RADIUS_KM.get(difficulty)
-    if radius is not None:
-        query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
-
-    pool = []
-    if query.count() >= POOL_MIN_SIZE:
-        pool = query.order_by(db.func.random()).limit(count).all()
-
-    points = []
-    pool_iter = iter(pool)
-    for _ in range(count):
-        picked = None
-        if random.random() < POOL_USE_PROBABILITY:
-            picked = next(pool_iter, None)
-        if picked is not None:
-            points.append((picked.latitude, picked.longitude))
-        else:
-            points.append(generate_random_point(difficulty))
-    return points
-
-
-def add_verified_point(lat, lon):
-    """Добавить панораму в пул проверенных точек (с дедупликацией ~10 м)."""
-    if not (SPB_BOUNDS['lat_min'] - 0.01 <= lat <= SPB_BOUNDS['lat_max'] + 0.01 and
-            SPB_BOUNDS['lon_min'] - 0.02 <= lon <= SPB_BOUNDS['lon_max'] + 0.02):
-        return
-    lat_key, lon_key = int(round(lat * 10000)), int(round(lon * 10000))
-    if VerifiedPoint.query.filter_by(lat_key=lat_key, lon_key=lon_key).first():
-        return
-    try:
-        db.session.add(VerifiedPoint(
-            latitude=lat,
-            longitude=lon,
-            lat_key=lat_key,
-            lon_key=lon_key,
-            dist_from_center_km=haversine_distance(lat, lon, *SPB_CENTER),
-        ))
-        db.session.commit()
-    except Exception:
-        # Гонка на unique-ключе или временная блокировка SQLite — точка пула
-        # не критична, просто пропускаем.
-        db.session.rollback()
-
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """Вычисление расстояния между двумя точками по формуле гаверсинуса"""
-    R = 6371  # Радиус Земли в км
-
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    delta_lat = math.radians(lat2 - lat1)
-    delta_lon = math.radians(lon2 - lon1)
-
-    a = math.sin(delta_lat / 2) ** 2 + \
-        math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    return R * c
-
-
-def calculate_score(distance_km):
-    """Расчёт очков на основе расстояния"""
-    if distance_km <= 0.05:  # 50 метров — идеально
-        return MAX_SCORE_PER_ROUND
-    elif distance_km >= MAX_DISTANCE_KM:
-        return 0
-    else:
-        # Экспоненциальное уменьшение очков
-        score = MAX_SCORE_PER_ROUND * math.exp(-distance_km / 3)
-        return max(0, int(score))
-
-
-# Максимальное допустимое расхождение (км) между сгенерированной сервером точкой
-# и «реальной» точкой панорамы, которую сообщает клиент. Защита от накрутки очков:
-# клиент не может выдать произвольные координаты за правильный ответ.
-MAX_ACTUAL_POINT_DRIFT_KM = 1.0
-
-
-def parse_coords(data):
-    """Достать и провалидировать широту/долготу из тела запроса.
-
-    Возвращает (lat, lon) при успехе или None при некорректных данных.
-    """
-    if not isinstance(data, dict):
-        return None
-    try:
-        lat = float(data['latitude'])
-        lon = float(data['longitude'])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if math.isnan(lat) or math.isnan(lon):
-        return None
-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        return None
-    return lat, lon
-
-
-def parse_time_limit(value):
-    """Провалидировать лимит времени на раунд. None — играем без лимита."""
-    if value in (None, '', 0, '0'):
-        return None
-    try:
-        seconds = int(value)
-    except (TypeError, ValueError):
-        return None
-    if TIME_LIMIT_MIN <= seconds <= TIME_LIMIT_MAX:
-        return seconds
-    return None
-
+# --------------------------------------------------------------------------
+# Помощники роутов
+# --------------------------------------------------------------------------
 
 def _aware_utc(dt):
     """SQLite возвращает naive datetime — считаем, что это UTC."""
     if dt is None:
         return None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-
-
-@lru_cache(maxsize=1024)
-def _reverse_geocode_cached(lat_r, lon_r):
-    """Запрос к HTTP-геокодеру Яндекса. Координаты уже округлены (ключ кэша)."""
-    params = urllib.parse.urlencode({
-        'apikey': YANDEX_GEOCODER_API_KEY,
-        'geocode': f'{lon_r},{lat_r}',
-        'sco': 'longlat',
-        'kind': 'house',
-        'format': 'json',
-        'results': 1,
-        'lang': 'ru_RU',
-    })
-    url = f'https://geocode-maps.yandex.ru/1.x/?{params}'
-    try:
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            data = json.load(resp)
-        members = data['response']['GeoObjectCollection']['featureMember']
-        if not members:
-            return None
-        geo = members[0]['GeoObject']
-        # name — «улица, дом»; этого достаточно, город игрок и так знает
-        return geo.get('name') or None
-    except Exception as e:
-        app.logger.debug('Геокодер недоступен: %s', e)
-        return None
-
-
-def reverse_geocode(lat, lon):
-    """Адрес точки («улица, дом») или None, если геокодер недоступен/выключен."""
-    if not YANDEX_GEOCODER_API_KEY:
-        return None
-    # Округление до ~10 м: соседние панорамы попадают в один ключ кэша
-    return _reverse_geocode_cached(round(lat, 4), round(lon, 4))
 
 
 def _current_game():
@@ -354,13 +128,25 @@ def _current_game():
     return db.session.get(GameSession, game_id)
 
 
-def _round_row(game):
-    """Строка текущего раунда игры (раунды создаются заранее при старте)."""
-    if game.current_round is None or game.current_round >= ROUNDS_PER_GAME:
-        return None
-    return GameRound.query.filter_by(
-        session_id=game.id, round_number=game.current_round + 1
+def _load_active_round():
+    """Игра и строка её текущего раунда, либо (None, None, ответ-ошибка).
+
+    Общая проверка для location / skip / set_actual_point / guess.
+    """
+    game = _current_game()
+    if game is None:
+        return None, None, (jsonify({'error': 'Игра не начата'}), 400)
+
+    if game.completed_at is not None or (game.current_round or 0) >= ROUNDS_PER_GAME:
+        return None, None, (jsonify({'error': 'Игра завершена', 'game_over': True}), 400)
+
+    rnd = GameRound.query.filter_by(
+        session_id=game.id, round_number=(game.current_round or 0) + 1
     ).first()
+    if rnd is None or rnd.gen_latitude is None:
+        return None, None, (jsonify({'error': 'Игра не начата'}), 400)
+
+    return game, rnd, None
 
 
 def _scoring_point(rnd):
@@ -392,6 +178,10 @@ def inject_asset_version():
     return {'asset_version': version}
 
 
+# --------------------------------------------------------------------------
+# Страницы
+# --------------------------------------------------------------------------
+
 @app.route('/')
 def index():
     """Главная страница с игрой"""
@@ -404,6 +194,10 @@ def favicon():
     return send_from_directory(os.path.join(app.static_folder, 'favicons'), 'favicon.ico',
                                mimetype='image/vnd.microsoft.icon')
 
+
+# --------------------------------------------------------------------------
+# Игровое API
+# --------------------------------------------------------------------------
 
 @app.route('/api/game/start', methods=['POST'])
 @limiter.limit('10 per minute')
@@ -470,11 +264,7 @@ def start_game():
 
         db.session.commit()
 
-        # В cookie — только id игры; заодно чистим ключи старого формата,
-        # когда точки хранились прямо в сессии.
         session['game_id'] = game_session.id
-        for legacy_key in ('random_points', 'actual_points', 'current_round', 'difficulty'):
-            session.pop(legacy_key, None)
 
         app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, '
                         f'difficulty={difficulty}, time_limit={time_limit}, '
@@ -503,16 +293,9 @@ def start_game():
 @app.route('/api/game/location', methods=['GET'])
 def get_current_location():
     """Получить текущую локацию для угадывания"""
-    game = _current_game()
-    if game is None:
-        return jsonify({'error': 'Игра не начата'}), 400
-
-    if game.completed_at is not None or (game.current_round or 0) >= ROUNDS_PER_GAME:
-        return jsonify({'error': 'Игра завершена', 'game_over': True}), 400
-
-    rnd = _round_row(game)
-    if rnd is None or rnd.gen_latitude is None:
-        return jsonify({'error': 'Игра не начата'}), 400
+    game, rnd, error = _load_active_round()
+    if error:
+        return error
 
     # Отметка старта раунда — от неё отсчитывается лимит времени
     if rnd.started_at is None:
@@ -520,7 +303,7 @@ def get_current_location():
         db.session.commit()
 
     return jsonify({
-        'round': (game.current_round or 0) + 1,
+        'round': rnd.round_number,
         'total_rounds': ROUNDS_PER_GAME,
         'time_limit': game.time_limit,
         # Координаты для поиска панорамы
@@ -538,16 +321,9 @@ def skip_location():
     перегенераций ограничено и на сервере: иначе точку можно рероллить,
     пока не выпадет знакомое место.
     """
-    game = _current_game()
-    if game is None:
-        return jsonify({'error': 'Игра не начата'}), 400
-
-    if game.completed_at is not None or (game.current_round or 0) >= ROUNDS_PER_GAME:
-        return jsonify({'error': 'Игра завершена', 'game_over': True}), 400
-
-    rnd = _round_row(game)
-    if rnd is None:
-        return jsonify({'error': 'Игра не начата'}), 400
+    game, rnd, error = _load_active_round()
+    if error:
+        return error
 
     if (rnd.skips or 0) >= MAX_SKIPS_PER_ROUND:
         return jsonify({'error': 'Лимит перегенераций точки для этого раунда исчерпан'}), 429
@@ -563,7 +339,7 @@ def skip_location():
     db.session.commit()
 
     return jsonify({
-        'round': (game.current_round or 0) + 1,
+        'round': rnd.round_number,
         'total_rounds': ROUNDS_PER_GAME,
         'time_limit': game.time_limit,
         'latitude': lat,
@@ -574,18 +350,14 @@ def skip_location():
 @app.route('/api/game/set_actual_point', methods=['POST'])
 def set_actual_point():
     """Сохранить реальные координаты найденной панорамы"""
-    game = _current_game()
-    if game is None:
-        return jsonify({'error': 'Игра не начата'}), 400
+    game, rnd, error = _load_active_round()
+    if error:
+        return error
 
     coords = parse_coords(request.get_json(silent=True))
     if coords is None:
         return jsonify({'error': 'Некорректные координаты'}), 400
     lat, lon = coords
-
-    rnd = _round_row(game)
-    if rnd is None or rnd.gen_latitude is None:
-        return jsonify({'error': 'Раунд недоступен'}), 400
 
     # Антифрод: панорама, найденная клиентом, должна быть рядом со сгенерированной
     # сервером точкой. Иначе игнорируем — счёт будет считаться по серверной точке,
@@ -612,16 +384,9 @@ def set_actual_point():
 @app.route('/api/game/guess', methods=['POST'])
 def submit_guess():
     """Отправить угаданные координаты (или таймаут раунда без догадки)."""
-    game = _current_game()
-    if game is None:
-        return jsonify({'error': 'Игра не начата'}), 400
-
-    if game.completed_at is not None or (game.current_round or 0) >= ROUNDS_PER_GAME:
-        return jsonify({'error': 'Игра завершена'}), 400
-
-    rnd = _round_row(game)
-    if rnd is None or rnd.gen_latitude is None:
-        return jsonify({'error': 'Игра не начата'}), 400
+    game, rnd, error = _load_active_round()
+    if error:
+        return error
     if rnd.answered_at is not None:
         return jsonify({'error': 'Раунд уже сыгран'}), 400
 
@@ -681,8 +446,6 @@ def submit_guess():
 
     return jsonify({
         'correct_location': {
-            'name': address or f'Точка раунда {rnd.round_number}',
-            'description': 'Случайное место в Санкт-Петербурге',
             'latitude': actual_lat,
             'longitude': actual_lon
         },
@@ -714,21 +477,18 @@ def get_results():
                       GameRound.answered_at.isnot(None))
               .order_by(GameRound.round_number)
               .all())
-    rounds_data = []
-    for r in rounds:
-        rounds_data.append({
-            'round': r.round_number,
-            'location_name': r.address or f'Раунд {r.round_number}',
-            'address': r.address,
-            'distance_m': int(r.distance_km * 1000) if r.distance_km is not None else None,
-            'score': r.score,
-            'timed_out': bool(r.timed_out),
-            'guess': {'latitude': r.guess_latitude, 'longitude': r.guess_longitude}
-                     if r.guess_latitude is not None else None,
-            'actual': {'latitude': r.actual_latitude, 'longitude': r.actual_longitude}
-                      if r.actual_latitude is not None
-                      else {'latitude': r.gen_latitude, 'longitude': r.gen_longitude},
-        })
+    rounds_data = [{
+        'round': r.round_number,
+        'address': r.address,
+        'distance_m': int(r.distance_km * 1000) if r.distance_km is not None else None,
+        'score': r.score,
+        'timed_out': bool(r.timed_out),
+        'guess': {'latitude': r.guess_latitude, 'longitude': r.guess_longitude}
+                 if r.guess_latitude is not None else None,
+        'actual': {'latitude': r.actual_latitude, 'longitude': r.actual_longitude}
+                  if r.actual_latitude is not None
+                  else {'latitude': r.gen_latitude, 'longitude': r.gen_longitude},
+    } for r in rounds]
 
     payload = {
         'player_name': game.player_name,
@@ -784,14 +544,13 @@ def player_stats():
     if not name:
         return jsonify({'error': 'Не указано имя'}), 400
 
-    row = (db.session.query(
+    games, best, avg = (db.session.query(
                 db.func.count(GameSession.id),
                 db.func.max(GameSession.total_score),
                 db.func.avg(GameSession.total_score))
            .filter(GameSession.player_name == name,
                    GameSession.completed_at.isnot(None))
            .one())
-    games, best, avg = row
     return jsonify({
         'player_name': name,
         'games': int(games or 0),
@@ -832,13 +591,6 @@ def get_leaderboard():
             for i, game in enumerate(top_games)
         ]
     })
-
-
-@app.route('/api/locations/count', methods=['GET'])
-def get_locations_count():
-    """Получить количество локаций в базе"""
-    count = Location.query.count()
-    return jsonify({'count': count})
 
 
 if __name__ == '__main__':

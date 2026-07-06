@@ -365,16 +365,6 @@ h1, h2 {
     height: 100%;
 }
 
-.location-mode.hidden {
-    display: none;
-}
-
-#photo-mode img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
 #panorama-mode,
 #panorama-player {
     width: 100%;
@@ -394,10 +384,6 @@ h1, h2 {
     color: var(--navy);
     font-size: 1.05rem;
     z-index: 5;
-}
-
-.photo-overlay.hidden {
-    display: none;
 }
 
 .overlay-logo {
@@ -516,10 +502,6 @@ h1, h2 {
     z-index: 5;
 }
 
-.map-hint.hidden {
-    display: none;
-}
-
 .btn-answer {
     display: block;
     margin: 0.75rem 0 0;
@@ -580,10 +562,6 @@ h1, h2 {
                 0 0 0 4px rgba(253, 250, 228, 0.15);
 }
 
-.result-pano.hidden {
-    display: none;
-}
-
 /* В маленьком круге прячем кнопки плеера (зум, фулскрин, промо) —
    остаётся только сама панорама и копирайт */
 .result-pano [class*="gotoymaps"],
@@ -635,54 +613,7 @@ h1, h2 {
     margin-bottom: 0.2rem;
 }
 
-.result-location.hidden {
-    display: none;
-}
-
 /* Карточка «Знал ли ты, что …» */
-.fact-card {
-    background: #fff;
-    border-radius: 16px;
-    padding: 1rem;
-}
-
-.fact-card.hidden {
-    display: none;
-}
-
-.fact-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--navy);
-    font-weight: 700;
-    margin-bottom: 0.75rem;
-}
-
-.fact-icon {
-    flex: 0 0 auto;
-    width: 1.3rem;
-    height: 1.3rem;
-    border: 2px solid var(--navy);
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.85rem;
-    font-style: italic;
-    font-family: Georgia, serif;
-}
-
-.fact-body {
-    background: var(--yellow);
-    color: var(--navy);
-    border-radius: 12px;
-    padding: 0.9rem 1rem;
-    font-size: 0.9rem;
-    font-weight: 600;
-    line-height: 1.5;
-}
-
 .result-panel-spacer {
     flex: 1;
 }
@@ -1075,10 +1006,6 @@ h1, h2 {
     z-index: 1000;
     opacity: 1;
     transition: opacity 0.3s;
-}
-
-.toast.hidden {
-    display: none;
 }
 
 /* ===== Контролы панорамы Яндекса (JS API v2) ===== */
