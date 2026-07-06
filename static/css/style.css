@@ -18,6 +18,12 @@
     box-sizing: border-box;
 }
 
+/* Утилита: .hidden прячет любой элемент. !important — потому что классы
+   компонентов объявлены ниже по файлу и иначе перебивали бы это правило. */
+.hidden {
+    display: none !important;
+}
+
 :root {
     /* Фирменные цвета */
     --navy: #231c62;
@@ -187,18 +193,21 @@ h1, h2 {
     background: rgba(255, 255, 255, 0.12);
 }
 
-#start-screen .difficulty-btn {
+#start-screen .difficulty-btn,
+#start-screen .timer-btn {
     background: transparent;
     border-color: rgba(253, 250, 228, 0.25);
     color: rgba(253, 250, 228, 0.75);
 }
 
-#start-screen .difficulty-btn:hover {
+#start-screen .difficulty-btn:hover,
+#start-screen .timer-btn:hover {
     border-color: var(--cream);
     color: var(--cream);
 }
 
-#start-screen .difficulty-btn.active {
+#start-screen .difficulty-btn.active,
+#start-screen .timer-btn.active {
     background: var(--cream);
     border-color: var(--cream);
     color: var(--navy);
@@ -286,7 +295,8 @@ h1, h2 {
     margin-top: 0.5rem;
 }
 
-.difficulty-btn {
+.difficulty-btn,
+.timer-btn {
     flex: 1;
     padding: 0.6rem 0.5rem;
     border: 2px solid var(--border-color);
@@ -299,12 +309,14 @@ h1, h2 {
     transition: all 0.2s;
 }
 
-.difficulty-btn:hover {
+.difficulty-btn:hover,
+.timer-btn:hover {
     border-color: var(--blue);
     color: var(--blue);
 }
 
-.difficulty-btn.active {
+.difficulty-btn.active,
+.timer-btn.active {
     border-color: var(--navy);
     background: var(--navy);
     color: var(--cream);
@@ -948,4 +960,123 @@ h1, h2 {
     .result-panel-spacer {
         flex: 0;
     }
+}
+
+/* ===== Челлендж-баннер на стартовом экране ===== */
+.challenge-banner {
+    background: rgba(255, 198, 41, 0.14);
+    border: 2px solid var(--yellow);
+    border-radius: var(--radius-control);
+    color: var(--cream);
+    padding: 0.9rem 1rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    text-align: left;
+}
+
+.challenge-banner strong {
+    color: var(--yellow);
+}
+
+/* ===== Таймер раунда в HUD ===== */
+.hud-chip-timer strong {
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-chip-timer.timer-low {
+    background: var(--red);
+    color: #fff;
+    animation: timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+}
+
+/* ===== Финальный экран: карта всех раундов ===== */
+.final-map {
+    height: 280px;
+    border-radius: var(--radius-control);
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+    border: 2px solid var(--border-color);
+    background: var(--cream);
+}
+
+/* ===== Финальный экран: сравнение с автором челленджа ===== */
+.challenge-compare {
+    background: var(--cream);
+    border: 2px solid var(--yellow);
+    border-radius: var(--radius-control);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.challenge-compare .cc-verdict {
+    font-family: var(--font-accent);
+    font-size: 1.25rem;
+    color: var(--navy);
+    margin-bottom: 0.5rem;
+}
+
+.challenge-compare .cc-scores {
+    display: flex;
+    justify-content: center;
+    gap: 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+.challenge-compare .cc-scores strong {
+    color: var(--navy);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ===== Финальный экран: статистика игрока ===== */
+.player-stats {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+}
+
+.player-stats strong {
+    color: var(--navy);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ===== Бейдж лимита времени в таблице лидеров ===== */
+.lb-badge-timer {
+    background: rgba(255, 198, 41, 0.28);
+    color: #8a6d00;
+}
+
+/* ===== Пометка «время вышло» в списке раундов ===== */
+.round-item .round-timeout {
+    color: var(--red);
+    font-size: 0.8rem;
+}
+
+/* ===== Всплывающее уведомление ===== */
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 2rem;
+    transform: translateX(-50%);
+    /* Тост — только сообщение: не должен перехватывать клики по кнопкам под ним */
+    pointer-events: none;
+    background: var(--navy);
+    color: var(--cream);
+    padding: 0.8rem 1.5rem;
+    border-radius: 999px;
+    box-shadow: var(--shadow-chip);
+    font-size: 0.95rem;
+    z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.3s;
+}
+
+.toast.hidden {
+    display: none;
 }

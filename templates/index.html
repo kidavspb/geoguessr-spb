@@ -35,7 +35,10 @@
                     <input type="text" id="player-name" placeholder="Аноним" maxlength="50" autocomplete="nickname">
                 </div>
 
-                <div class="input-group">
+                <!-- Баннер челленджа: показывается при заходе по ссылке-вызову -->
+                <div class="challenge-banner hidden" id="challenge-banner"></div>
+
+                <div class="input-group" id="difficulty-group">
                     <label>Сложность</label>
                     <div class="difficulty-toggle">
                         <button type="button" class="difficulty-btn" data-difficulty="center">Центр</button>
@@ -43,6 +46,15 @@
                         <button type="button" class="difficulty-btn" data-difficulty="hard">Весь город</button>
                     </div>
                     <small class="difficulty-hint">Средняя — центр и ближайшие районы</small>
+                </div>
+
+                <div class="input-group" id="timer-group">
+                    <label>Время на раунд</label>
+                    <div class="difficulty-toggle">
+                        <button type="button" class="timer-btn active" data-timer="0">Без лимита</button>
+                        <button type="button" class="timer-btn" data-timer="180">3 минуты</button>
+                        <button type="button" class="timer-btn" data-timer="60">1 минута</button>
+                    </div>
                 </div>
 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
@@ -79,6 +91,7 @@
                 <div class="hud-chips">
                     <div class="hud-chip">Раунд&nbsp;<strong id="current-round">1</strong>&thinsp;/&thinsp;<span id="total-rounds">5</span></div>
                     <div class="hud-chip">Счёт&nbsp;<strong id="total-score">0</strong></div>
+                    <div class="hud-chip hud-chip-timer hidden" id="timer-chip">⏱&nbsp;<strong id="timer-value">0:00</strong></div>
                 </div>
             </div>
 
@@ -109,7 +122,7 @@
                     <div class="result-score"><span id="result-score">0</span> <span id="result-score-word">очков</span></div>
                 </div>
 
-                <p class="result-miss">Ты промахнулся на <span class="miss-distance" id="result-distance">0 м</span> от точки съёмки</p>
+                <p class="result-miss" id="result-miss">Ты промахнулся на <span class="miss-distance" id="result-distance">0 м</span> от точки съёмки</p>
 
                 <div class="result-location hidden" id="result-location">
                     <span>Это было:</span>
@@ -140,11 +153,21 @@
                     <span class="score-max">из 25 000</span>
                 </div>
 
+                <!-- Сравнение с автором челленджа (если играли по ссылке-вызову) -->
+                <div id="challenge-compare" class="challenge-compare hidden"></div>
+
+                <!-- Карта всех раундов игры: догадки и реальные точки -->
+                <div id="final-map" class="final-map hidden"></div>
+
                 <div id="rounds-summary" class="rounds-summary">
                     <!-- Список раундов будет добавлен динамически -->
                 </div>
 
+                <!-- Статистика игрока по имени -->
+                <div id="player-stats" class="player-stats hidden"></div>
+
                 <div class="final-actions">
+                    <button id="challenge-btn" class="btn btn-secondary hidden">⚔️ Бросить вызов другу</button>
                     <button id="play-again-btn" class="btn btn-primary">Играть снова</button>
                     <button id="final-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
                 </div>
@@ -174,6 +197,9 @@
             </div>
         </main>
     </div>
+
+    <!-- Всплывающее уведомление (копирование ссылки-вызова и т.п.) -->
+    <div id="toast" class="toast hidden"></div>
 
     <!-- Яндекс.Карты загружается в head, наш скрипт после DOM -->
     <script src="{{ url_for('static', filename='js/game.js') }}?v={{ asset_version }}" defer></script>

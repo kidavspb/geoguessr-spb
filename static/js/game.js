@@ -12,11 +12,17 @@ let currentMarker = null;
 let guessCoords = null;
 let panoramaRetries = 0; // сколько раз перегенерировали точку из-за отсутствия панорамы
 const MAX_PANORAMA_RETRIES = 8;
+let finalMap = null;          // карта всех раундов на финальном экране
+let roundTimerInterval = null; // интервал обратного отсчёта раунда
+let roundDeadline = null;      // момент окончания времени раунда (ms)
+let guessSubmitting = false;   // защита от двойной отправки (клик + таймер)
 let gameData = {
     totalRounds: 5,
     currentRound: 1,
     totalScore: 0,
-    difficulty: 'medium' // center, medium, hard
+    difficulty: 'medium', // center, medium, hard
+    timeLimit: 0,         // секунд на раунд, 0 — без лимита
+    challengeToken: null  // токен челленджа из ссылки-вызова
 };
 
 // Координаты центра СПб
@@ -61,8 +67,62 @@ const DIFFICULTY_HINTS = {
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     initDifficultyToggle();
+    initTimerToggle();
+    initChallengeFromUrl();
     checkYandexMapsAPI();
 });
+
+/**
+ * Инициализация переключателя лимита времени на раунд
+ */
+function initTimerToggle() {
+    const timerBtns = document.querySelectorAll('.timer-btn');
+    timerBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            timerBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            gameData.timeLimit = parseInt(btn.dataset.timer, 10) || 0;
+        });
+    });
+}
+
+/**
+ * Заход по ссылке-вызову (?challenge=TOKEN): показываем баннер с данными
+ * автора челленджа; сложность и таймер берутся из его игры.
+ */
+async function initChallengeFromUrl() {
+    const token = new URLSearchParams(window.location.search).get('challenge');
+    if (!token) return;
+
+    const banner = document.getElementById('challenge-banner');
+    try {
+        const response = await fetch(`/api/challenge/${encodeURIComponent(token)}`, {
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            banner.textContent = 'Челлендж не найден — можно сыграть обычную игру.';
+            banner.classList.remove('hidden');
+            return;
+        }
+
+        gameData.challengeToken = token;
+        const timerText = data.time_limit
+            ? `, ${Math.round(data.time_limit / 60) || 1} мин на раунд`
+            : '';
+        banner.innerHTML = `⚔️ <strong>${escapeHtml(data.player_name)}</strong> бросает тебе вызов!<br>` +
+            `Счёт: <strong>${data.total_score}</strong> ` +
+            `(${escapeHtml(data.difficulty_name || '')}${timerText}). Те же точки — сможешь лучше?`;
+        banner.classList.remove('hidden');
+
+        // Параметры фиксированы челленджем — селекторы прячем
+        document.getElementById('difficulty-group').classList.add('hidden');
+        document.getElementById('timer-group').classList.add('hidden');
+    } catch (error) {
+        console.error('Ошибка загрузки челленджа:', error);
+    }
+}
 
 /**
  * Инициализация переключателя сложности
@@ -123,6 +183,7 @@ function initEventListeners() {
         showScreen('start-screen');
     });
     document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
+    document.getElementById('challenge-btn').addEventListener('click', copyChallengeLink);
 
     // Фильтр таблицы лидеров по сложности
     document.querySelectorAll('.lb-filter-btn').forEach(btn => {
@@ -159,25 +220,38 @@ function showScreen(screenId) {
  */
 async function startGame() {
     const playerName = document.getElementById('player-name').value.trim() || 'Аноним';
-    
+
     try {
         const response = await fetch('/api/game/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify({ 
+            body: JSON.stringify({
                 player_name: playerName,
-                difficulty: gameData.difficulty
+                difficulty: gameData.difficulty,
+                time_limit: gameData.timeLimit || null,
+                challenge_token: gameData.challengeToken
             })
         });
-        
+
         const data = await response.json();
 
         if (response.ok) {
             gameData.totalRounds = data.total_rounds;
             gameData.currentRound = 1;
             gameData.totalScore = 0;
-            
+            gameData.timeLimit = data.time_limit || 0; // серверное значение — истина
+
+            // Челлендж одноразовый: следующая игра с этими же точками не имеет
+            // смысла — игрок их уже видел. Возвращаем обычный стартовый экран.
+            if (gameData.challengeToken) {
+                gameData.challengeToken = null;
+                document.getElementById('challenge-banner').classList.add('hidden');
+                document.getElementById('difficulty-group').classList.remove('hidden');
+                document.getElementById('timer-group').classList.remove('hidden');
+                window.history.replaceState(null, '', window.location.pathname);
+            }
+
             document.getElementById('total-rounds').textContent = gameData.totalRounds;
             document.getElementById('total-score').textContent = '0';
             
@@ -304,12 +378,15 @@ async function loadCurrentLocation() {
             // Обновляем информацию о раунде
             gameData.currentRound = data.round;
             document.getElementById('current-round').textContent = data.round;
-            
+
             // Загружаем панораму
             await loadPanorama(data.latitude, data.longitude);
-            
+
             // Сбрасываем карту
             resetMapForNewRound();
+
+            // Панорама на экране — запускаем отсчёт времени раунда
+            startRoundTimer();
         } else {
             alert('Ошибка: ' + data.error);
         }
@@ -348,7 +425,11 @@ async function loadPanorama(latitude, longitude) {
     // Показываем режим панорамы, скрываем фото
     document.getElementById('photo-mode').classList.add('hidden');
     document.getElementById('panorama-mode').classList.remove('hidden');
-    
+
+    // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
+    // продолжает жить, опрашивает вырванный из DOM элемент и заваливает
+    // консоль ошибками offsetWidth (заметно тормозит страницу).
+    destroyPanoramaPlayer();
     const panoramaContainer = document.getElementById('panorama-player');
     panoramaContainer.innerHTML = '';
     
@@ -546,6 +627,58 @@ function resetMapForNewRound() {
 }
 
 /**
+ * Запустить обратный отсчёт раунда (если игра с лимитом времени)
+ */
+function startRoundTimer() {
+    stopRoundTimer();
+    const chip = document.getElementById('timer-chip');
+    if (!gameData.timeLimit) {
+        chip.classList.add('hidden');
+        return;
+    }
+
+    roundDeadline = Date.now() + gameData.timeLimit * 1000;
+    chip.classList.remove('hidden', 'timer-low');
+    updateTimerDisplay();
+    roundTimerInterval = setInterval(updateTimerDisplay, 250);
+}
+
+function updateTimerDisplay() {
+    const chip = document.getElementById('timer-chip');
+    const secondsLeft = Math.max(0, Math.ceil((roundDeadline - Date.now()) / 1000));
+
+    const min = Math.floor(secondsLeft / 60);
+    const sec = String(secondsLeft % 60).padStart(2, '0');
+    document.getElementById('timer-value').textContent = `${min}:${sec}`;
+
+    if (secondsLeft <= 10) chip.classList.add('timer-low');
+
+    if (secondsLeft <= 0) {
+        stopRoundTimer();
+        onRoundTimeExpired();
+    }
+}
+
+function stopRoundTimer() {
+    if (roundTimerInterval) {
+        clearInterval(roundTimerInterval);
+        roundTimerInterval = null;
+    }
+}
+
+/**
+ * Время раунда вышло: отправляем ответ с тем, что есть.
+ * Если точка отмечена — обычная догадка, нет — раунд завершается с 0 очков.
+ */
+function onRoundTimeExpired() {
+    if (guessCoords) {
+        submitGuess();
+    } else {
+        sendGuess({ timed_out: true });
+    }
+}
+
+/**
  * Отправка ответа
  */
 async function submitGuess() {
@@ -553,19 +686,30 @@ async function submitGuess() {
         alert('Отметьте точку на карте!');
         return;
     }
-    
+
     document.getElementById('guess-btn').disabled = true;
-    
+    sendGuess(guessCoords);
+}
+
+/**
+ * Отправить тело догадки на сервер и показать результат раунда.
+ * Единая точка отправки для клика по кнопке и истечения таймера.
+ */
+async function sendGuess(payload) {
+    if (guessSubmitting) return;
+    guessSubmitting = true;
+    stopRoundTimer();
+
     try {
         const response = await fetch('/api/game/guess', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify(guessCoords)
+            body: JSON.stringify(payload)
         });
-        
+
         const data = await response.json();
-        
+
         if (response.ok) {
             showRoundResult(data);
         } else {
@@ -574,6 +718,8 @@ async function submitGuess() {
     } catch (error) {
         console.error('Ошибка отправки ответа:', error);
         alert('Не удалось отправить ответ.');
+    } finally {
+        guessSubmitting = false;
     }
 }
 
@@ -593,6 +739,17 @@ async function showRoundResult(data) {
         locationBlock.classList.remove('hidden');
     } else {
         locationBlock.classList.add('hidden');
+        // Сервер адрес не дал (нет ключа HTTP-геокодера) — пробуем геокодировать
+        // на клиенте через JS API v2, он работает с обычным ключом карт
+        clientReverseGeocode(
+            data.correct_location.latitude,
+            data.correct_location.longitude
+        ).then(address => {
+            if (address) {
+                document.getElementById('correct-location-name').textContent = address;
+                locationBlock.classList.remove('hidden');
+            }
+        });
     }
 
     // Карточку «Знал ли ты, что …» показываем только с настоящим фактом,
@@ -606,11 +763,17 @@ async function showRoundResult(data) {
         factCard.classList.add('hidden');
     }
 
-    // Форматирование расстояния
-    const distanceText = data.distance_m < 1000
-        ? `${data.distance_m} ${plural(data.distance_m, ['метр', 'метра', 'метров'])}`
-        : `${data.distance_km} км`;
-    document.getElementById('result-distance').textContent = distanceText;
+    // Строка промаха: обычный текст или сообщение о таймауте
+    const missBlock = document.getElementById('result-miss');
+    if (data.guess && data.distance_m != null) {
+        const distanceText = data.distance_m < 1000
+            ? `${data.distance_m} ${plural(data.distance_m, ['метр', 'метра', 'метров'])}`
+            : `${data.distance_km} км`;
+        missBlock.innerHTML = 'Ты промахнулся на <span class="miss-distance" id="result-distance"></span> от точки съёмки';
+        document.getElementById('result-distance').textContent = distanceText;
+    } else {
+        missBlock.textContent = 'Время вышло — точка так и не была отмечена';
+    }
 
     // Очки за раунд
     document.getElementById('result-score').textContent = data.score;
@@ -619,7 +782,9 @@ async function showRoundResult(data) {
 
     // Заголовок результата
     const title = document.getElementById('result-title');
-    if (data.score >= 4500) {
+    if (data.timed_out && !data.guess) {
+        title.textContent = 'Время вышло!';
+    } else if (data.score >= 4500) {
         title.textContent = 'В яблочко!';
     } else if (data.score >= 3000) {
         title.textContent = 'Отлично!';
@@ -647,6 +812,27 @@ async function showRoundResult(data) {
 }
 
 /**
+ * Обратное геокодирование на клиенте (JS API v2, ymaps.geocode).
+ * Возвращает «улица, дом» или null — фолбэк, когда сервер без ключа геокодера.
+ */
+async function clientReverseGeocode(latitude, longitude) {
+    try {
+        if (typeof ymaps === 'undefined' || typeof ymaps.geocode !== 'function') {
+            return null;
+        }
+        const result = await ymaps.geocode([latitude, longitude], {
+            kind: 'house',
+            results: 1
+        });
+        const geoObject = result.geoObjects.get(0);
+        return geoObject ? (geoObject.properties.get('name') || null) : null;
+    } catch (error) {
+        console.error('Клиентский геокодер недоступен:', error);
+        return null;
+    }
+}
+
+/**
  * Мини-плеер с панорамой раунда в круглом окне панели результата:
  * к месту можно вернуться и осмотреться ещё раз
  */
@@ -669,6 +855,20 @@ function showResultPano() {
     } catch (error) {
         console.error('Не удалось показать панораму в результате:', error);
         container.classList.add('hidden');
+    }
+}
+
+/**
+ * Уничтожить основной плеер панорамы (перед новым раундом / после игры)
+ */
+function destroyPanoramaPlayer() {
+    if (panoramaPlayer) {
+        try {
+            panoramaPlayer.destroy();
+        } catch (error) {
+            // плеер мог уже умереть вместе с DOM-узлом
+        }
+        panoramaPlayer = null;
     }
 }
 
@@ -699,6 +899,20 @@ async function showResultMap(data) {
 
     const correctLon = data.correct_location.longitude;
     const correctLat = data.correct_location.latitude;
+
+    // Раунд без догадки (время вышло): показываем только реальную точку
+    if (!data.guess) {
+        resultMap = new YMap(mapContainer, {
+            location: { center: [correctLon, correctLat], zoom: 14 }
+        });
+        resultMap.addChild(new YMapDefaultSchemeLayer());
+        resultMap.addChild(new YMapDefaultFeaturesLayer());
+        resultMap.addChild(new YMapMarker({
+            coordinates: [correctLon, correctLat]
+        }, createPinElement(PIN_RED)));
+        return;
+    }
+
     const guessLon = data.guess.longitude;
     const guessLat = data.guess.latitude;
 
@@ -795,6 +1009,7 @@ function nextRound() {
  */
 async function showFinalResults() {
     destroyResultPano();
+    destroyPanoramaPlayer();
     try {
         const response = await fetch('/api/game/results', {
             credentials: 'same-origin'
@@ -803,24 +1018,26 @@ async function showFinalResults() {
         
         if (response.ok) {
             document.getElementById('final-score').textContent = data.total_score;
-            
+
             // Формируем список раундов
             const summaryContainer = document.getElementById('rounds-summary');
             summaryContainer.innerHTML = '';
-            
+
             if (data.rounds && data.rounds.length > 0) {
                 data.rounds.forEach(round => {
                     const item = document.createElement('div');
                     item.className = 'round-item';
-                    
-                    const distanceText = round.distance_m < 1000
-                        ? `${round.distance_m} м`
-                        : `${(round.distance_m / 1000).toFixed(1)} км`;
+
+                    const distanceText = round.distance_m == null
+                        ? '<span class="round-timeout">время вышло</span>'
+                        : (round.distance_m < 1000
+                            ? `${round.distance_m} м`
+                            : `${(round.distance_m / 1000).toFixed(1)} км`);
 
                     // Без дублирования, когда имя локации — заглушка «Раунд N»
                     const roundLabel = /^Раунд \d+$/i.test(round.location_name || '')
                         ? `Раунд ${round.round}`
-                        : `${round.round}. ${round.location_name}`;
+                        : `${round.round}. ${escapeHtml(round.location_name)}`;
 
                     item.innerHTML = `
                         <span class="round-name">${roundLabel}</span>
@@ -830,12 +1047,197 @@ async function showFinalResults() {
                     summaryContainer.appendChild(item);
                 });
             }
-            
+
+            showChallengeCompare(data.challenge);
+            showChallengeButton(data.challenge_token);
             showScreen('final-screen');
+
+            // Карта и статистика — после показа экрана (карте нужен размер контейнера)
+            renderFinalMap(data.rounds || []);
+            loadPlayerStats(data.player_name);
         }
     } catch (error) {
         console.error('Ошибка получения результатов:', error);
         showScreen('final-screen');
+    }
+}
+
+/**
+ * Блок сравнения с автором челленджа на финальном экране
+ */
+function showChallengeCompare(challenge) {
+    const block = document.getElementById('challenge-compare');
+    if (!challenge) {
+        block.classList.add('hidden');
+        return;
+    }
+
+    let verdict;
+    if (challenge.your_score > challenge.opponent_score) {
+        verdict = '🏆 Ты победил!';
+    } else if (challenge.your_score < challenge.opponent_score) {
+        verdict = 'Соперник оказался точнее';
+    } else {
+        verdict = '🤝 Ничья!';
+    }
+
+    block.innerHTML = `
+        <div class="cc-verdict">${verdict}</div>
+        <div class="cc-scores">
+            <span>Ты: <strong>${challenge.your_score}</strong></span>
+            <span>${escapeHtml(challenge.opponent_name)}: <strong>${challenge.opponent_score}</strong></span>
+        </div>
+    `;
+    block.classList.remove('hidden');
+}
+
+/**
+ * Кнопка «Бросить вызов другу»: копирует ссылку на игру с теми же точками
+ */
+function showChallengeButton(token) {
+    const btn = document.getElementById('challenge-btn');
+    if (!token) {
+        btn.classList.add('hidden');
+        return;
+    }
+    btn.dataset.token = token;
+    btn.classList.remove('hidden');
+}
+
+async function copyChallengeLink() {
+    const token = document.getElementById('challenge-btn').dataset.token;
+    if (!token) return;
+    const link = `${window.location.origin}/?challenge=${encodeURIComponent(token)}`;
+
+    try {
+        await navigator.clipboard.writeText(link);
+        showToast('Ссылка скопирована — отправь её другу!');
+    } catch (error) {
+        // Clipboard API недоступен (например, http без localhost) — показываем ссылку
+        window.prompt('Скопируй ссылку-вызов:', link);
+    }
+}
+
+/**
+ * Всплывающее уведомление внизу экрана
+ */
+let toastTimeout = null;
+function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.remove('hidden');
+    clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => toast.classList.add('hidden'), 3000);
+}
+
+/**
+ * Статистика игрока по имени на финальном экране
+ */
+async function loadPlayerStats(playerName) {
+    const block = document.getElementById('player-stats');
+    block.classList.add('hidden');
+    if (!playerName) return;
+
+    try {
+        const response = await fetch(`/api/player/stats?name=${encodeURIComponent(playerName)}`, {
+            credentials: 'same-origin'
+        });
+        if (!response.ok) return;
+        const stats = await response.json();
+        // Одна игра — статистика ещё ни о чём не говорит
+        if (!stats.games || stats.games < 2) return;
+
+        block.innerHTML = `${escapeHtml(playerName)}: игр — <strong>${stats.games}</strong>, ` +
+            `лучший счёт — <strong>${stats.best_score}</strong>, ` +
+            `средний — <strong>${stats.avg_score}</strong>`;
+        block.classList.remove('hidden');
+    } catch (error) {
+        console.error('Ошибка загрузки статистики:', error);
+    }
+}
+
+/**
+ * Карта всех раундов игры на финальном экране:
+ * синие пины — догадки, красные — реальные точки, пунктир — промахи.
+ */
+async function renderFinalMap(rounds) {
+    const container = document.getElementById('final-map');
+    const points = [];
+    rounds.forEach(r => {
+        if (r.actual) points.push([r.actual.longitude, r.actual.latitude]);
+        if (r.guess) points.push([r.guess.longitude, r.guess.latitude]);
+    });
+
+    if (points.length === 0 || typeof ymaps3 === 'undefined') {
+        container.classList.add('hidden');
+        return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = '';
+
+    try {
+        await ymaps3.ready;
+        const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
+
+        // Вписываем все точки в контейнер (той же меркаторской математикой,
+        // что и карта результата раунда)
+        const TILE = 256;
+        const mercY = (lat) => {
+            const clamped = Math.max(-85, Math.min(85, lat));
+            const rad = clamped * Math.PI / 180;
+            return (1 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / Math.PI) / 2;
+        };
+        const mercYInv = (y) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) * 180 / Math.PI;
+
+        const lons = points.map(p => p[0]);
+        const ys = points.map(p => mercY(p[1]));
+        const spanLon = Math.max(Math.max(...lons) - Math.min(...lons), 0.002) / 360;
+        const spanY = Math.max(Math.max(...ys) - Math.min(...ys), 0.000003);
+        const width = container.clientWidth || 400;
+        const height = container.clientHeight || 280;
+        const pad = 36;
+        const zoom = Math.floor(Math.max(3, Math.min(16,
+            Math.min(
+                Math.log2((width - pad * 2) / TILE / spanLon),
+                Math.log2((height - pad * 2) / TILE / spanY)
+            )
+        )));
+        const centerLon = (Math.max(...lons) + Math.min(...lons)) / 2;
+        const centerLat = mercYInv((Math.max(...ys) + Math.min(...ys)) / 2);
+
+        finalMap = new YMap(container, {
+            location: { center: [centerLon, centerLat], zoom }
+        });
+        finalMap.addChild(new YMapDefaultSchemeLayer());
+        finalMap.addChild(new YMapDefaultFeaturesLayer());
+
+        rounds.forEach(r => {
+            if (r.guess && r.actual) {
+                finalMap.addChild(new YMapFeature({
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [r.guess.longitude, r.guess.latitude],
+                            [r.actual.longitude, r.actual.latitude]
+                        ]
+                    },
+                    style: { stroke: [{ color: '#231c62', width: 2, dash: [5, 5] }] }
+                }));
+            }
+            if (r.actual) {
+                finalMap.addChild(new YMapMarker({
+                    coordinates: [r.actual.longitude, r.actual.latitude]
+                }, createPinElement(PIN_RED)));
+            }
+            if (r.guess) {
+                finalMap.addChild(new YMapMarker({
+                    coordinates: [r.guess.longitude, r.guess.latitude]
+                }, createPinElement(PIN_NAVY)));
+            }
+        });
+    } catch (error) {
+        console.error('Не удалось построить карту раундов:', error);
+        container.classList.add('hidden');
     }
 }
 
@@ -895,9 +1297,16 @@ async function showLeaderboard(difficulty = 'all') {
                     ? `<span class="lb-badge lb-badge-${escapeHtml(entry.difficulty || '')}">${escapeHtml(entry.difficulty_name)}</span>`
                     : '';
 
+                // Игры с лимитом времени помечаем: их счёт «дороже»
+                const timerBadge = entry.time_limit
+                    ? `<span class="lb-badge lb-badge-timer">⏱ ${entry.time_limit >= 60
+                        ? Math.round(entry.time_limit / 60) + ' мин'
+                        : entry.time_limit + ' с'}</span>`
+                    : '';
+
                 row.innerHTML = `
                     <span class="leaderboard-rank ${rankClass}">${entry.rank}</span>
-                    <span class="leaderboard-name">${escapeHtml(entry.player_name)}${badge}</span>
+                    <span class="leaderboard-name">${escapeHtml(entry.player_name)}${badge}${timerBadge}</span>
                     <span class="leaderboard-score">${entry.total_score}</span>
                     <span class="leaderboard-date">${entry.date || ''}</span>
                 `;

@@ -16,6 +16,10 @@ def app_module(tmp_path_factory):
     os.environ['DATABASE_URL'] = f'sqlite:///{db_path}'
     os.environ['SESSION_COOKIE_SECURE'] = 'false'  # тестовый клиент ходит по http
     os.environ['SECRET_KEY'] = 'test-secret-key'
+    os.environ['RATELIMIT_ENABLED'] = 'false'      # лимиты мешали бы циклам в тестах
+    # Пустой ключ отключает обратное геокодирование: тесты не ходят в сеть
+    os.environ['YANDEX_GEOCODER_API_KEY'] = ''
+    os.environ['YANDEX_MAPS_API_KEY'] = ''
 
     import app as app_module
     # На случай, если модуль уже был импортирован другим тестовым прогоном.
