@@ -40,6 +40,8 @@ class GameSession(db.Model):
     challenged_from_id = db.Column(db.Integer, db.ForeignKey('game_sessions.id'))
     # Дата ежедневного вызова, если игра сыграна в нём (для лидерборда дня).
     daily_date = db.Column(db.Date, index=True)
+    # Режим «без перемещения»: по панораме нельзя ходить, только осматриваться.
+    no_move = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=utcnow)
     completed_at = db.Column(db.DateTime)
 

@@ -34,6 +34,7 @@ from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
     choose_round_points, add_verified_point, mark_point_failed
 from geocoder import reverse_geocode
 from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
+from stats import difficulty_percentile, hardest_places
 from models import VerifiedPoint
 
 # Загружаем переменные окружения из .env
@@ -51,6 +52,9 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-i
 # По умолчанию — sqlite-файл в папке instance/.
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///geoguessr_spb.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Фронтенд — ES-модули: импорты не имеют query-версии, поэтому статика
+# отдаётся с ревалидацией кэша (условные запросы → дешёвые 304)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 # Безопасность cookie сессии.
 # На проде (HTTPS) держим Secure=True; для локальной разработки можно
@@ -69,6 +73,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
 # Ключ модератора пула точек (страница /admin). Не задан — админка выключена.
 ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
+# Номер счётчика Яндекс Метрики; не задан — аналитика выключена.
+METRIKA_ID = os.environ.get('METRIKA_ID', '')
 
 db.init_app(app)
 migrate = Migrate(app, db, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations'))
@@ -212,8 +218,28 @@ def index():
 
     return render_template('index.html',
                            yandex_api_key=YANDEX_MAPS_API_KEY,
+                           metrika_id=METRIKA_ID,
                            og_title=og_title,
                            og_description=og_description)
+
+
+@app.route('/places')
+def places_page():
+    """Публичная страница «Самые неузнаваемые места Петербурга».
+
+    Шоукейс по накопленной статистике: точки, где игроки промахиваются
+    сильнее всего.
+    """
+    return render_template('places.html',
+                           yandex_api_key=YANDEX_MAPS_API_KEY,
+                           metrika_id=METRIKA_ID)
+
+
+@app.route('/api/places/hardest', methods=['GET'])
+@limiter.limit('30 per minute')
+def api_hardest_places():
+    """Топ мест с наибольшим средним промахом (нужно ≥3 сыгранных раундов)."""
+    return jsonify({'places': hardest_places(limit=10)})
 
 
 @app.route('/favicon.ico')
@@ -274,6 +300,7 @@ def start_game():
             daily = get_or_create_daily()
             difficulty = DAILY_DIFFICULTY
             time_limit = None
+            no_move = False  # вызов дня — в стандартных правилах для всех
         elif challenge_token:
             source = GameSession.query.filter(
                 GameSession.challenge_token == challenge_token,
@@ -283,16 +310,19 @@ def start_game():
                 return jsonify({'error': 'Челлендж не найден или игра ещё не завершена'}), 404
             difficulty = source.difficulty
             time_limit = source.time_limit
+            no_move = bool(source.no_move)
         else:
-            difficulty = data.get('difficulty', 'medium')  # center, medium, hard
+            difficulty = data.get('difficulty', 'medium')  # center, medium, hard, hardcore
             if difficulty not in DIFFICULTY_SETTINGS:
                 difficulty = 'medium'
             time_limit = parse_time_limit(data.get('time_limit'))
+            no_move = bool(data.get('no_move'))
 
         game_session = GameSession(
             player_name=player_name,
             difficulty=difficulty,
             time_limit=time_limit,
+            no_move=no_move,
             current_round=0,
             challenge_token=secrets.token_urlsafe(12),
             challenged_from_id=source.id if source else None,
@@ -349,6 +379,7 @@ def start_game():
             'difficulty': difficulty,
             'difficulty_name': difficulty_name(difficulty),
             'time_limit': time_limit,
+            'no_move': no_move,
             'daily': daily is not None,
             'message': 'Игра началась!'
         }
@@ -371,8 +402,11 @@ def get_current_location():
     if error:
         return error
 
-    # Отметка старта раунда — от неё отсчитывается лимит времени
-    if rnd.started_at is None:
+    # Отметка старта раунда — от неё отсчитывается лимит времени.
+    # ?peek=1 — предзагрузка следующего раунда с экрана результата:
+    # координаты отдаём, но таймер не запускаем.
+    peek = request.args.get('peek') == '1'
+    if not peek and rnd.started_at is None:
         rnd.started_at = utcnow()
         db.session.commit()
 
@@ -380,6 +414,7 @@ def get_current_location():
         'round': rnd.round_number,
         'total_rounds': ROUNDS_PER_GAME,
         'time_limit': game.time_limit,
+        'no_move': bool(game.no_move),
         # Координаты для поиска панорамы
         'latitude': rnd.gen_latitude,
         'longitude': rnd.gen_longitude
@@ -500,6 +535,10 @@ def submit_guess():
         # Адрес точки ответа — для экрана результата («Это было: …»)
         address = reverse_geocode(actual_lat, actual_lon)
 
+        # Фактическая сложность места по накопленной статистике промахов
+        # (None, пока раундов с этой точкой сыграно мало)
+        percentile = difficulty_percentile(actual_lat, actual_lon)
+
         rnd.guess_latitude = guess_lat
         rnd.guess_longitude = guess_lon
         rnd.distance_km = distance
@@ -532,6 +571,7 @@ def submit_guess():
             'longitude': guess_lon
         } if guess_lat is not None else None,
         'address': address,
+        'difficulty_percentile': percentile,
         'timed_out': timed_out,
         'distance_km': round(distance, 2) if distance is not None else None,
         'distance_m': int(distance * 1000) if distance is not None else None,
@@ -576,6 +616,7 @@ def get_results():
         'difficulty': game.difficulty,
         'difficulty_name': difficulty_name(game.difficulty),
         'time_limit': game.time_limit,
+        'no_move': bool(game.no_move),
         'challenge_token': game.challenge_token if game.completed_at else None,
         'daily': game.daily_date is not None,
         'rounds': rounds_data
@@ -662,6 +703,7 @@ def challenge_info(token):
         'difficulty': source.difficulty,
         'difficulty_name': difficulty_name(source.difficulty),
         'time_limit': source.time_limit,
+        'no_move': bool(source.no_move),
         'total_rounds': ROUNDS_PER_GAME,
     })
 
@@ -733,6 +775,7 @@ def get_leaderboard():
                 'difficulty': game.difficulty,
                 'difficulty_name': difficulty_name(game.difficulty),
                 'time_limit': game.time_limit,
+                'no_move': bool(game.no_move),
                 'date': game.completed_at.strftime('%d.%m.%Y') if game.completed_at else None
             }
             for i, game in enumerate(top_games)
@@ -785,6 +828,40 @@ def admin_list_points():
         }
         for p in points
     ]})
+
+
+@app.route('/api/admin/stats', methods=['GET'])
+@limiter.limit('60 per minute')
+def admin_stats():
+    """Сводка для владельца: сколько играют и доигрывают ли до конца."""
+    error = _check_admin()
+    if error:
+        return error
+
+    now = utcnow().replace(tzinfo=None)
+    week_ago = now - timedelta(days=7)
+
+    total = GameSession.query.count()
+    completed_total = GameSession.query.filter(GameSession.completed_at.isnot(None)).count()
+    started_7d = GameSession.query.filter(GameSession.created_at >= week_ago).count()
+    completed_7d = (GameSession.query
+                    .filter(GameSession.completed_at.isnot(None),
+                            GameSession.completed_at >= week_ago)
+                    .count())
+    daily_today = (GameSession.query
+                   .filter(GameSession.daily_date == today_msk(),
+                           GameSession.completed_at.isnot(None))
+                   .count())
+
+    return jsonify({
+        'games_total': total,
+        'games_completed_total': completed_total,
+        'games_started_7d': started_7d,
+        'games_completed_7d': completed_7d,
+        'completion_rate_7d': round(completed_7d / started_7d, 2) if started_7d else None,
+        'daily_players_today': daily_today,
+        'pool_points': VerifiedPoint.query.count(),
+    })
 
 
 @app.route('/api/admin/points/<int:point_id>', methods=['DELETE'])

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#231c62">
+    <meta name="description" content="Самые неузнаваемые места Петербурга — точки, где игроки «Петербургского следопыта» промахиваются сильнее всего.">
+    <title>Самые неузнаваемые места Петербурга — Петербургский следопыт</title>
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Самые неузнаваемые места Петербурга">
+    <meta property="og:description" content="Точки, где игроки «Петербургского следопыта» промахиваются на километры. Проверь себя!">
+    <meta property="og:image" content="{{ url_for('static', filename='img/og-cover.png', _external=True) }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicons/favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version }}">
+    <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"></script>
+    {% if metrika_id %}
+    <!-- Яндекс Метрика -->
+    <script>
+        (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+        m[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],
+        k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+        (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+        ym({{ metrika_id }}, "init", { clickmap: true, trackLinks: true, accurateTrackBounce: true });
+    </script>
+    <noscript><div><img src="https://mc.yandex.ru/watch/{{ metrika_id }}" style="position:absolute; left:-9999px;" alt=""></div></noscript>
+    {% endif %}
+</head>
+<body>
+    <div class="page-layout">
+        <div class="page-card places-content">
+            <img class="page-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="">
+            <h2>Самые неузнаваемые места Петербурга</h2>
+            <p class="start-tagline">Здесь игроки промахиваются сильнее всего.<br>Средний промах — по реальным партиям.</p>
+
+            <div id="places-map" class="final-map hidden"></div>
+            <div id="places-list" class="rounds-summary">
+                <div class="leaderboard-empty">Собираем статистику — сыграйте ещё немного!</div>
+            </div>
+
+            <a class="btn btn-primary" href="/">Сыграть</a>
+        </div>
+    </div>
+
+    <script>
+        const PIN_RED = '/static/img/pin.svg';
+
+        async function init() {
+            const response = await fetch('/api/places/hardest');
+            const data = await response.json();
+            const places = data.places || [];
+            if (!places.length) return;
+
+            // Список
+            const list = document.getElementById('places-list');
+            list.innerHTML = '';
+            places.forEach((p, i) => {
+                const item = document.createElement('div');
+                item.className = 'round-item';
+                item.innerHTML = `
+                    <span class="round-name">${i + 1}. <span class="place-coords">${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}</span></span>
+                    <span class="round-distance">игр: ${p.games}</span>
+                    <span class="round-score score-poor">≈${p.avg_miss_km} км</span>
+                `;
+                list.appendChild(item);
+            });
+
+            // Карта
+            try {
+                await ymaps3.ready;
+                const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker } = ymaps3;
+                const container = document.getElementById('places-map');
+                container.classList.remove('hidden');
+
+                const lats = places.map(p => p.latitude);
+                const lons = places.map(p => p.longitude);
+                const center = [(Math.max(...lons) + Math.min(...lons)) / 2,
+                                (Math.max(...lats) + Math.min(...lats)) / 2];
+
+                const map = new YMap(container, { location: { center, zoom: 10 } });
+                map.addChild(new YMapDefaultSchemeLayer());
+                map.addChild(new YMapDefaultFeaturesLayer());
+
+                places.forEach(p => {
+                    const img = document.createElement('img');
+                    img.src = PIN_RED;
+                    img.className = 'map-pin';
+                    img.title = `Средний промах ≈${p.avg_miss_km} км (${p.games} игр)`;
+                    map.addChild(new YMapMarker({
+                        coordinates: [p.longitude, p.latitude]
+                    }, img));
+                });
+            } catch (error) {
+                console.error('Карта не загрузилась:', error);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

@@ -194,20 +194,23 @@ h1, h2 {
 }
 
 #start-screen .difficulty-btn,
-#start-screen .timer-btn {
+#start-screen .timer-btn,
+#start-screen .move-btn {
     background: transparent;
     border-color: rgba(253, 250, 228, 0.25);
     color: rgba(253, 250, 228, 0.75);
 }
 
 #start-screen .difficulty-btn:hover,
-#start-screen .timer-btn:hover {
+#start-screen .timer-btn:hover,
+#start-screen .move-btn:hover {
     border-color: var(--cream);
     color: var(--cream);
 }
 
 #start-screen .difficulty-btn.active,
-#start-screen .timer-btn.active {
+#start-screen .timer-btn.active,
+#start-screen .move-btn.active {
     background: var(--cream);
     border-color: var(--cream);
     color: var(--navy);
@@ -296,7 +299,8 @@ h1, h2 {
 }
 
 .difficulty-btn,
-.timer-btn {
+.timer-btn,
+.move-btn {
     flex: 1;
     padding: 0.6rem 0.5rem;
     border: 2px solid var(--border-color);
@@ -310,13 +314,15 @@ h1, h2 {
 }
 
 .difficulty-btn:hover,
-.timer-btn:hover {
+.timer-btn:hover,
+.move-btn:hover {
     border-color: var(--blue);
     color: var(--blue);
 }
 
 .difficulty-btn.active,
-.timer-btn.active {
+.timer-btn.active,
+.move-btn.active {
     border-color: var(--navy);
     background: var(--navy);
     color: var(--cream);
@@ -1107,4 +1113,53 @@ h1, h2 {
     .map-panel.collapsed {
         transform: translateY(calc(100% - 2.1rem));
     }
+}
+
+/* ===== Переключатель «Перемещение» и хардкор ===== */
+/* Кнопка 🔥 узкая — пусть не растягивается как остальные */
+.difficulty-btn[data-difficulty="hardcore"] {
+    flex: 0 0 auto;
+    padding: 0.6rem 0.8rem;
+}
+
+.lb-badge-hardcore {
+    background: rgba(233, 61, 50, 0.18);
+    color: var(--red);
+}
+
+.lb-badge-nomove {
+    background: rgba(35, 28, 98, 0.12);
+    color: var(--navy);
+}
+
+/* ===== Сложность места на экране результата ===== */
+.result-difficulty {
+    color: var(--yellow);
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+/* ===== Ссылка на страницу «неузнаваемых мест» на старте ===== */
+.places-link {
+    display: block;
+    margin-top: 1rem;
+    color: rgba(253, 250, 228, 0.55);
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.places-link:hover {
+    color: var(--cream);
+    text-decoration: underline;
+}
+
+/* Страница /places */
+.places-content .final-map {
+    margin-top: 1rem;
+}
+
+.place-coords {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    font-size: 0.85rem;
 }

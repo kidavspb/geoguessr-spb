@@ -19,5 +19,8 @@ jobs:
       - name: Установка зависимостей
         run: pip install -r requirements-dev.txt
 
-      - name: Тесты
+      - name: Браузер для E2E-тестов
+        run: python -m playwright install --with-deps chromium
+
+      - name: Тесты (юнит + E2E)
         run: pytest -q

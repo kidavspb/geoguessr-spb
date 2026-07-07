@@ -53,6 +53,7 @@
             <p class="muted" id="auth-status"></p>
         </div>
         <p class="muted" id="pool-stats"></p>
+        <div id="game-stats" class="hidden" style="border-top: 1px solid #e4e0cd; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; line-height: 1.7;"></div>
         <div id="point-info" class="hidden">
             <p><strong id="pi-coords"></strong></p>
             <p class="muted" id="pi-meta"></p>
@@ -101,6 +102,22 @@
 
             const data = await response.json();
             renderPoints(data.points);
+            loadGameStats(key);
+        }
+
+        async function loadGameStats(key) {
+            const response = await fetch('/api/admin/stats', {
+                headers: { 'X-Admin-Key': key }
+            });
+            if (!response.ok) return;
+            const s = await response.json();
+            const block = document.getElementById('game-stats');
+            block.innerHTML =
+                `🎮 Игр всего: <strong>${s.games_total}</strong> (доиграно ${s.games_completed_total})<br>` +
+                `📅 За 7 дней: начато <strong>${s.games_started_7d}</strong>, доиграно <strong>${s.games_completed_7d}</strong>` +
+                (s.completion_rate_7d != null ? ` (${Math.round(s.completion_rate_7d * 100)}%)` : '') + `<br>` +
+                `🗓 Вызов дня сегодня: <strong>${s.daily_players_today}</strong> игроков`;
+            block.classList.remove('hidden');
         }
 
         function renderPoints(points) {
