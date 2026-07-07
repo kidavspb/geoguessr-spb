@@ -1017,9 +1017,94 @@ h1, h2 {
     box-sizing: content-box;
 }
 
-/* Кнопка полноэкранного режима панорамы по умолчанию живёт в правом верхнем
-   углу — ровно под HUD-чипами «Раунд/Счёт». Опускаем её ниже чипов: на
-   мобильных именно она разворачивает панораму, убирая карту с экрана. */
-#panorama-player [class*="panorama-control__top-right"] {
-    top: 80px !important;
+
+/* ===== Кнопка «Вызов дня» и подсказка под ней ===== */
+.daily-hint {
+    display: block;
+    margin: -0.25rem 0 0.75rem;
+    color: rgba(253, 250, 228, 0.6);
+    font-size: 0.8rem;
+}
+
+/* ===== Топ вызова дня на финальном экране ===== */
+.daily-top {
+    background: var(--cream);
+    border: 2px solid var(--green);
+    border-radius: var(--radius-control);
+    padding: 0.9rem 1.25rem;
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.daily-top .dt-title {
+    font-family: var(--font-accent);
+    color: var(--navy);
+    margin-bottom: 0.5rem;
+    text-align: center;
+}
+
+.daily-top .dt-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+    font-size: 0.9rem;
+}
+
+.daily-top .dt-row strong {
+    font-variant-numeric: tabular-nums;
+    color: var(--navy);
+}
+
+/* ===== Кнопка «вернуться к началу панорамы» ===== */
+/* Стилизована под круглые контролы плеера Яндекса, стоит над зумом */
+.pano-home {
+    position: absolute;
+    left: 16px;
+    bottom: 148px;
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 50%;
+    background: #fff;
+    color: #333;
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    z-index: 6;
+}
+
+.pano-home:hover {
+    background: var(--cream);
+}
+
+/* ===== Ручка панели карты (мобильный «нижний лист») ===== */
+.map-handle {
+    display: none; /* на десктопе карта разворачивается наведением */
+    width: 100%;
+    padding: 0.45rem 0;
+    border: none;
+    border-radius: 10px 10px 0 0;
+    background: var(--navy);
+    color: var(--cream);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+@media (max-width: 720px) {
+    .map-handle {
+        display: block;
+    }
+
+    .map-panel {
+        transition: transform 0.25s ease;
+    }
+
+    /* Свёрнутый лист: наружу торчит только ручка — панорама на весь экран.
+       Именно это поведение ждёшь от кнопки «скрыть карту»: панорама не
+       пересоздаётся и не сбрасывается, в отличие от fullscreen Яндекса. */
+    .map-panel.collapsed {
+        transform: translateY(calc(100% - 2.1rem));
+    }
 }

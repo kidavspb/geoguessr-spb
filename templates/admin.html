@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Модерация пула точек — Петербургский следопыт</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicons/favicon.svg') }}" type="image/svg+xml">
+    <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; }
+        #admin-map { position: fixed; inset: 0; }
+        .panel {
+            position: fixed; top: 1rem; left: 1rem; z-index: 10;
+            width: 320px; max-height: calc(100vh - 2rem); overflow: auto;
+            background: #fff; border-radius: 16px; padding: 1rem 1.25rem;
+            box-shadow: 0 10px 30px rgba(35, 28, 98, 0.25);
+            color: #231c62; font-size: 0.9rem;
+        }
+        .panel h1 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+        .panel input {
+            width: 100%; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
+            border: 2px solid #e4e0cd; border-radius: 8px; font-size: 0.9rem;
+        }
+        .panel button {
+            padding: 0.5rem 1rem; border: none; border-radius: 999px;
+            background: #231c62; color: #fdfae4; font-weight: 600; cursor: pointer;
+        }
+        .panel button.danger { background: #e93d32; color: #fff; }
+        .panel .muted { color: #6f6b94; font-size: 0.8rem; margin: 0.5rem 0; }
+        .panel a { color: #2656aa; }
+        #point-info { border-top: 1px solid #e4e0cd; margin-top: 0.75rem; padding-top: 0.75rem; }
+        .hidden { display: none !important; }
+        .admin-dot {
+            width: 14px; height: 14px; border-radius: 50%;
+            background: #6ab946; border: 2px solid #fff; cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+            transform: translate(-50%, -50%);
+        }
+        .admin-dot.failing { background: #ffc629; }
+        .admin-dot.selected { background: #e93d32; width: 18px; height: 18px; }
+    </style>
+</head>
+<body>
+    <div id="admin-map"></div>
+
+    <div class="panel">
+        <h1>🛠 Пул точек</h1>
+        <div id="auth-block">
+            <input type="password" id="admin-key" placeholder="Ключ модератора">
+            <button id="load-btn">Загрузить точки</button>
+            <p class="muted" id="auth-status"></p>
+        </div>
+        <p class="muted" id="pool-stats"></p>
+        <div id="point-info" class="hidden">
+            <p><strong id="pi-coords"></strong></p>
+            <p class="muted" id="pi-meta"></p>
+            <p><a id="pi-pano-link" href="#" target="_blank" rel="noopener">Открыть панораму в Я.Картах ↗</a></p>
+            <p style="margin-top: 0.5rem;">
+                <button class="danger" id="pi-delete">Удалить из пула</button>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let map = null;
+        let markers = new Map(); // id -> {marker, el, point}
+        let selectedId = null;
+
+        const keyInput = document.getElementById('admin-key');
+        keyInput.value = localStorage.getItem('adminKey') || '';
+
+        document.getElementById('load-btn').addEventListener('click', loadPoints);
+        document.getElementById('pi-delete').addEventListener('click', deleteSelected);
+
+        async function initMap() {
+            await ymaps3.ready;
+            const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer } = ymaps3;
+            map = new YMap(document.getElementById('admin-map'), {
+                location: { center: [30.315, 59.939], zoom: 11 }
+            });
+            map.addChild(new YMapDefaultSchemeLayer());
+            map.addChild(new YMapDefaultFeaturesLayer());
+        }
+
+        async function loadPoints() {
+            const key = keyInput.value.trim();
+            const status = document.getElementById('auth-status');
+            if (!key) { status.textContent = 'Введи ключ.'; return; }
+
+            const response = await fetch('/api/admin/points', {
+                headers: { 'X-Admin-Key': key }
+            });
+            if (!response.ok) {
+                status.textContent = response.status === 403 ? 'Неверный ключ.' : 'Ошибка загрузки.';
+                return;
+            }
+            localStorage.setItem('adminKey', key);
+            status.textContent = '';
+
+            const data = await response.json();
+            renderPoints(data.points);
+        }
+
+        function renderPoints(points) {
+            // Убираем старые маркеры
+            markers.forEach(({ marker }) => map.removeChild(marker));
+            markers.clear();
+            selectPoint(null);
+
+            const { YMapMarker } = ymaps3;
+            points.forEach(p => {
+                const el = document.createElement('div');
+                el.className = 'admin-dot' + (p.fail_count > 0 ? ' failing' : '');
+                el.title = `#${p.id} · неудач: ${p.fail_count}`;
+                el.addEventListener('click', () => selectPoint(p.id));
+                const marker = new YMapMarker({ coordinates: [p.longitude, p.latitude] }, el);
+                map.addChild(marker);
+                markers.set(p.id, { marker, el, point: p });
+            });
+
+            const failing = points.filter(p => p.fail_count > 0).length;
+            document.getElementById('pool-stats').textContent =
+                `Точек в пуле: ${points.length}` + (failing ? ` (с неудачами: ${failing})` : '');
+        }
+
+        function selectPoint(id) {
+            if (selectedId !== null && markers.has(selectedId)) {
+                markers.get(selectedId).el.classList.remove('selected');
+            }
+            selectedId = id;
+            const info = document.getElementById('point-info');
+            if (id === null || !markers.has(id)) {
+                info.classList.add('hidden');
+                return;
+            }
+            const { el, point } = markers.get(id);
+            el.classList.add('selected');
+            document.getElementById('pi-coords').textContent =
+                `#${point.id} · ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`;
+            document.getElementById('pi-meta').textContent =
+                `${point.dist_from_center_km} км от центра · неудач: ${point.fail_count}` +
+                (point.created_at ? ` · добавлена ${point.created_at}` : '');
+            document.getElementById('pi-pano-link').href =
+                `https://yandex.ru/maps/?panorama%5Bpoint%5D=${point.longitude},${point.latitude}`;
+            info.classList.remove('hidden');
+        }
+
+        async function deleteSelected() {
+            if (selectedId === null) return;
+            if (!confirm('Удалить точку #' + selectedId + ' из пула?')) return;
+            const response = await fetch('/api/admin/points/' + selectedId, {
+                method: 'DELETE',
+                headers: { 'X-Admin-Key': keyInput.value.trim() }
+            });
+            if (response.ok) {
+                const { marker } = markers.get(selectedId);
+                map.removeChild(marker);
+                markers.delete(selectedId);
+                selectPoint(null);
+                document.getElementById('pool-stats').textContent = `Точек в пуле: ${markers.size}`;
+            } else {
+                alert('Не удалось удалить точку.');
+            }
+        }
+
+        initMap().then(() => {
+            if (keyInput.value) loadPoints();
+        });
+    </script>
+</body>
+</html>

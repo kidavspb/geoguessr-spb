@@ -22,6 +22,8 @@ def app_module(tmp_path_factory):
     # Пустой ключ отключает обратное геокодирование: тесты не ходят в сеть
     os.environ['YANDEX_GEOCODER_API_KEY'] = ''
     os.environ['YANDEX_MAPS_API_KEY'] = ''
+    # Известный ключ админки для тестов модерации (не из .env)
+    os.environ['ADMIN_KEY'] = 'test-admin-key'
 
     import app as app_module
     # На случай, если модуль уже был импортирован другим тестовым прогоном.

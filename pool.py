@@ -19,6 +19,33 @@ POOL_USE_PROBABILITY = 0.7
 # Максимальное расстояние точки пула от центра для режима сложности (км);
 # None — без ограничения (весь город).
 POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
+# После скольких неудачных поисков панорамы подряд точка выбывает из пула
+POOL_MAX_FAILS = 3
+
+
+def _point_by_coords(lat, lon):
+    """Точка пула по координатам (с точностью ключа дедупликации ~10 м)."""
+    return VerifiedPoint.query.filter_by(
+        lat_key=int(round(lat * 10000)),
+        lon_key=int(round(lon * 10000)),
+    ).first()
+
+
+def mark_point_failed(lat, lon):
+    """Панорама у точки не нашлась: считаем неудачи, на пороге удаляем.
+
+    Вызывается при перегенерации точки раунда — если исходная точка была
+    из пула, значит панорама там пропала (Яндекс иногда убирает съёмку).
+    """
+    point = _point_by_coords(lat, lon)
+    if point is None:
+        return
+    point.fail_count = (point.fail_count or 0) + 1
+    if point.fail_count >= POOL_MAX_FAILS:
+        db.session.delete(point)
+        logger.info('Точка пула удалена после %d неудач: %.5f, %.5f',
+                    POOL_MAX_FAILS, lat, lon)
+    db.session.commit()
 
 
 def choose_round_points(difficulty, count):
@@ -54,7 +81,12 @@ def add_verified_point(lat, lon):
             SPB_BOUNDS['lon_min'] - 0.02 <= lon <= SPB_BOUNDS['lon_max'] + 0.02):
         return
     lat_key, lon_key = int(round(lat * 10000)), int(round(lon * 10000))
-    if VerifiedPoint.query.filter_by(lat_key=lat_key, lon_key=lon_key).first():
+    existing = VerifiedPoint.query.filter_by(lat_key=lat_key, lon_key=lon_key).first()
+    if existing is not None:
+        # Панорама подтверждена живой — прощаем прошлые неудачи
+        if existing.fail_count:
+            existing.fail_count = 0
+            db.session.commit()
         return
     try:
         db.session.add(VerifiedPoint(

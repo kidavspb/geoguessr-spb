@@ -7,9 +7,10 @@
   models.py     — модели БД
   app.py        — конфигурация, миграции, rate limiting, HTTP-роуты
 """
+import hmac
 import os
 import secrets
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, render_template, jsonify, request, session, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -30,8 +31,10 @@ from game_logic import (
     calculate_score, parse_coords, parse_time_limit,
 )
 from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
-    choose_round_points, add_verified_point
+    choose_round_points, add_verified_point, mark_point_failed
 from geocoder import reverse_geocode
+from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
+from models import VerifiedPoint
 
 # Загружаем переменные окружения из .env
 load_dotenv()
@@ -64,6 +67,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # API ключ Яндекс Карт (для JS API на странице)
 YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
+# Ключ модератора пула точек (страница /admin). Не задан — админка выключена.
+ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
 
 db.init_app(app)
 migrate = Migrate(app, db, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations'))
@@ -184,8 +189,31 @@ def inject_asset_version():
 
 @app.route('/')
 def index():
-    """Главная страница с игрой"""
-    return render_template('index.html', yandex_api_key=YANDEX_MAPS_API_KEY)
+    """Главная страница с игрой.
+
+    Для челлендж-ссылок (?challenge=TOKEN) подставляем OG-теги с именем и
+    счётом автора: мессенджеры рендерят превью без выполнения JS, поэтому
+    это делается на сервере.
+    """
+    og_title = 'Петербургский следопыт'
+    og_description = ('Тебя высаживают в случайной точке Петербурга — осмотрись '
+                      'на панораме и угадай на карте, где ты.')
+
+    token = (request.args.get('challenge') or '').strip()
+    if token:
+        source = GameSession.query.filter(
+            GameSession.challenge_token == token,
+            GameSession.completed_at.isnot(None),
+        ).first()
+        if source is not None:
+            og_title = (f'{source.player_name} набрал {source.total_score} очков '
+                        f'в «Петербургском следопыте»')
+            og_description = 'Тебе достанутся те же 5 панорам. Сможешь точнее?'
+
+    return render_template('index.html',
+                           yandex_api_key=YANDEX_MAPS_API_KEY,
+                           og_title=og_title,
+                           og_description=og_description)
 
 
 @app.route('/favicon.ico')
@@ -213,8 +241,40 @@ def start_game():
         player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
 
         source = None
+        daily = None
+        is_daily = bool(data.get('daily'))
         challenge_token = (str(data.get('challenge_token') or '')).strip()
-        if challenge_token:
+
+        if is_daily:
+            # Ежедневный вызов: общий набор точек, фиксированный режим.
+            # Одна попытка в день (на уровне cookie-сессии браузера).
+            previous = session.get('daily_game')
+            if previous and previous.get('date') == today_msk().isoformat():
+                prev_game = db.session.get(GameSession, previous.get('game_id'))
+                if prev_game is not None:
+                    if prev_game.completed_at is not None:
+                        return jsonify({
+                            'error': 'Сегодня ты уже играл в вызов дня',
+                            'already_played': True,
+                            'total_score': prev_game.total_score,
+                        }), 409
+                    # Недоигранный вызов — продолжаем его же
+                    session['game_id'] = prev_game.id
+                    return jsonify({
+                        'game_id': prev_game.id,
+                        'total_rounds': ROUNDS_PER_GAME,
+                        'difficulty': prev_game.difficulty,
+                        'difficulty_name': difficulty_name(prev_game.difficulty),
+                        'time_limit': prev_game.time_limit,
+                        'daily': True,
+                        'resumed': True,
+                        'total_score': prev_game.total_score,
+                        'message': 'Продолжаем вызов дня!'
+                    })
+            daily = get_or_create_daily()
+            difficulty = DAILY_DIFFICULTY
+            time_limit = None
+        elif challenge_token:
             source = GameSession.query.filter(
                 GameSession.challenge_token == challenge_token,
                 GameSession.completed_at.isnot(None),
@@ -236,11 +296,20 @@ def start_game():
             current_round=0,
             challenge_token=secrets.token_urlsafe(12),
             challenged_from_id=source.id if source else None,
+            daily_date=daily.date if daily else None,
         )
         db.session.add(game_session)
         db.session.flush()  # получаем id до создания раундов
 
-        if source is not None:
+        if daily is not None:
+            for i, (lat, lon) in enumerate(daily_points(daily), start=1):
+                db.session.add(GameRound(
+                    session_id=game_session.id,
+                    round_number=i,
+                    gen_latitude=lat,
+                    gen_longitude=lon,
+                ))
+        elif source is not None:
             # Копируем точки исходной игры: и серверные, и найденные панорамы,
             # чтобы очки обоих игроков считались по одним и тем же местам.
             source_rounds = sorted(source.rounds, key=lambda r: r.round_number)[:ROUNDS_PER_GAME]
@@ -265,9 +334,13 @@ def start_game():
         db.session.commit()
 
         session['game_id'] = game_session.id
+        if daily is not None:
+            session['daily_game'] = {'date': daily.date.isoformat(),
+                                     'game_id': game_session.id}
 
         app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, '
                         f'difficulty={difficulty}, time_limit={time_limit}, '
+                        f'daily={"да" if daily else "нет"}, '
                         f'challenge={"да" if source else "нет"}')
 
         response = {
@@ -276,6 +349,7 @@ def start_game():
             'difficulty': difficulty,
             'difficulty_name': difficulty_name(difficulty),
             'time_limit': time_limit,
+            'daily': daily is not None,
             'message': 'Игра началась!'
         }
         if source is not None:
@@ -327,6 +401,10 @@ def skip_location():
 
     if (rnd.skips or 0) >= MAX_SKIPS_PER_ROUND:
         return jsonify({'error': 'Лимит перегенераций точки для этого раунда исчерпан'}), 429
+
+    # Если несработавшая точка была из пула — панорама там, видимо, пропала.
+    # Считаем неудачи и на пороге выбрасываем точку из пула.
+    mark_point_failed(rnd.gen_latitude, rnd.gen_longitude)
 
     lat, lon = choose_round_points(game.difficulty or 'medium', 1)[0]
     rnd.gen_latitude = lat
@@ -499,6 +577,7 @@ def get_results():
         'difficulty_name': difficulty_name(game.difficulty),
         'time_limit': game.time_limit,
         'challenge_token': game.challenge_token if game.completed_at else None,
+        'daily': game.daily_date is not None,
         'rounds': rounds_data
     }
 
@@ -513,6 +592,57 @@ def get_results():
             }
 
     return jsonify(payload)
+
+
+# --------------------------------------------------------------------------
+# Ежедневный вызов
+# --------------------------------------------------------------------------
+
+@app.route('/api/daily', methods=['GET'])
+@limiter.limit('30 per minute')
+def daily_info():
+    """Информация о вызове дня для стартового экрана.
+
+    Набор точек дня НЕ создаётся здесь (только при старте игры), чтобы
+    простое открытие страницы не плодило наборы.
+    """
+    date = today_msk()
+    players = (GameSession.query
+               .filter(GameSession.daily_date == date,
+                       GameSession.completed_at.isnot(None))
+               .count())
+
+    payload = {'date': date.isoformat(), 'players_today': players,
+               'played': False, 'your_score': None}
+
+    previous = session.get('daily_game')
+    if previous and previous.get('date') == date.isoformat():
+        prev_game = db.session.get(GameSession, previous.get('game_id'))
+        if prev_game is not None and prev_game.completed_at is not None:
+            payload['played'] = True
+            payload['your_score'] = prev_game.total_score
+
+    return jsonify(payload)
+
+
+@app.route('/api/daily/leaderboard', methods=['GET'])
+@limiter.limit('30 per minute')
+def daily_leaderboard():
+    """Топ сегодняшнего вызова дня."""
+    date = today_msk()
+    top = (GameSession.query
+           .filter(GameSession.daily_date == date,
+                   GameSession.completed_at.isnot(None))
+           .order_by(GameSession.total_score.desc())
+           .limit(10)
+           .all())
+    return jsonify({
+        'date': date.isoformat(),
+        'leaderboard': [
+            {'rank': i + 1, 'player_name': g.player_name, 'total_score': g.total_score}
+            for i, g in enumerate(top)
+        ]
+    })
 
 
 @app.route('/api/challenge/<token>', methods=['GET'])
@@ -559,14 +689,21 @@ def player_stats():
     })
 
 
+# Периоды таблицы лидеров: сколько последних дней учитывать (None — всё время).
+# Вечный топ быстро закостеневает — новичкам нужно за что-то бороться.
+LEADERBOARD_PERIODS = {'week': 7, 'month': 30, 'all': None}
+LEADERBOARD_LIMIT = 50
+
+
 @app.route('/api/leaderboard', methods=['GET'])
 @limiter.limit('30 per minute')
 def get_leaderboard():
     """Получить таблицу лидеров.
 
-    Необязательный параметр ?difficulty=center|medium|hard фильтрует таблицу
-    по режиму сложности — разные режимы не сравнимы напрямую, поэтому без
-    фильтра показываем все, но в каждой строке отдаём режим для контекста.
+    Параметры (необязательные):
+      ?difficulty=center|medium|hard — фильтр по режиму (режимы не сравнимы
+        напрямую, поэтому без фильтра в каждой строке отдаётся режим);
+      ?period=week|month|all — за какой срок (по умолчанию всё время).
     """
     query = GameSession.query.filter(GameSession.completed_at.isnot(None))
 
@@ -574,10 +711,20 @@ def get_leaderboard():
     if difficulty in DIFFICULTY_SETTINGS:
         query = query.filter(GameSession.difficulty == difficulty)
 
-    top_games = query.order_by(GameSession.total_score.desc()).limit(10).all()
+    period = request.args.get('period')
+    if period not in LEADERBOARD_PERIODS:
+        period = 'all'
+    days = LEADERBOARD_PERIODS[period]
+    if days is not None:
+        # completed_at в БД naive UTC — сравниваем с naive UTC
+        cutoff = utcnow().replace(tzinfo=None) - timedelta(days=days)
+        query = query.filter(GameSession.completed_at >= cutoff)
+
+    top_games = query.order_by(GameSession.total_score.desc()).limit(LEADERBOARD_LIMIT).all()
 
     return jsonify({
         'difficulty': difficulty if difficulty in DIFFICULTY_SETTINGS else 'all',
+        'period': period,
         'leaderboard': [
             {
                 'rank': i + 1,
@@ -591,6 +738,70 @@ def get_leaderboard():
             for i, game in enumerate(top_games)
         ]
     })
+
+
+# --------------------------------------------------------------------------
+# Модерация пула точек (владелец)
+# --------------------------------------------------------------------------
+
+def _check_admin():
+    """Ответ-ошибка, если админ-доступ не разрешён; None — доступ есть.
+
+    Без ADMIN_KEY в окружении админка полностью выключена (404, а не 403 —
+    не раскрываем само её существование).
+    """
+    if not ADMIN_KEY:
+        return jsonify({'error': 'Не найдено'}), 404
+    provided = request.headers.get('X-Admin-Key', '')
+    if not hmac.compare_digest(provided, ADMIN_KEY):
+        return jsonify({'error': 'Неверный ключ'}), 403
+    return None
+
+
+@app.route('/admin')
+def admin_page():
+    """Страница модерации пула точек (карта всех проверенных панорам)."""
+    if not ADMIN_KEY:
+        return 'Не найдено', 404
+    return render_template('admin.html', yandex_api_key=YANDEX_MAPS_API_KEY)
+
+
+@app.route('/api/admin/points', methods=['GET'])
+@limiter.limit('60 per minute')
+def admin_list_points():
+    """Все точки пула — для карты модерации."""
+    error = _check_admin()
+    if error:
+        return error
+    points = VerifiedPoint.query.order_by(VerifiedPoint.created_at.desc()).all()
+    return jsonify({'points': [
+        {
+            'id': p.id,
+            'latitude': p.latitude,
+            'longitude': p.longitude,
+            'dist_from_center_km': round(p.dist_from_center_km, 2),
+            'fail_count': p.fail_count or 0,
+            'created_at': p.created_at.strftime('%d.%m.%Y') if p.created_at else None,
+        }
+        for p in points
+    ]})
+
+
+@app.route('/api/admin/points/<int:point_id>', methods=['DELETE'])
+@limiter.limit('60 per minute')
+def admin_delete_point(point_id):
+    """Удалить точку из пула (внутри здания, некрасивое место и т.п.)."""
+    error = _check_admin()
+    if error:
+        return error
+    point = db.session.get(VerifiedPoint, point_id)
+    if point is None:
+        return jsonify({'error': 'Точка не найдена'}), 404
+    db.session.delete(point)
+    db.session.commit()
+    app.logger.info('Модерация: удалена точка пула #%d (%.5f, %.5f)',
+                    point_id, point.latitude, point.longitude)
+    return jsonify({'success': True})
 
 
 if __name__ == '__main__':

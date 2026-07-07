@@ -16,14 +16,19 @@ let finalMap = null;          // карта всех раундов на фин�
 let roundTimerInterval = null; // интервал обратного отсчёта раунда
 let roundDeadline = null;      // момент окончания времени раунда (ms)
 let guessSubmitting = false;   // защита от двойной отправки (клик + таймер)
+let panoStartPoint = null;     // стартовая точка панорамы (для кнопки «к началу»)
 let gameData = {
     totalRounds: 5,
     currentRound: 1,
     totalScore: 0,
     difficulty: 'medium', // center, medium, hard
     timeLimit: 0,         // секунд на раунд, 0 — без лимита
-    challengeToken: null  // токен челленджа из ссылки-вызова
+    challengeToken: null, // токен челленджа из ссылки-вызова
+    daily: false          // игра — ежедневный вызов
 };
+
+// Состояние фильтров таблицы лидеров
+let lbState = { difficulty: 'all', period: 'all' };
 
 // Координаты центра СПб
 const SPB_CENTER = [59.9311, 30.3609];
@@ -86,8 +91,36 @@ document.addEventListener('DOMContentLoaded', () => {
     initDifficultyToggle();
     initTimerToggle();
     initChallengeFromUrl();
+    initDailyButton();
     checkYandexMapsAPI();
 });
+
+/**
+ * Кнопка «Вызов дня»: показывает, сыграл ли уже игрок и сколько человек
+ * прошло сегодняшний набор точек.
+ */
+async function initDailyButton() {
+    const hint = document.getElementById('daily-hint');
+    try {
+        const response = await fetch('/api/daily', { credentials: 'same-origin' });
+        if (!response.ok) return;
+        const data = await response.json();
+
+        const parts = [];
+        if (data.played) {
+            parts.push(`Ты уже сыграл: ${data.your_score} ${plural(data.your_score, ['очко', 'очка', 'очков'])}`);
+        }
+        if (data.players_today > 0) {
+            parts.push(`сегодня сыграли: ${data.players_today}`);
+        }
+        if (parts.length) {
+            hint.textContent = parts.join(' · ');
+            hint.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки вызова дня:', error);
+    }
+}
 
 /**
  * Инициализация переключателя лимита времени на раунд
@@ -186,11 +219,14 @@ function checkYandexMapsAPI() {
  */
 function initEventListeners() {
     // Стартовый экран
-    document.getElementById('start-btn').addEventListener('click', startGame);
+    document.getElementById('start-btn').addEventListener('click', () => startGame());
+    document.getElementById('daily-btn').addEventListener('click', () => startGame({ daily: true }));
     document.getElementById('show-leaderboard-btn').addEventListener('click', openLeaderboard);
 
     // Игровой экран
     document.getElementById('guess-btn').addEventListener('click', submitGuess);
+    document.getElementById('map-handle').addEventListener('click', toggleMapPanel);
+    document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
 
     // Экран результата
     document.getElementById('next-round-btn').addEventListener('click', nextRound);
@@ -200,14 +236,21 @@ function initEventListeners() {
         showScreen('start-screen');
     });
     document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
-    document.getElementById('challenge-btn').addEventListener('click', copyChallengeLink);
+    document.getElementById('challenge-btn').addEventListener('click', shareChallengeLink);
 
-    // Фильтр таблицы лидеров по сложности
-    document.querySelectorAll('.lb-filter-btn').forEach(btn => {
+    // Фильтры таблицы лидеров: период и сложность — независимые оси
+    document.querySelectorAll('.lb-period-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            document.querySelectorAll('.lb-filter-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            showLeaderboard(btn.dataset.difficulty);
+            lbState.period = btn.dataset.period;
+            syncLeaderboardFilters();
+            showLeaderboard();
+        });
+    });
+    document.querySelectorAll('#leaderboard-filter .lb-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            lbState.difficulty = btn.dataset.difficulty;
+            syncLeaderboardFilters();
+            showLeaderboard();
         });
     });
     
@@ -235,7 +278,7 @@ function showScreen(screenId) {
 /**
  * Начало новой игры
  */
-async function startGame() {
+async function startGame(opts = {}) {
     const playerName = document.getElementById('player-name').value.trim() || 'Аноним';
 
     try {
@@ -247,17 +290,28 @@ async function startGame() {
                 player_name: playerName,
                 difficulty: gameData.difficulty,
                 time_limit: gameData.timeLimit || null,
-                challenge_token: gameData.challengeToken
+                challenge_token: gameData.challengeToken,
+                daily: !!opts.daily
             })
         });
 
         const data = await response.json();
 
+        // Вызов дня уже сыгран сегодня — показываем счёт и топ дня
+        if (response.status === 409 && data.already_played) {
+            showToast(`Сегодня ты уже играл: ${data.total_score} ${plural(data.total_score, ['очко', 'очка', 'очков'])}`);
+            lbState.period = 'daily';
+            syncLeaderboardFilters();
+            showLeaderboard();
+            return;
+        }
+
         if (response.ok) {
             gameData.totalRounds = data.total_rounds;
             gameData.currentRound = 1;
-            gameData.totalScore = 0;
-            gameData.timeLimit = data.time_limit || 0; // серверное значение — истина
+            gameData.totalScore = data.total_score || 0; // >0 при возврате в недоигранный вызов дня
+            gameData.timeLimit = data.time_limit || 0;   // серверное значение — истина
+            gameData.daily = !!data.daily;
 
             // Челлендж одноразовый: следующая игра с этими же точками не имеет
             // смысла — игрок их уже видел. Возвращаем обычный стартовый экран.
@@ -270,7 +324,7 @@ async function startGame() {
             }
 
             document.getElementById('total-rounds').textContent = gameData.totalRounds;
-            document.getElementById('total-score').textContent = '0';
+            document.getElementById('total-score').textContent = String(gameData.totalScore);
             
             showScreen('game-screen');
 
@@ -508,10 +562,13 @@ async function loadPanorama(latitude, longitude) {
 
     // Реальные координаты панорамы — на сервер (по ним считаются очки)
     const position = panorama.getPosition();
+    panoStartPoint = position.slice(0, 2); // для кнопки «вернуться к началу»
     await saveActualPoint(position[0], position[1]);
 
+    // Без встроенной кнопки fullscreen: она пересоздавала панораму при
+    // выходе, сбрасывая положение игрока. Карту прячет своя «ручка» панели.
     panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, {
-        controls: ['zoomControl', 'fullscreenControl'],
+        controls: ['zoomControl'],
         direction: [0, 0], // Начальное направление взгляда (азимут, наклон)
         span: [130, 80],   // Угол обзора
         suppressMapOpenBlock: true // Скрыть кнопку «Открыть в Яндекс.Картах»
@@ -560,9 +617,48 @@ async function saveActualPoint(latitude, longitude) {
 }
 
 /**
+ * Свернуть/развернуть панель карты (мобильный «нижний лист»).
+ * В отличие от встроенного fullscreen Яндекса, панораму не трогаем вообще —
+ * игрок остаётся ровно там, куда дошёл.
+ */
+function toggleMapPanel(forceExpand = false) {
+    const panel = document.getElementById('map-panel');
+    const handle = document.getElementById('map-handle');
+    const collapse = forceExpand === true ? false : !panel.classList.contains('collapsed');
+    panel.classList.toggle('collapsed', collapse);
+    handle.textContent = collapse ? 'Открыть карту ▴' : 'Свернуть карту ▾';
+}
+
+/**
+ * Вернуть панораму к стартовой точке раунда (если далеко ушёл по стрелкам)
+ */
+async function returnToPanoStart() {
+    if (!panoramaPlayer || !panoStartPoint) return;
+    try {
+        await panoramaPlayer.moveTo(panoStartPoint);
+    } catch (error) {
+        // moveTo мог не сработать (панорама пропала) — пересоздаём плеер
+        console.error('Не удалось вернуться к началу:', error);
+        if (lastPanorama) {
+            const container = document.getElementById('panorama-player');
+            destroyPanoramaPlayer();
+            container.innerHTML = '';
+            panoramaPlayer = new ymaps.panorama.Player(container, lastPanorama, {
+                controls: ['zoomControl'],
+                direction: [0, 0],
+                span: [130, 80],
+                suppressMapOpenBlock: true
+            });
+        }
+    }
+}
+
+/**
  * Сброс карты для нового раунда
  */
 function resetMapForNewRound() {
+    // Разворачиваем панель карты, если её свернули в прошлом раунде
+    toggleMapPanel(true);
     if (currentMarker && map) {
         map.removeChild(currentMarker);
         currentMarker = null;
@@ -982,12 +1078,13 @@ async function showFinalResults() {
             }
 
             showChallengeCompare(data.challenge);
-            showChallengeButton(data.challenge_token);
+            showChallengeButton(data.challenge_token, data.total_score);
             showScreen('final-screen');
 
             // Карта и статистика — после показа экрана (карте нужен размер контейнера)
             renderFinalMap(data.rounds || []);
             loadPlayerStats(data.player_name);
+            showDailyTop(data.daily);
         }
     } catch (error) {
         console.error('Ошибка получения результатов:', error);
@@ -1025,25 +1122,62 @@ function showChallengeCompare(challenge) {
 }
 
 /**
- * Кнопка «Бросить вызов другу»: копирует ссылку на игру с теми же точками
+ * Топ сегодняшнего вызова дня на финальном экране (если игра была daily)
  */
-function showChallengeButton(token) {
+async function showDailyTop(isDaily) {
+    const block = document.getElementById('daily-top');
+    block.classList.add('hidden');
+    if (!isDaily) return;
+
+    try {
+        const response = await fetch('/api/daily/leaderboard', { credentials: 'same-origin' });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data.leaderboard || !data.leaderboard.length) return;
+
+        const rows = data.leaderboard.slice(0, 5).map(e =>
+            `<div class="dt-row"><span>${e.rank}. ${escapeHtml(e.player_name)}</span><strong>${e.total_score}</strong></div>`
+        ).join('');
+        block.innerHTML = `<div class="dt-title">🗓 Топ вызова дня</div>${rows}`;
+        block.classList.remove('hidden');
+    } catch (error) {
+        console.error('Ошибка загрузки топа дня:', error);
+    }
+}
+
+/**
+ * Кнопка «Бросить вызов другу»: шарит ссылку на игру с теми же точками
+ */
+function showChallengeButton(token, totalScore) {
     const btn = document.getElementById('challenge-btn');
     if (!token) {
         btn.classList.add('hidden');
         return;
     }
     btn.dataset.token = token;
+    btn.dataset.score = totalScore;
     btn.classList.remove('hidden');
 }
 
-async function copyChallengeLink() {
-    const token = document.getElementById('challenge-btn').dataset.token;
+async function shareChallengeLink() {
+    const btn = document.getElementById('challenge-btn');
+    const token = btn.dataset.token;
     if (!token) return;
     const link = `${window.location.origin}/?challenge=${encodeURIComponent(token)}`;
+    const score = btn.dataset.score;
+    const text = `Я набрал ${score} очков в «Петербургском следопыте». Тебе те же 5 панорам — сможешь точнее?`;
 
+    // На телефонах — системное меню «Поделиться», на десктопе — буфер обмена
+    if (navigator.share) {
+        try {
+            await navigator.share({ title: 'Петербургский следопыт', text, url: link });
+            return;
+        } catch (error) {
+            if (error.name === 'AbortError') return; // пользователь передумал
+        }
+    }
     try {
-        await navigator.clipboard.writeText(link);
+        await navigator.clipboard.writeText(`${text}\n${link}`);
         showToast('Ссылка скопирована — отправь её другу!');
     } catch (error) {
         // Clipboard API недоступен (например, http без localhost) — показываем ссылку
@@ -1167,23 +1301,44 @@ async function renderFinalMap(rounds) {
 }
 
 /**
- * Открыть таблицу лидеров заново: сбрасываем фильтр на «Все».
+ * Открыть таблицу лидеров заново: сбрасываем фильтры.
  */
 function openLeaderboard() {
-    document.querySelectorAll('.lb-filter-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.difficulty === 'all');
-    });
-    showLeaderboard('all');
+    lbState = { difficulty: 'all', period: 'all' };
+    syncLeaderboardFilters();
+    showLeaderboard();
 }
 
 /**
- * Показ таблицы лидеров. difficulty: 'all' | 'center' | 'medium' | 'hard'.
- * Бейдж сложности показываем только в общем списке — в отфильтрованном он избыточен.
+ * Привести кнопки фильтров в соответствие с lbState.
+ * В режиме «День» фильтр сложности не применим (у вызова дня она одна).
  */
-async function showLeaderboard(difficulty = 'all') {
-    const url = difficulty && difficulty !== 'all'
-        ? `/api/leaderboard?difficulty=${encodeURIComponent(difficulty)}`
-        : '/api/leaderboard';
+function syncLeaderboardFilters() {
+    document.querySelectorAll('.lb-period-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === lbState.period);
+    });
+    document.querySelectorAll('#leaderboard-filter .lb-filter-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.difficulty === lbState.difficulty);
+    });
+    document.getElementById('leaderboard-filter')
+        .classList.toggle('hidden', lbState.period === 'daily');
+}
+
+/**
+ * Показ таблицы лидеров по текущим фильтрам lbState.
+ * Период 'daily' — отдельный топ сегодняшнего вызова дня.
+ */
+async function showLeaderboard() {
+    let url;
+    if (lbState.period === 'daily') {
+        url = '/api/daily/leaderboard';
+    } else {
+        const params = new URLSearchParams();
+        if (lbState.difficulty !== 'all') params.set('difficulty', lbState.difficulty);
+        if (lbState.period !== 'all') params.set('period', lbState.period);
+        const qs = params.toString();
+        url = qs ? `/api/leaderboard?${qs}` : '/api/leaderboard';
+    }
 
     try {
         const response = await fetch(url, {
@@ -1194,7 +1349,7 @@ async function showLeaderboard(difficulty = 'all') {
         const tableContainer = document.getElementById('leaderboard-table');
         tableContainer.innerHTML = '';
 
-        const showBadge = (difficulty === 'all');
+        const showBadge = (lbState.difficulty === 'all' && lbState.period !== 'daily');
 
         if (data.leaderboard && data.leaderboard.length > 0) {
             // Заголовок

@@ -6,6 +6,15 @@
     <meta name="theme-color" content="#231c62">
     <meta name="description" content="Петербургский следопыт — игра-угадайка: осмотрись на панораме и отметь на карте, где в Санкт-Петербурге ты оказался.">
     <title>Петербургский следопыт — угадай место в Санкт-Петербурге</title>
+    <!-- Превью для мессенджеров и соцсетей (для челлендж-ссылок — с именем и счётом автора) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{{ og_title }}">
+    <meta property="og:description" content="{{ og_description }}">
+    <meta property="og:image" content="{{ url_for('static', filename='img/og-cover.png', _external=True) }}">
+    <meta property="og:url" content="{{ request.url }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <!-- PWA: игра ставится на домашний экран телефона как приложение -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <!-- Фавиконка приложения -->
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicons/favicon.svg') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicons/favicon-32.png') }}">
@@ -58,6 +67,8 @@
                 </div>
 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
+                <button id="daily-btn" class="btn btn-secondary">🗓 Вызов дня</button>
+                <small class="daily-hint hidden" id="daily-hint"></small>
                 <button id="show-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
             </div>
         </main>
@@ -90,8 +101,13 @@
                 </div>
             </div>
 
-            <!-- Карта для выбора: разворачивается при наведении -->
+            <!-- Вернуться к стартовой точке панорамы (если далеко ушёл по стрелкам) -->
+            <button class="pano-home" id="pano-home" title="Вернуться к началу" aria-label="Вернуться к началу панорамы">⌂</button>
+
+            <!-- Карта для выбора: на десктопе разворачивается при наведении,
+                 на мобильных — нижний лист с ручкой сворачивания -->
             <div class="map-panel" id="map-panel">
+                <button class="map-handle" id="map-handle" aria-label="Свернуть карту">Свернуть карту ▾</button>
                 <div class="map-wrap">
                     <div id="map"></div>
                     <div class="map-hint" id="map-hint">Кликни по карте, чтобы отметить место</div>
@@ -146,6 +162,9 @@
                 <!-- Сравнение с автором челленджа (если играли по ссылке-вызову) -->
                 <div id="challenge-compare" class="challenge-compare hidden"></div>
 
+                <!-- Топ сегодняшнего вызова дня (если игра была daily) -->
+                <div id="daily-top" class="daily-top hidden"></div>
+
                 <!-- Карта всех раундов игры: догадки и реальные точки -->
                 <div id="final-map" class="final-map hidden"></div>
 
@@ -170,6 +189,14 @@
         <main class="page-layout">
             <div class="page-card leaderboard-content">
                 <h2>Таблица лидеров</h2>
+
+                <!-- Период: вечный топ закостеневает, недельный даёт шанс новичкам -->
+                <div class="leaderboard-filter" id="lb-period-filter">
+                    <button type="button" class="lb-filter-btn lb-period-btn active" data-period="all">Всё время</button>
+                    <button type="button" class="lb-filter-btn lb-period-btn" data-period="month">Месяц</button>
+                    <button type="button" class="lb-filter-btn lb-period-btn" data-period="week">Неделя</button>
+                    <button type="button" class="lb-filter-btn lb-period-btn" data-period="daily">🗓 День</button>
+                </div>
 
                 <!-- Фильтр по сложности: режимы не сравнимы напрямую -->
                 <div class="leaderboard-filter" id="leaderboard-filter">

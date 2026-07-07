@@ -1,0 +1,26 @@
+{
+    "name": "Петербургский следопыт",
+    "short_name": "Следопыт",
+    "description": "Угадай, где ты оказался в Петербурге: осмотрись на панораме и отметь место на карте.",
+    "lang": "ru",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#231c62",
+    "theme_color": "#231c62",
+    "icons": [
+        {
+            "src": "/static/favicons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/favicons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ]
+}

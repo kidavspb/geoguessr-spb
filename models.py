@@ -38,6 +38,8 @@ class GameSession(db.Model):
     challenge_token = db.Column(db.String(32), unique=True, index=True)
     # Если игра начата по челлендж-ссылке — id исходной игры для сравнения счёта.
     challenged_from_id = db.Column(db.Integer, db.ForeignKey('game_sessions.id'))
+    # Дата ежедневного вызова, если игра сыграна в нём (для лидерборда дня).
+    daily_date = db.Column(db.Date, index=True)
     created_at = db.Column(db.DateTime, default=utcnow)
     completed_at = db.Column(db.DateTime)
 
@@ -98,8 +100,27 @@ class VerifiedPoint(db.Model):
     lon_key = db.Column(db.Integer, nullable=False)
     # Расстояние до центра города — для отбора точек под режим сложности
     dist_from_center_km = db.Column(db.Float, nullable=False)
+    # Сколько раз подряд у точки не нашлась панорама (панорамы иногда
+    # пропадают). На пороге точка удаляется из пула; при успешном
+    # подтверждении панорамы счётчик сбрасывается.
+    fail_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=utcnow)
 
     __table_args__ = (
         db.UniqueConstraint('lat_key', 'lon_key', name='uq_verified_points_key'),
     )
+
+
+class DailyChallenge(db.Model):
+    """Ежедневный вызов: один общий набор точек на день для всех игроков.
+
+    Создаётся лениво при первом обращении за день; точки берутся из пула
+    проверенных панорам (с добивкой случайными, пока пул мал).
+    """
+    __tablename__ = 'daily_challenges'
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, unique=True, index=True, nullable=False)
+    # JSON-список [[lat, lon], ...] — точки раундов дня
+    points_json = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
