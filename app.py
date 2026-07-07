@@ -34,7 +34,7 @@ from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
     choose_round_points, add_verified_point, mark_point_failed
 from geocoder import reverse_geocode
 from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
-from stats import difficulty_percentile, hardest_places
+from stats import difficulty_percentile
 from models import VerifiedPoint
 
 # Загружаем переменные окружения из .env
@@ -221,25 +221,6 @@ def index():
                            metrika_id=METRIKA_ID,
                            og_title=og_title,
                            og_description=og_description)
-
-
-@app.route('/places')
-def places_page():
-    """Публичная страница «Самые неузнаваемые места Петербурга».
-
-    Шоукейс по накопленной статистике: точки, где игроки промахиваются
-    сильнее всего.
-    """
-    return render_template('places.html',
-                           yandex_api_key=YANDEX_MAPS_API_KEY,
-                           metrika_id=METRIKA_ID)
-
-
-@app.route('/api/places/hardest', methods=['GET'])
-@limiter.limit('30 per minute')
-def api_hardest_places():
-    """Топ мест с наибольшим средним промахом (нужно ≥3 сыгранных раундов)."""
-    return jsonify({'places': hardest_places(limit=10)})
 
 
 @app.route('/favicon.ico')

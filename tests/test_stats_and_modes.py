@@ -1,4 +1,4 @@
-"""Тесты статистики сложности мест, режимов «Хардкор» и «без перемещения»,
+"""Тесты статистики сложности мест, режима «без перемещения»,
 предзагрузки (?peek=1) и админ-сводки."""
 
 ADMIN_HEADERS = {'X-Admin-Key': 'test-admin-key'}
@@ -33,13 +33,13 @@ def _seed_point_with_misses(app_module, lat, lon, misses):
 # Сложность мест из данных
 # --------------------------------------------------------------------------
 
-def test_difficulty_percentile_and_hardest_places(app, app_module):
+def test_difficulty_percentile(app, app_module):
     # 5 точек: промахи от 1 до 5 км (по 3 раунда на точку)
     coords = [(59.90 + i * 0.01, 30.30 + i * 0.01) for i in range(5)]
     for i, (lat, lon) in enumerate(coords):
         _seed_point_with_misses(app_module, lat, lon, [i + 1.0] * 3)
 
-    from stats import difficulty_percentile, hardest_places
+    from stats import difficulty_percentile
     with app_module.app.app_context():
         # Самая сложная точка (промах 5 км) сложнее всех остальных
         assert difficulty_percentile(*coords[4]) == 100
@@ -48,20 +48,6 @@ def test_difficulty_percentile_and_hardest_places(app, app_module):
         # Точка без статистики — None
         assert difficulty_percentile(59.99, 30.49) is None
 
-        places = hardest_places()
-        assert places[0]['avg_miss_km'] == 5.0
-        assert places[0]['games'] == 3
-        assert [p['avg_miss_km'] for p in places] == sorted(
-            (p['avg_miss_km'] for p in places), reverse=True)
-
-
-def test_hardest_places_endpoint_and_page(client):
-    resp = client.get('/api/places/hardest')
-    assert resp.status_code == 200
-    assert resp.get_json()['places'] == []  # данных нет — пустой список, не 500
-
-    html = client.get('/places').get_data(as_text=True)
-    assert 'Самые неузнаваемые места' in html
 
 
 def test_guess_returns_difficulty_percentile(client, app_module):
@@ -81,27 +67,6 @@ def test_guess_returns_difficulty_percentile(client, app_module):
     assert result['difficulty_percentile'] == 100
 
 
-def test_hardcore_uses_hardest_points(app, app_module):
-    # 12 изученных точек с разными промахами — хардкор должен брать сложные
-    seeded = {}
-    for i in range(12):
-        lat, lon = 59.90 + i * 0.005, 30.30 + i * 0.005
-        _seed_point_with_misses(app_module, lat, lon, [float(i)] * 3)
-        seeded[(round(lat, 6), round(lon, 6))] = i
-
-    with app_module.app.app_context():
-        points = app_module.choose_round_points('hardcore', 4)
-
-    assert len(points) == 4
-    for lat, lon in points:
-        rank = seeded[(round(lat, 6), round(lon, 6))]
-        assert rank >= 4  # точки из «лёгкой» части не попадают
-
-
-def test_hardcore_falls_back_without_data(app, app_module):
-    with app_module.app.app_context():
-        points = app_module.choose_round_points('hardcore', 5)
-    assert len(points) == 5  # обычная генерация, без падений
 
 
 # --------------------------------------------------------------------------

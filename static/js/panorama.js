@@ -65,10 +65,10 @@ export async function locatePanorama(latitude, longitude) {
 
 /**
  * Загрузка панорамы раунда. Если панорамы нет и рядом — просит у сервера
- * новую точку (до лимита). preloadedPanorama — результат предзагрузки
- * с экрана результата: пропускаем медленный поиск.
+ * новую точку (до лимита). preloaded — прогретый на экране результата
+ * плеер: подключаем его мгновенно, без поиска и загрузки тайлов.
  */
-export async function loadPanorama(latitude, longitude, preloadedPanorama = null) {
+export async function loadPanorama(latitude, longitude, preloaded = null) {
     const overlay = document.getElementById('photo-overlay');
 
     // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
@@ -78,6 +78,34 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
     const panoramaContainer = document.getElementById('panorama-player');
     panoramaContainer.innerHTML = '';
 
+    // Прогретый плеер: переносим его контейнер внутрь игрового экрана —
+    // WebGL-канвас переезжает вместе с уже загруженными тайлами
+    if (preloaded && preloaded.player) {
+        try {
+            const div = preloaded.stagingDiv;
+            div.removeAttribute('style');
+            div.style.cssText = 'position:absolute; inset:0;';
+            panoramaContainer.appendChild(div);
+
+            state.panoramaPlayer = preloaded.player;
+            state.lastPanorama = preloaded.panorama;
+            const position = preloaded.panorama.getPosition();
+            state.panoStartPoint = position.slice(0, 2);
+            state.noMoveWarned = false;
+
+            if (state.panoramaPlayer.fitToViewport) {
+                state.panoramaPlayer.fitToViewport();
+            }
+            startNoMoveWatchdog();
+            overlay.classList.add('hidden');
+            return;
+        } catch (error) {
+            // прогрев не удался — обычный путь загрузки
+            console.error('Прогретый плеер не подключился:', error);
+            discardPreloaded({ player: preloaded.player, stagingDiv: preloaded.stagingDiv });
+        }
+    }
+
     try {
         await ymapsV2Ready();
     } catch (error) {
@@ -86,7 +114,8 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
         return;
     }
 
-    const panorama = preloadedPanorama || await locatePanorama(latitude, longitude);
+    const panorama = (preloaded && preloaded.panorama) ||
+        await locatePanorama(latitude, longitude);
 
     if (!panorama) {
         // Панорамы нет — защищаемся от бесконечного цикла перегенераций
@@ -116,18 +145,32 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
     await api.setActualPoint(position[0], position[1]);
 
     state.panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, PLAYER_OPTIONS);
-
-    // Режим «без перемещения»: шаг по стрелке откатываем на стартовую точку.
-    // Стрелки рисуются внутри WebGL-канваса плеера, спрятать их нельзя —
-    // поэтому перехватываем сам факт перехода.
-    if (state.gameData.noMove) {
-        state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
-    }
+    startNoMoveWatchdog();
 
     // Прячем оверлей по факту загрузки (и по таймауту — на случай, если
     // событие не сработает)
     state.panoramaPlayer.events.add('panoramachange', () => overlay.classList.add('hidden'));
     setTimeout(() => overlay.classList.add('hidden'), 2000);
+}
+
+/**
+ * Страховка режима «без перемещения»: событие panoramachange иногда
+ * теряется при быстрых переходах, поэтому позицию дополнительно
+ * сторожит интервал — любой уход от стартовой точки откатывается.
+ */
+function startNoMoveWatchdog() {
+    stopNoMoveWatchdog();
+    if (!state.gameData.noMove || !state.panoramaPlayer) return;
+
+    state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
+    state.noMoveWatchdog = setInterval(enforceNoMove, 400);
+}
+
+function stopNoMoveWatchdog() {
+    if (state.noMoveWatchdog) {
+        clearInterval(state.noMoveWatchdog);
+        state.noMoveWatchdog = null;
+    }
 }
 
 /**
@@ -150,16 +193,18 @@ function enforceNoMove() {
             showToast('🚷 Режим «не сходя с места» — ходить нельзя, только осматриваться');
         }
     } catch (error) {
-        // панорама в переходном состоянии — откат попробуем на следующем событии
+        // панорама в переходном состоянии — откатим на следующем тике
     }
 }
 
 /**
- * Предзагрузка следующего раунда с экрана результата: пока игрок смотрит
- * на карту промаха, уже ищем следующую панораму. Сервер по ?peek=1 не
- * запускает таймер раунда.
+ * Предзагрузка следующего раунда с экрана результата: находим панораму
+ * И создаём плеер в невидимом контейнере размером с экран — тайлы
+ * загружаются, пока игрок изучает карту промаха. Сервер по ?peek=1
+ * не запускает таймер раунда.
  */
 export async function prefetchNextRound() {
+    discardPreloaded(state.preloaded);
     state.preloaded = null;
     try {
         const location = await api.getLocation(true);
@@ -167,16 +212,47 @@ export async function prefetchNextRound() {
 
         await ymapsV2Ready();
         const panorama = await locatePanorama(location.data.latitude, location.data.longitude);
-        if (panorama) {
-            state.preloaded = {
-                round: location.data.round,
-                latitude: location.data.latitude,
-                longitude: location.data.longitude,
-                panorama
-            };
-        }
+        if (!panorama) return;
+
+        // Координаты панорамы — на сервер уже сейчас (раунд на сервере
+        // уже текущий, а клиенту потом не придётся ждать этот запрос)
+        const position = panorama.getPosition();
+        await api.setActualPoint(position[0], position[1]);
+
+        // Невидимый контейнер во весь экран: плеер честно грузит тайлы
+        const stagingDiv = document.createElement('div');
+        stagingDiv.style.cssText =
+            'position:fixed; inset:0; opacity:0; pointer-events:none; z-index:-1;';
+        document.body.appendChild(stagingDiv);
+        const player = new ymaps.panorama.Player(stagingDiv, panorama, PLAYER_OPTIONS);
+
+        state.preloaded = {
+            round: location.data.round,
+            latitude: location.data.latitude,
+            longitude: location.data.longitude,
+            panorama,
+            player,
+            stagingDiv
+        };
     } catch (error) {
         // предзагрузка — чистая оптимизация; не получилось — загрузим как обычно
+    }
+}
+
+/**
+ * Убрать неиспользованный прогретый плеер (смена раунда, конец игры)
+ */
+export function discardPreloaded(preloaded) {
+    if (!preloaded) return;
+    if (preloaded.player) {
+        try {
+            preloaded.player.destroy();
+        } catch (error) {
+            // уже уничтожен
+        }
+    }
+    if (preloaded.stagingDiv && preloaded.stagingDiv.parentNode) {
+        preloaded.stagingDiv.remove();
     }
 }
 
@@ -229,6 +305,7 @@ export function showResultPano() {
  * Уничтожить основной плеер панорамы (перед новым раундом / после игры)
  */
 export function destroyPanoramaPlayer() {
+    stopNoMoveWatchdog();
     if (state.panoramaPlayer) {
         try {
             state.panoramaPlayer.destroy();
@@ -236,6 +313,42 @@ export function destroyPanoramaPlayer() {
             // плеер мог уже умереть вместе с DOM-узлом
         }
         state.panoramaPlayer = null;
+    }
+}
+
+/**
+ * Полноэкранный просмотр панорамы раунда (клик по кругу на результате)
+ */
+export function openPanoModal() {
+    if (!state.lastPanorama || typeof ymaps === 'undefined') return;
+
+    const modal = document.getElementById('pano-modal');
+    const container = document.getElementById('pano-modal-player');
+    closePanoModal();
+    container.innerHTML = '';
+    modal.classList.remove('hidden');
+
+    try {
+        state.modalPlayer = new ymaps.panorama.Player(container, state.lastPanorama, {
+            controls: ['zoomControl'],
+            suppressMapOpenBlock: true
+        });
+    } catch (error) {
+        console.error('Не удалось открыть панораму на весь экран:', error);
+        modal.classList.add('hidden');
+    }
+}
+
+export function closePanoModal() {
+    const modal = document.getElementById('pano-modal');
+    modal.classList.add('hidden');
+    if (state.modalPlayer) {
+        try {
+            state.modalPlayer.destroy();
+        } catch (error) {
+            // уже уничтожен
+        }
+        state.modalPlayer = null;
     }
 }
 

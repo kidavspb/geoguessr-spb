@@ -16,16 +16,20 @@
     <!-- PWA: игра ставится на домашний экран телефона как приложение -->
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     {% if metrika_id %}
-    <!-- Яндекс Метрика -->
-    <script>
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript">
         window.METRIKA_ID = {{ metrika_id | tojson }};
-        (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-        m[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],
-        k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
-        (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
-        ym({{ metrika_id }}, "init", { clickmap: true, trackLinks: true, accurateTrackBounce: true });
+        (function(m,e,t,r,i,k,a){
+            m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+            m[i].l=1*new Date();
+            for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+            k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+        })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id={{ metrika_id }}', 'ym');
+
+        ym({{ metrika_id }}, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
     </script>
     <noscript><div><img src="https://mc.yandex.ru/watch/{{ metrika_id }}" style="position:absolute; left:-9999px;" alt=""></div></noscript>
+    <!-- /Yandex.Metrika counter -->
     {% endif %}
     <!-- Фавиконка приложения -->
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicons/favicon.svg') }}">
@@ -65,7 +69,6 @@
                         <button type="button" class="difficulty-btn" data-difficulty="center">Центр</button>
                         <button type="button" class="difficulty-btn active" data-difficulty="medium">Средняя</button>
                         <button type="button" class="difficulty-btn" data-difficulty="hard">Весь город</button>
-                        <button type="button" class="difficulty-btn" data-difficulty="hardcore">🔥</button>
                     </div>
                     <small class="difficulty-hint">Средняя — центр и ближайшие районы</small>
                 </div>
@@ -91,7 +94,6 @@
                 <button id="daily-btn" class="btn btn-secondary">🗓 Вызов дня</button>
                 <small class="daily-hint hidden" id="daily-hint"></small>
                 <button id="show-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
-                <a class="places-link" href="/places">Самые неузнаваемые места города →</a>
             </div>
         </main>
     </div>
@@ -148,8 +150,8 @@
             <aside class="result-panel">
                 <h2 id="result-title" class="result-title">Результат</h2>
 
-                <!-- Панорама, по которой угадывали: можно осмотреться ещё раз -->
-                <div class="result-pano hidden" id="result-pano"></div>
+                <!-- Панорама раунда как «фото»: клик открывает её на весь экран -->
+                <button class="result-pano hidden" id="result-pano" title="Открыть панораму на весь экран" aria-label="Открыть панораму на весь экран"></button>
 
                 <div class="result-score-block">
                     <div class="result-score"><span id="result-score">0</span> <span id="result-score-word">очков</span></div>
@@ -238,6 +240,12 @@
                 <button id="back-btn" class="btn btn-secondary">Назад</button>
             </div>
         </main>
+    </div>
+
+    <!-- Полноэкранный просмотр панорамы раунда (с экрана результата) -->
+    <div id="pano-modal" class="pano-modal hidden">
+        <div id="pano-modal-player"></div>
+        <button id="pano-modal-close" class="pano-modal-close" aria-label="Закрыть">✕</button>
     </div>
 
     <!-- Всплывающее уведомление (копирование ссылки-вызова и т.п.) -->

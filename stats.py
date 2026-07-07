@@ -4,7 +4,7 @@
 точкам пула (ключ — те же округлённые координаты, что и в дедупликации),
 получаем фактическую сложность каждого места: средний промах игроков.
 """
-from models import GameRound, VerifiedPoint
+from models import GameRound
 
 # Минимум сыгранных раундов, чтобы судить о сложности точки
 MIN_GAMES_FOR_STATS = 3
@@ -55,55 +55,3 @@ def difficulty_percentile(lat, lon):
     return int(round(100 * easier / (len(stats) - 1)))
 
 
-def hardest_places(limit=10):
-    """Самые сложные места города — для публичной страницы-шоукейса.
-
-    Возвращает точки пула с наибольшим средним промахом (и числом игр).
-    """
-    stats = point_difficulty_map()
-    if not stats:
-        return []
-
-    # Подтягиваем координаты из пула (в статистике — только ключи)
-    points = VerifiedPoint.query.all()
-    by_key = {(p.lat_key, p.lon_key): p for p in points}
-
-    places = []
-    for key, (avg_km, games) in stats.items():
-        point = by_key.get(key)
-        if point is None:
-            continue  # точка выбыла из пула — в шоукейс не попадает
-        places.append({
-            'latitude': point.latitude,
-            'longitude': point.longitude,
-            'avg_miss_km': round(avg_km, 2),
-            'games': games,
-        })
-
-    places.sort(key=lambda p: p['avg_miss_km'], reverse=True)
-    return places[:limit]
-
-
-def hardest_pool_points(count, min_pool=10):
-    """Точки для режима «Хардкор»: случайная выборка из трети самых сложных.
-
-    Возвращает [(lat, lon), ...] или None, если изученных точек ещё мало —
-    тогда вызывающий код падает обратно на обычную генерацию по всему городу.
-    """
-    import random
-
-    stats = point_difficulty_map()
-    points = VerifiedPoint.query.all()
-    by_key = {(p.lat_key, p.lon_key): p for p in points}
-
-    ranked = sorted(
-        ((stats[key][0], by_key[key]) for key in stats if key in by_key),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    if len(ranked) < min_pool:
-        return None
-
-    top = ranked[:max(count, len(ranked) // 3)]
-    chosen = random.sample(top, min(count, len(top)))
-    return [(p.latitude, p.longitude) for _, p in chosen]

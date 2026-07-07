@@ -85,7 +85,3 @@ def test_no_move_round_and_map_toggle(page, server):
     _play_round(page)
     expect(page.locator('#result-score')).to_be_visible()
 
-
-def test_places_page_opens(page, server):
-    page.goto(server + '/places')
-    expect(page.locator('h2')).to_contain_text('Самые неузнаваемые места')

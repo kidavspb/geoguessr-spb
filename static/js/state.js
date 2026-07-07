@@ -18,8 +18,7 @@ export const MAX_PANORAMA_RETRIES = 8;
 export const DIFFICULTY_HINTS = {
     'center': 'Центр — исторический центр города',
     'medium': 'Средняя — центр и ближайшие районы',
-    'hard': 'Весь город — от центра до окраин',
-    'hardcore': 'Хардкор — места, где промахиваются сильнее всего'
+    'hard': 'Весь город — от центра до окраин'
 };
 
 // Мутабельное состояние. Модули меняют поля напрямую — приложение маленькое,
@@ -35,7 +34,9 @@ export const state = {
     guessCoords: null,     // текущая догадка {latitude, longitude}
     panoramaRetries: 0,    // сколько раз перегенерировали точку в этом раунде
     panoStartPoint: null,  // стартовая точка панорамы (кнопка «к началу», no-move)
-    preloaded: null,       // предзагруженный следующий раунд {round, lat, lon, panorama}
+    preloaded: null,       // предзагруженный раунд {round, latitude, longitude, panorama, player, stagingDiv}
+    noMoveWatchdog: null,  // интервал-страховка режима «без перемещения»
+    modalPlayer: null,     // плеер полноэкранного просмотра панорамы
     roundTimerInterval: null,
     roundDeadline: null,   // момент окончания времени раунда (ms)
     guessSubmitting: false,// защита от двойной отправки (клик + таймер)

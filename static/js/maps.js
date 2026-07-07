@@ -139,15 +139,16 @@ export async function showResultMap(data) {
     const guessLon = data.guess.longitude;
     const guessLat = data.guess.latitude;
 
-    // Сами вписываем обе точки в кадр. Панель результата закрывает часть
-    // карты (справа на десктопе, снизу на мобильной раскладке) — учитываем
-    // это и в масштабе, и в центре.
+    // Сами вписываем обе точки в кадр — по фактическому размеру контейнера.
+    // На мобильных контейнер карты уже обрезан по высоте панели (CSS),
+    // на десктопе панель закрывает правую часть — учитываем её ширину.
+    const rect = mapContainer.getBoundingClientRect();
+    const stageW = rect.width || window.innerWidth;
+    const stageH = rect.height || window.innerHeight;
     const isMobile = window.innerWidth <= 720;
-    const stageW = window.innerWidth;
-    const stageH = window.innerHeight;
     const panelRight = isMobile ? 0 : Math.min(380, stageW);
-    const panelBottom = isMobile ? stageH * 0.62 : 0;
-    const padPx = 70;
+    const panelBottom = 0;
+    const padPx = isMobile ? 40 : 70;
 
     // Минимальные охваты ~50 м: при точном попадании не упираемся в ноль,
     // а при маленьком промахе карта приближается к кварталу, не к городу

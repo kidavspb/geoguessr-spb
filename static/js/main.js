@@ -6,8 +6,9 @@ import { state, DIFFICULTY_HINTS } from './state.js';
 import { plural, escapeHtml, getScoreClass, showScreen, showToast, reachGoal } from './utils.js';
 import { api } from './api.js';
 import {
-    loadPanorama, prefetchNextRound, returnToPanoStart,
-    showResultPano, destroyResultPano, destroyPanoramaPlayer, clientReverseGeocode
+    loadPanorama, prefetchNextRound, discardPreloaded, returnToPanoStart,
+    showResultPano, destroyResultPano, destroyPanoramaPlayer,
+    openPanoModal, closePanoModal, clientReverseGeocode
 } from './panorama.js';
 import {
     initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap
@@ -40,6 +41,8 @@ function initEventListeners() {
 
     // Экран результата
     document.getElementById('next-round-btn').addEventListener('click', nextRound);
+    document.getElementById('result-pano').addEventListener('click', openPanoModal);
+    document.getElementById('pano-modal-close').addEventListener('click', closePanoModal);
 
     // Финальный экран
     document.getElementById('play-again-btn').addEventListener('click', () => {
@@ -283,15 +286,15 @@ async function loadCurrentLocation() {
         gameData.currentRound = data.round;
         document.getElementById('current-round').textContent = data.round;
 
-        // Если этот раунд предзагружен с экрана результата — панорама уже
-        // найдена, пропускаем самый медленный шаг
+        // Если этот раунд прогрет с экрана результата (панорама найдена,
+        // тайлы загружены) — подключаем готовый плеер мгновенно
         const pre = state.preloaded;
         const usePreloaded = pre && pre.round === data.round &&
             pre.latitude === data.latitude && pre.longitude === data.longitude;
         state.preloaded = null;
+        if (pre && !usePreloaded) discardPreloaded(pre);
 
-        await loadPanorama(data.latitude, data.longitude,
-                           usePreloaded ? pre.panorama : null);
+        await loadPanorama(data.latitude, data.longitude, usePreloaded ? pre : null);
 
         resetMapForNewRound();
 
@@ -494,6 +497,8 @@ function nextRound() {
 async function showFinalResults() {
     destroyResultPano();
     destroyPanoramaPlayer();
+    discardPreloaded(state.preloaded);
+    state.preloaded = null;
     try {
         const { ok, data } = await api.results();
 

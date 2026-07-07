@@ -18,7 +18,7 @@ POOL_MIN_SIZE = 15
 POOL_USE_PROBABILITY = 0.7
 # Максимальное расстояние точки пула от центра для режима сложности (км);
 # None — без ограничения (весь город).
-POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None, 'hardcore': None}
+POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
 # После скольких неудачных поисков панорамы подряд точка выбывает из пула
 POOL_MAX_FAILS = 3
 
@@ -54,16 +54,7 @@ def choose_round_points(difficulty, count):
     Пока пул мал — все точки случайные. Когда точек достаточно, большинство
     раундов стартует с проверенной точки (панорама точно есть), но часть
     по-прежнему генерируется — так пул растёт.
-
-    «Хардкор» — особый случай: точки берутся из самых сложных по статистике
-    промахов; пока данных мало — обычная генерация по всему городу.
     """
-    if difficulty == 'hardcore':
-        from stats import hardest_pool_points
-        hardest = hardest_pool_points(count)
-        if hardest is not None:
-            return hardest
-
     query = VerifiedPoint.query
     radius = POOL_RADIUS_KM.get(difficulty)
     if radius is not None:
