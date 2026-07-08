@@ -65,10 +65,10 @@ export async function locatePanorama(latitude, longitude) {
 
 /**
  * Загрузка панорамы раунда. Если панорамы нет и рядом — просит у сервера
- * новую точку (до лимита). preloaded — прогретый на экране результата
- * плеер: подключаем его мгновенно, без поиска и загрузки тайлов.
+ * новую точку (до лимита). preloadedPanorama — найденная при прогреве
+ * панорама: пропускаем поиск, тайлы уже в HTTP-кэше браузера.
  */
-export async function loadPanorama(latitude, longitude, preloaded = null) {
+export async function loadPanorama(latitude, longitude, preloadedPanorama = null) {
     const overlay = document.getElementById('photo-overlay');
 
     // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
@@ -78,34 +78,6 @@ export async function loadPanorama(latitude, longitude, preloaded = null) {
     const panoramaContainer = document.getElementById('panorama-player');
     panoramaContainer.innerHTML = '';
 
-    // Прогретый плеер: переносим его контейнер внутрь игрового экрана —
-    // WebGL-канвас переезжает вместе с уже загруженными тайлами
-    if (preloaded && preloaded.player) {
-        try {
-            const div = preloaded.stagingDiv;
-            div.removeAttribute('style');
-            div.style.cssText = 'position:absolute; inset:0;';
-            panoramaContainer.appendChild(div);
-
-            state.panoramaPlayer = preloaded.player;
-            state.lastPanorama = preloaded.panorama;
-            const position = preloaded.panorama.getPosition();
-            state.panoStartPoint = position.slice(0, 2);
-            state.noMoveWarned = false;
-
-            if (state.panoramaPlayer.fitToViewport) {
-                state.panoramaPlayer.fitToViewport();
-            }
-            startNoMoveWatchdog();
-            overlay.classList.add('hidden');
-            return;
-        } catch (error) {
-            // прогрев не удался — обычный путь загрузки
-            console.error('Прогретый плеер не подключился:', error);
-            discardPreloaded({ player: preloaded.player, stagingDiv: preloaded.stagingDiv });
-        }
-    }
-
     try {
         await ymapsV2Ready();
     } catch (error) {
@@ -114,8 +86,7 @@ export async function loadPanorama(latitude, longitude, preloaded = null) {
         return;
     }
 
-    const panorama = (preloaded && preloaded.panorama) ||
-        await locatePanorama(latitude, longitude);
+    const panorama = preloadedPanorama || await locatePanorama(latitude, longitude);
 
     if (!panorama) {
         // Панорамы нет — защищаемся от бесконечного цикла перегенераций

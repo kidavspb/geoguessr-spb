@@ -28,6 +28,13 @@ def _play_round(page):
 
 
 def test_full_game_flow(page, server):
+    # Считаем «боевые» запросы точки раунда: их должно быть ровно по одному
+    # на раунд. Дубли означают двойной обработчик «Продолжить» и гонку двух
+    # загрузок панорамы (реальный баг: зависание на переходе раунда).
+    location_requests = []
+    page.on('request', lambda req: location_requests.append(req.url)
+            if '/api/game/location' in req.url and 'peek' not in req.url else None)
+
     page.goto(server)
     expect(page).to_have_title(re.compile('Петербургский следопыт'))
 
@@ -63,6 +70,9 @@ def test_full_game_flow(page, server):
     page.locator('#final-leaderboard-btn').click()
     expect(page.locator('#leaderboard-screen')).to_have_class(re.compile('active'))
     expect(page.locator('.leaderboard-table')).to_contain_text('E2E-игрок')
+
+    # Ровно один запрос точки на раунд — без дублей от двойных обработчиков
+    assert len(location_requests) == 5, f'ожидалось 5 запросов раунда, было {len(location_requests)}'
 
 
 def test_no_move_round_and_map_toggle(page, server):

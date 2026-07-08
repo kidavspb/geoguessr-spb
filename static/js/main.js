@@ -39,8 +39,9 @@ function initEventListeners() {
     document.getElementById('map-handle').addEventListener('click', toggleMapPanel);
     document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
 
-    // Экран результата
-    document.getElementById('next-round-btn').addEventListener('click', nextRound);
+    // Экран результата. ВАЖНО: обработчик кнопки «Продолжить» назначается
+    // только через onclick в showRoundResult — addEventListener здесь дал бы
+    // ВТОРОЙ вызов nextRound на клик и гонку двух загрузок панорамы.
     document.getElementById('result-pano').addEventListener('click', openPanoModal);
     document.getElementById('pano-modal-close').addEventListener('click', closePanoModal);
 
@@ -265,6 +266,11 @@ async function startGame(opts = {}) {
  * Загрузка текущего раунда (панорама + сброс карты + таймер)
  */
 async function loadCurrentLocation() {
+    // Защита от параллельного запуска (двойной клик, поспешный повтор):
+    // две одновременные загрузки панорамы оставляют пустой экран
+    if (state.roundLoading) return;
+    state.roundLoading = true;
+
     const overlay = document.getElementById('photo-overlay');
     overlay.classList.remove('hidden');
     overlay.querySelector('span').textContent = 'Загрузка...';
@@ -286,15 +292,18 @@ async function loadCurrentLocation() {
         gameData.currentRound = data.round;
         document.getElementById('current-round').textContent = data.round;
 
-        // Если этот раунд прогрет с экрана результата (панорама найдена,
-        // тайлы загружены) — подключаем готовый плеер мгновенно
+        // Если этот раунд прогрет с экрана результата, панорама уже найдена,
+        // а её тайлы — в HTTP-кэше браузера. Прогревочный плеер уничтожаем
+        // (переносить WebGL-канвас нельзя: Safari теряет контекст), а новый
+        // создаётся из готовой панорамы почти мгновенно.
         const pre = state.preloaded;
         const usePreloaded = pre && pre.round === data.round &&
             pre.latitude === data.latitude && pre.longitude === data.longitude;
         state.preloaded = null;
-        if (pre && !usePreloaded) discardPreloaded(pre);
+        if (pre) discardPreloaded(pre);
 
-        await loadPanorama(data.latitude, data.longitude, usePreloaded ? pre : null);
+        await loadPanorama(data.latitude, data.longitude,
+                           usePreloaded ? pre.panorama : null);
 
         resetMapForNewRound();
 
@@ -303,6 +312,8 @@ async function loadCurrentLocation() {
     } catch (error) {
         console.error('Ошибка загрузки локации:', error);
         overlay.querySelector('span').textContent = 'Ошибка загрузки';
+    } finally {
+        state.roundLoading = false;
     }
 }
 
