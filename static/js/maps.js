@@ -74,20 +74,52 @@ export function placeMarker(coordinates) {
  * В отличие от встроенного fullscreen Яндекса, панораму не трогаем вообще —
  * игрок остаётся ровно там, куда дошёл.
  */
-export function toggleMapPanel(forceExpand = false) {
+export function setMapPanelCollapsed(collapse) {
     const panel = document.getElementById('map-panel');
     const handle = document.getElementById('map-handle');
-    const collapse = forceExpand === true ? false : !panel.classList.contains('collapsed');
     panel.classList.toggle('collapsed', collapse);
     handle.textContent = collapse ? 'Открыть карту ▴' : 'Свернуть карту ▾';
+}
+
+export function toggleMapPanel() {
+    const panel = document.getElementById('map-panel');
+    setMapPanelCollapsed(!panel.classList.contains('collapsed'));
+}
+
+/**
+ * Уничтожить карты результата/финала: каждая держит WebGL-контекст,
+ * а на iOS их лимит быстро приводит к вылету вкладки
+ */
+export function destroyResultMap() {
+    if (state.resultMap) {
+        try {
+            state.resultMap.destroy();
+        } catch (error) {
+            // уже уничтожена
+        }
+        state.resultMap = null;
+    }
+}
+
+export function destroyFinalMap() {
+    if (state.finalMap) {
+        try {
+            state.finalMap.destroy();
+        } catch (error) {
+            // уже уничтожена
+        }
+        state.finalMap = null;
+    }
 }
 
 /**
  * Сброс карты для нового раунда
  */
 export function resetMapForNewRound() {
-    // Разворачиваем панель карты, если её свернули в прошлом раунде
-    toggleMapPanel(true);
+    // На телефоне раунд начинается со свёрнутой картой: первым делом игрок
+    // всё равно осматривается, а карта закрывала бы пол-экрана.
+    // На десктопе панель маленькая и разворачивается наведением — оставляем.
+    setMapPanelCollapsed(window.innerWidth <= 720);
     if (state.currentMarker && state.map) {
         state.map.removeChild(state.currentMarker);
         state.currentMarker = null;
@@ -117,6 +149,7 @@ export async function showResultMap(data) {
 
     const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
 
+    destroyResultMap();
     const mapContainer = document.getElementById('result-map');
     mapContainer.innerHTML = '';
 
@@ -225,6 +258,7 @@ export async function renderFinalMap(rounds) {
         container.classList.add('hidden');
         return;
     }
+    destroyFinalMap();
     container.classList.remove('hidden');
     container.innerHTML = '';
 

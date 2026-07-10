@@ -86,12 +86,21 @@ def test_no_move_round_and_map_toggle(page, server):
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
 
-    # Ручка «нижнего листа» сворачивает и разворачивает панель карты
+    # На мобильных раунд начинается со свёрнутой картой: первым делом игрок
+    # осматривается, и панорама сразу на весь экран
+    expect(page.locator('#map-panel')).to_have_class(re.compile('collapsed'))
+
+    # Ручка «нижнего листа» разворачивает и сворачивает панель
+    page.locator('#map-handle').click()
+    expect(page.locator('#map-panel')).not_to_have_class(re.compile('collapsed'))
     page.locator('#map-handle').click()
     expect(page.locator('#map-panel')).to_have_class(re.compile('collapsed'))
     page.locator('#map-handle').click()
-    expect(page.locator('#map-panel')).not_to_have_class(re.compile('collapsed'))
 
     _play_round(page)
     expect(page.locator('#result-score')).to_be_visible()
+
+    # Адрес на результате — ссылка на панораму места в Яндекс Картах
+    expect(page.locator('#correct-location-name')).to_have_attribute(
+        'href', re.compile(r'yandex\.ru/maps/\?panorama'))
 

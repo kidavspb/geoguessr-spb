@@ -159,16 +159,16 @@
 
                 <p class="result-miss" id="result-miss">Ты промахнулся на <span class="miss-distance" id="result-distance">0 м</span> от точки съёмки</p>
 
+                <!-- Адрес — ссылка на панораму этой точки в Яндекс Картах
+                     (сохранить или дойти) -->
                 <div class="result-location hidden" id="result-location">
                     <span>Это было:</span>
-                    <strong id="correct-location-name"></strong>
+                    <a id="correct-location-name" target="_blank" rel="noopener"
+                       title="Открыть панораму этого места в Яндекс Картах"></a>
                 </div>
 
                 <!-- Фактическая сложность места по статистике промахов -->
                 <p class="result-difficulty hidden" id="result-difficulty"></p>
-
-                <!-- Сохранить/дойти: панорама этой точки в Яндекс Картах -->
-                <a class="result-yamaps hidden" id="result-yamaps" target="_blank" rel="noopener">Открыть место в Яндекс Картах ↗</a>
 
                 <div class="result-panel-spacer"></div>
                 <button id="next-round-btn" class="btn btn-primary">Продолжить</button>

@@ -234,6 +234,25 @@ export async function prefetchNextRound() {
             player,
             stagingDiv
         };
+
+        // Прогревочный плеер нужен лишь на несколько секунд — тайлы панорамы
+        // за это время оседают в HTTP-кэше. Дальше держать WebGL-контекст
+        // незачем: на iOS лишние контексты приводят к вылету вкладки.
+        const preloadedRef = state.preloaded;
+        setTimeout(() => {
+            if (preloadedRef.player) {
+                try {
+                    preloadedRef.player.destroy();
+                } catch (error) {
+                    // уже уничтожен
+                }
+                preloadedRef.player = null;
+            }
+            if (preloadedRef.stagingDiv && preloadedRef.stagingDiv.parentNode) {
+                preloadedRef.stagingDiv.remove();
+            }
+            preloadedRef.stagingDiv = null;
+        }, 4000);
     } catch (error) {
         // предзагрузка — чистая оптимизация; не получилось — загрузим как обычно
     }

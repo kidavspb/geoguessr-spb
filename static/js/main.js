@@ -12,7 +12,8 @@ import {
     scheduleLoadingOverlay, showLoadingOverlay
 } from './panorama.js';
 import {
-    initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap
+    initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap,
+    destroyResultMap, destroyFinalMap
 } from './maps.js';
 
 const { gameData } = state;
@@ -64,6 +65,7 @@ function initEventListeners() {
 
     // Финальный экран
     document.getElementById('play-again-btn').addEventListener('click', () => {
+        destroyFinalMap();
         showScreen('start-screen');
     });
     document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
@@ -436,14 +438,23 @@ async function sendGuess(payload) {
  * Показ результата раунда
  */
 async function showRoundResult(data) {
+    // Основной плеер панорамы на экране результата не нужен (в круге — свой
+    // мини-плеер), а его WebGL-контекст и текстуры — самое тяжёлое, что есть
+    // на странице. На iOS без этой уборки вкладка вылетала по памяти.
+    destroyPanoramaPlayer();
+
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
 
     // Адрес точки («Это было: …»): серверный, а если сервер без ключа
-    // геокодера — клиентский, через JS API v2 с обычным ключом карт
+    // геокодера — клиентский, через JS API v2 с обычным ключом карт.
+    // Сам адрес — ссылка на панораму этого места в Яндекс Картах.
     const locationBlock = document.getElementById('result-location');
+    const addressLink = document.getElementById('correct-location-name');
+    addressLink.href = 'https://yandex.ru/maps/?panorama%5Bpoint%5D=' +
+        `${data.correct_location.longitude},${data.correct_location.latitude}`;
     if (data.address) {
-        document.getElementById('correct-location-name').textContent = data.address;
+        addressLink.textContent = data.address;
         locationBlock.classList.remove('hidden');
     } else {
         locationBlock.classList.add('hidden');
@@ -452,17 +463,11 @@ async function showRoundResult(data) {
             data.correct_location.longitude
         ).then(address => {
             if (address) {
-                document.getElementById('correct-location-name').textContent = address;
+                addressLink.textContent = address;
                 locationBlock.classList.remove('hidden');
             }
         });
     }
-
-    // Ссылка на панораму этой точки в Яндекс Картах — сохранить или дойти
-    const yamapsLink = document.getElementById('result-yamaps');
-    yamapsLink.href = 'https://yandex.ru/maps/?panorama%5Bpoint%5D=' +
-        `${data.correct_location.longitude},${data.correct_location.latitude}`;
-    yamapsLink.classList.remove('hidden');
 
     // Фактическая сложность места (когда по нему уже накоплена статистика)
     const diffBlock = document.getElementById('result-difficulty');
@@ -529,6 +534,7 @@ async function showRoundResult(data) {
  */
 function nextRound() {
     destroyResultPano();
+    destroyResultMap();
     showScreen('game-screen');
     loadCurrentLocation();
 }
@@ -539,6 +545,7 @@ function nextRound() {
 
 async function showFinalResults() {
     destroyResultPano();
+    destroyResultMap();
     destroyPanoramaPlayer();
     discardPreloaded(state.preloaded);
     state.preloaded = null;
