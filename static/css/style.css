@@ -108,7 +108,6 @@ h1, h2 {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45),
                 0 6px 16px rgba(106, 185, 70, 0.40);
     color: #fff;
-    text-transform: lowercase;
     width: 100%;
     margin-bottom: 0.75rem;
 }
@@ -234,6 +233,11 @@ h1, h2 {
     color: var(--yellow);
 }
 
+/* Единый ритм кнопок стартового экрана */
+#start-screen .btn {
+    margin-bottom: 0.65rem;
+}
+
 .start-logo {
     width: 132px;
     height: auto;
@@ -256,6 +260,8 @@ h1, h2 {
     color: var(--text-muted);
     margin-bottom: 2rem;
     line-height: 1.6;
+    /* Балансировка строк: без рваных переносов на узких экранах */
+    text-wrap: balance;
 }
 
 .input-group {
@@ -1038,7 +1044,7 @@ h1, h2 {
 /* ===== Кнопка «Вызов дня» и подсказка под ней ===== */
 .daily-hint {
     display: block;
-    margin: -0.25rem 0 0.75rem;
+    margin: -0.15rem 0 0.65rem;
     color: rgba(253, 250, 228, 0.6);
     font-size: 0.8rem;
 }
@@ -1212,4 +1218,41 @@ h1, h2 {
     cursor: pointer;
     z-index: 10;
     box-shadow: var(--shadow-chip);
+}
+
+/* ===== Ссылка «Открыть место в Яндекс Картах» на результате ===== */
+.result-yamaps {
+    display: block;
+    text-align: center;
+    color: rgba(253, 250, 228, 0.65);
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.result-yamaps:hover {
+    color: var(--cream);
+}
+
+/* ===== Мобильные поправки HUD и домика ===== */
+@media (max-width: 720px) {
+    /* Чипы Раунд/Счёт/Таймер: компактнее и с переносом — таймер не
+       вылезает за правый край экрана */
+    .hud-chips {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .hud-brand,
+    .hud-chip {
+        padding: 0.35rem 0.7rem;
+        font-size: 0.8rem;
+    }
+
+    /* Домик «к началу» — под шапкой слева: внизу он перекрывал
+       развёрнутую панель карты */
+    .pano-home {
+        bottom: auto;
+        top: 76px;
+    }
 }

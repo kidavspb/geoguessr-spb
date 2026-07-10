@@ -53,7 +53,7 @@
             <div class="start-card">
                 <img class="start-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="Логотип «Петербургский следопыт»">
                 <h1 class="brand-title">Петербургский следопыт</h1>
-                <p class="start-tagline">Осмотрись на панораме, вспомни город<br>и отметь на карте, где ты оказался.</p>
+                <p class="start-tagline">Осмотрись на панораме, вспомни город и отметь на карте, где ты оказался.</p>
 
                 <div class="input-group">
                     <label for="player-name">Твоё имя</label>
@@ -166,6 +166,9 @@
 
                 <!-- Фактическая сложность места по статистике промахов -->
                 <p class="result-difficulty hidden" id="result-difficulty"></p>
+
+                <!-- Сохранить/дойти: панорама этой точки в Яндекс Картах -->
+                <a class="result-yamaps hidden" id="result-yamaps" target="_blank" rel="noopener">Открыть место в Яндекс Картах ↗</a>
 
                 <div class="result-panel-spacer"></div>
                 <button id="next-round-btn" class="btn btn-primary">Продолжить</button>

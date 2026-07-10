@@ -16,6 +16,31 @@ const PLAYER_OPTIONS = {
 };
 
 /**
+ * Оверлей «Загрузка…»: показывается ОТЛОЖЕННО (300 мс). Прогретый раунд
+ * успевает подключиться раньше — экран загрузки даже не мелькает.
+ */
+export function scheduleLoadingOverlay() {
+    clearTimeout(state.overlayTimer);
+    state.overlayTimer = setTimeout(() => {
+        const overlay = document.getElementById('photo-overlay');
+        overlay.querySelector('span').textContent = 'Загрузка...';
+        overlay.classList.remove('hidden');
+    }, 300);
+}
+
+export function showLoadingOverlay(text) {
+    clearTimeout(state.overlayTimer);
+    const overlay = document.getElementById('photo-overlay');
+    overlay.querySelector('span').textContent = text;
+    overlay.classList.remove('hidden');
+}
+
+function hideLoadingOverlay() {
+    clearTimeout(state.overlayTimer);
+    document.getElementById('photo-overlay').classList.add('hidden');
+}
+
+/**
  * Дождаться загрузки JS API v2 (панорамы). Скрипт подключён в <head>,
  * но мог ещё не доехать по сети.
  */
@@ -69,8 +94,6 @@ export async function locatePanorama(latitude, longitude) {
  * панорама: пропускаем поиск, тайлы уже в HTTP-кэше браузера.
  */
 export async function loadPanorama(latitude, longitude, preloadedPanorama = null) {
-    const overlay = document.getElementById('photo-overlay');
-
     // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
     // продолжает жить, опрашивает вырванный из DOM элемент и заваливает
     // консоль ошибками offsetWidth (заметно тормозит страницу).
@@ -82,7 +105,7 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
         await ymapsV2Ready();
     } catch (error) {
         console.error('Ошибка загрузки панорамы:', error);
-        overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
+        showLoadingOverlay('Ошибка загрузки. Попробуйте перезагрузить страницу.');
         return;
     }
 
@@ -91,18 +114,17 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
     if (!panorama) {
         // Панорамы нет — защищаемся от бесконечного цикла перегенераций
         if (state.panoramaRetries >= MAX_PANORAMA_RETRIES) {
-            overlay.querySelector('span').textContent =
-                'Не удалось найти панораму поблизости. Начните игру заново.';
+            showLoadingOverlay('Не удалось найти панораму поблизости. Начните игру заново.');
             return;
         }
         state.panoramaRetries++;
-        overlay.querySelector('span').textContent = 'Здесь нет панорамы, выбираем другое место...';
+        showLoadingOverlay('Здесь нет панорамы, выбираем другое место...');
 
         const skipped = await api.skipLocation();
         if (skipped.ok && skipped.data) {
             await loadPanorama(skipped.data.latitude, skipped.data.longitude);
         } else {
-            overlay.querySelector('span').textContent = 'Ошибка загрузки. Попробуйте перезагрузить страницу.';
+            showLoadingOverlay('Ошибка загрузки. Попробуйте перезагрузить страницу.');
         }
         return;
     }
@@ -118,10 +140,17 @@ export async function loadPanorama(latitude, longitude, preloadedPanorama = null
     state.panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, PLAYER_OPTIONS);
     startNoMoveWatchdog();
 
+    if (preloadedPanorama) {
+        // Тайлы уже в HTTP-кэше после прогрева — прячем оверлей сразу,
+        // экран загрузки даже не появится (он отложен на 300 мс)
+        hideLoadingOverlay();
+        return;
+    }
+
     // Прячем оверлей по факту загрузки (и по таймауту — на случай, если
     // событие не сработает)
-    state.panoramaPlayer.events.add('panoramachange', () => overlay.classList.add('hidden'));
-    setTimeout(() => overlay.classList.add('hidden'), 2000);
+    state.panoramaPlayer.events.add('panoramachange', hideLoadingOverlay);
+    setTimeout(hideLoadingOverlay, 2000);
 }
 
 /**
@@ -263,6 +292,9 @@ export function showResultPano() {
     try {
         state.resultPanoPlayer = new ymaps.panorama.Player(container, state.lastPanorama, {
             controls: [],
+            // Взгляд слегка вверх: стрелки переходов рисуются на земле внутри
+            // WebGL-сцены (их не отключить), так они уходят за нижний край круга
+            direction: [0, 12],
             suppressMapOpenBlock: true
         });
         container.classList.remove('hidden');

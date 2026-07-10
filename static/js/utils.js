@@ -92,3 +92,25 @@ export function reachGoal(name) {
         window.ym(window.METRIKA_ID, 'reachGoal', name);
     }
 }
+
+/**
+ * Случайное петербургское имя игрока — вместо безликого «Анонима»,
+ * чтобы результаты разных людей не сливались в одну кучу.
+ */
+const NAME_ADJECTIVES = [
+    'Гранитный', 'Туманный', 'Невский', 'Парадный', 'Дворцовый',
+    'Балтийский', 'Летний', 'Литейный', 'Каменный', 'Медный',
+    'Белоночный', 'Промозглый', 'Васильевский', 'Аптекарский', 'Фонтанный'
+];
+
+const NAME_NOUNS = [
+    'Сфинкс', 'Грифон', 'Чижик', 'Атлант', 'Кот',
+    'Фонарщик', 'Буревестник', 'Корабел', 'Штурман', 'Смотритель',
+    'Караульный', 'Крысолов', 'Звонарь', 'Летописец', 'Мостовик'
+];
+
+export function randomPlayerName() {
+    const adj = NAME_ADJECTIVES[Math.floor(Math.random() * NAME_ADJECTIVES.length)];
+    const noun = NAME_NOUNS[Math.floor(Math.random() * NAME_NOUNS.length)];
+    return `${adj} ${noun}`;
+}

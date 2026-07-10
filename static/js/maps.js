@@ -143,19 +143,24 @@ export async function showResultMap(data) {
     // На мобильных контейнер карты уже обрезан по высоте панели (CSS),
     // на десктопе панель закрывает правую часть — учитываем её ширину.
     const rect = mapContainer.getBoundingClientRect();
-    const stageW = rect.width || window.innerWidth;
-    const stageH = rect.height || window.innerHeight;
     const isMobile = window.innerWidth <= 720;
+    // Страховка: если контейнер ещё не получил размер, берём оценку от окна
+    const stageW = rect.width > 50 ? rect.width : window.innerWidth;
+    const stageH = rect.height > 50 ? rect.height
+        : (isMobile ? window.innerHeight * 0.44 : window.innerHeight);
     const panelRight = isMobile ? 0 : Math.min(380, stageW);
     const panelBottom = 0;
-    const padPx = isMobile ? 40 : 70;
+    // Вертикальный запас больше горизонтального: пины рисуются НАД точкой
+    // (~45px вверх) и на маленькой мобильной карте иначе срезаются краем
+    const padX = isMobile ? 32 : 70;
+    const padY = isMobile ? 72 : 70;
 
     // Минимальные охваты ~50 м: при точном попадании не упираемся в ноль,
     // а при маленьком промахе карта приближается к кварталу, не к городу
     const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.0009) / 360;
     const spanY = Math.max(Math.abs(mercatorY(correctLat) - mercatorY(guessLat)), 0.0000012);
-    const availW = Math.max(stageW - panelRight - padPx * 2, 200);
-    const availH = Math.max(stageH - panelBottom - padPx * 2, 200);
+    const availW = Math.max(stageW - panelRight - padX * 2, 120);
+    const availH = Math.max(stageH - panelBottom - padY * 2, 120);
     // Округляем вниз: дробный zoom карта округлит вверх, и точки выйдут за кадр
     const zoom = Math.floor(Math.max(3, Math.min(18,
         Math.min(

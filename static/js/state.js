@@ -41,6 +41,7 @@ export const state = {
     roundDeadline: null,   // момент окончания времени раунда (ms)
     guessSubmitting: false,// защита от двойной отправки (клик + таймер)
     roundLoading: false,   // защита от параллельной загрузки раунда
+    overlayTimer: null,    // отложенный показ оверлея «Загрузка…»
     noMoveWarned: false,   // тост «без перемещения» показан в этом раунде
 
     gameData: {

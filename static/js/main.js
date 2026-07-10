@@ -3,12 +3,13 @@
  * Экраны, ход игры, таймер, лидерборд, вызов дня, челленджи.
  */
 import { state, DIFFICULTY_HINTS } from './state.js';
-import { plural, escapeHtml, getScoreClass, showScreen, showToast, reachGoal } from './utils.js';
+import { plural, escapeHtml, getScoreClass, showScreen, showToast, reachGoal, randomPlayerName } from './utils.js';
 import { api } from './api.js';
 import {
     loadPanorama, prefetchNextRound, discardPreloaded, returnToPanoStart,
     showResultPano, destroyResultPano, destroyPanoramaPlayer,
-    openPanoModal, closePanoModal, clientReverseGeocode
+    openPanoModal, closePanoModal, clientReverseGeocode,
+    scheduleLoadingOverlay, showLoadingOverlay
 } from './panorama.js';
 import {
     initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap
@@ -18,12 +19,28 @@ const { gameData } = state;
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
+    initPlayerName();
     initEventListeners();
     initToggles();
     initChallengeFromUrl();
     initDailyButton();
     checkYandexMapsAPI();
 });
+
+/**
+ * Имя игрока: сохранённое, а новому игроку — случайное петербургское.
+ * Так результаты разных людей не сливаются в общего «Анонима».
+ */
+function initPlayerName() {
+    const input = document.getElementById('player-name');
+    let name = null;
+    try {
+        name = localStorage.getItem('playerName');
+    } catch (e) {
+        // приватный режим без localStorage — просто сгенерируем на раз
+    }
+    input.value = name || randomPlayerName();
+}
 
 /**
  * Обработчики событий всех экранов
@@ -194,7 +211,13 @@ function checkYandexMapsAPI() {
  * Начало новой игры
  */
 async function startGame(opts = {}) {
-    const playerName = document.getElementById('player-name').value.trim() || 'Аноним';
+    const playerName = document.getElementById('player-name').value.trim() || randomPlayerName();
+    document.getElementById('player-name').value = playerName;
+    try {
+        localStorage.setItem('playerName', playerName);
+    } catch (e) {
+        // localStorage недоступен — не страшно
+    }
 
     try {
         const { ok, status, data } = await api.startGame({
@@ -271,9 +294,9 @@ async function loadCurrentLocation() {
     if (state.roundLoading) return;
     state.roundLoading = true;
 
-    const overlay = document.getElementById('photo-overlay');
-    overlay.classList.remove('hidden');
-    overlay.querySelector('span').textContent = 'Загрузка...';
+    // Оверлей загрузки появится, только если раунд грузится дольше 300 мс:
+    // прогретый раунд подключается мгновенно, без мелькания «Загрузки»
+    scheduleLoadingOverlay();
 
     state.panoramaRetries = 0; // новый раунд — сбрасываем счётчик попыток
 
@@ -291,6 +314,9 @@ async function loadCurrentLocation() {
 
         gameData.currentRound = data.round;
         document.getElementById('current-round').textContent = data.round;
+
+        // «Вернуться к началу» бессмысленна, когда ходить нельзя
+        document.getElementById('pano-home').classList.toggle('hidden', !!gameData.noMove);
 
         // Если этот раунд прогрет с экрана результата, панорама уже найдена,
         // а её тайлы — в HTTP-кэше браузера. Прогревочный плеер уничтожаем
@@ -311,7 +337,7 @@ async function loadCurrentLocation() {
         startRoundTimer();
     } catch (error) {
         console.error('Ошибка загрузки локации:', error);
-        overlay.querySelector('span').textContent = 'Ошибка загрузки';
+        showLoadingOverlay('Ошибка загрузки');
     } finally {
         state.roundLoading = false;
     }
@@ -431,6 +457,12 @@ async function showRoundResult(data) {
             }
         });
     }
+
+    // Ссылка на панораму этой точки в Яндекс Картах — сохранить или дойти
+    const yamapsLink = document.getElementById('result-yamaps');
+    yamapsLink.href = 'https://yandex.ru/maps/?panorama%5Bpoint%5D=' +
+        `${data.correct_location.longitude},${data.correct_location.latitude}`;
+    yamapsLink.classList.remove('hidden');
 
     // Фактическая сложность места (когда по нему уже накоплена статистика)
     const diffBlock = document.getElementById('result-difficulty');
