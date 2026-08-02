@@ -4,20 +4,63 @@
  */
 import { state, SPB_CENTER, DEFAULT_ZOOM, PIN_RED, PIN_NAVY } from './state.js';
 import { createPinElement, TILE_SIZE, mercatorY, mercatorYInv } from './utils.js';
+import { reloadFailedScript } from './sdk.js';
+
+const API_READY_TIMEOUT_MS = 12000;
+let v3ReadyPromise = null;
+
+/** Дождаться async-скрипта API v3, не блокируя первый экран приложения. */
+export function ymapsV3Ready() {
+    if (v3ReadyPromise) return v3ReadyPromise;
+    v3ReadyPromise = new Promise((resolve, reject) => {
+        const started = performance.now();
+        let scriptRetried = false;
+        const check = () => {
+            if (window.yandexMapsLoadErrors && window.yandexMapsLoadErrors.v3) {
+                const reloading = !scriptRetried
+                    ? reloadFailedScript('yandex-maps-v3', 'v3') : null;
+                if (reloading) {
+                    scriptRetried = true;
+                    reloading.then(check, reject);
+                    return;
+                }
+                reject(new Error('API карты не загрузился'));
+                return;
+            }
+            if (typeof ymaps3 !== 'undefined' && ymaps3.ready) {
+                Promise.resolve(ymaps3.ready).then(resolve, error => {
+                    window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
+                    window.yandexMapsLoadErrors.v3 = true;
+                    reject(error);
+                });
+                return;
+            }
+            if (performance.now() - started >= API_READY_TIMEOUT_MS) {
+                reject(new Error('Таймаут загрузки API карты'));
+                return;
+            }
+            setTimeout(check, 100);
+        };
+        check();
+    }).catch(error => {
+        v3ReadyPromise = null;
+        throw error;
+    });
+    return v3ReadyPromise;
+}
 
 /**
  * Инициализация карты выбора
  */
 export async function initMap() {
-    if (typeof ymaps3 === 'undefined') {
-        throw new Error('Яндекс.Карты API не загружен. Проверьте подключение к интернету.');
-    }
-
-    await ymaps3.ready;
+    const loadId = ++state.mainMapLoadId;
+    await ymapsV3Ready();
+    if (loadId !== state.mainMapLoadId) return false;
 
     const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapListener } = ymaps3;
 
     const mapContainer = document.getElementById('map');
+    disposeMainMap();
     mapContainer.innerHTML = '';
 
     state.map = new YMap(mapContainer, {
@@ -44,6 +87,27 @@ export async function initMap() {
     state.currentMarker = null;
     state.guessCoords = null;
     document.getElementById('guess-btn').disabled = true;
+    return true;
+}
+
+function disposeMainMap() {
+    if (state.map) {
+        try {
+            state.map.destroy();
+        } catch (error) {
+            // Заглушка тестов или уже потерянный DOM-контекст.
+        }
+        state.map = null;
+        state.currentMarker = null;
+    }
+    const container = document.getElementById('map');
+    if (container) container.innerHTML = '';
+}
+
+/** Уничтожить карту выбора и инвалидировать ещё не завершённую инициализацию. */
+export function destroyMainMap() {
+    state.mainMapLoadId++;
+    disposeMainMap();
 }
 
 /**
@@ -66,7 +130,8 @@ export function placeMarker(coordinates) {
     // Прячем подсказку и активируем кнопку
     const hint = document.getElementById('map-hint');
     if (hint) hint.classList.add('hidden');
-    document.getElementById('guess-btn').disabled = false;
+    document.getElementById('guess-btn').disabled =
+        !state.roundInteractive || state.guessSubmitting;
 }
 
 /**
@@ -90,7 +155,7 @@ export function toggleMapPanel() {
  * Уничтожить карты результата/финала: каждая держит WebGL-контекст,
  * а на iOS их лимит быстро приводит к вылету вкладки
  */
-export function destroyResultMap() {
+function disposeResultMap() {
     if (state.resultMap) {
         try {
             state.resultMap.destroy();
@@ -99,9 +164,16 @@ export function destroyResultMap() {
         }
         state.resultMap = null;
     }
+    const container = document.getElementById('result-map');
+    if (container) container.innerHTML = '';
 }
 
-export function destroyFinalMap() {
+export function destroyResultMap() {
+    state.resultMapLoadId++;
+    disposeResultMap();
+}
+
+function disposeFinalMap() {
     if (state.finalMap) {
         try {
             state.finalMap.destroy();
@@ -110,6 +182,13 @@ export function destroyFinalMap() {
         }
         state.finalMap = null;
     }
+    const container = document.getElementById('final-map');
+    if (container) container.innerHTML = '';
+}
+
+export function destroyFinalMap() {
+    state.finalMapLoadId++;
+    disposeFinalMap();
 }
 
 /**
@@ -129,14 +208,17 @@ export function resetMapForNewRound() {
 
     // Возвращаем подсказку
     const hint = document.getElementById('map-hint');
-    if (hint) hint.classList.remove('hidden');
+    if (hint) {
+        hint.textContent = 'Кликни по карте, чтобы отметить место';
+        hint.classList.remove('hidden', 'map-retry');
+        hint.onclick = null;
+    }
 
     // Центрируем карту
     if (state.map) {
         state.map.setLocation({
             center: [SPB_CENTER[1], SPB_CENTER[0]],
-            zoom: DEFAULT_ZOOM,
-            duration: 500
+            zoom: DEFAULT_ZOOM
         });
     }
 }
@@ -145,11 +227,17 @@ export function resetMapForNewRound() {
  * Карта результата раунда: догадка, реальная точка, пунктир между ними
  */
 export async function showResultMap(data) {
-    await ymaps3.ready;
+    const loadId = ++state.resultMapLoadId;
+    disposeResultMap();
+    await ymapsV3Ready();
+    if (loadId !== state.resultMapLoadId ||
+            state.resultRoundId !== data.round_id ||
+            !document.getElementById('result-screen').classList.contains('active')) {
+        return false;
+    }
 
     const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
 
-    destroyResultMap();
     const mapContainer = document.getElementById('result-map');
     mapContainer.innerHTML = '';
 
@@ -166,7 +254,7 @@ export async function showResultMap(data) {
         state.resultMap.addChild(new YMapMarker({
             coordinates: [correctLon, correctLat]
         }, createPinElement(PIN_RED)));
-        return;
+        return true;
     }
 
     const guessLon = data.guess.longitude;
@@ -240,6 +328,7 @@ export async function showResultMap(data) {
     state.resultMap.addChild(new YMapMarker({
         coordinates: [guessLon, guessLat]
     }, createPinElement(PIN_NAVY)));
+    return true;
 }
 
 /**
@@ -254,16 +343,22 @@ export async function renderFinalMap(rounds) {
         if (r.guess) points.push([r.guess.longitude, r.guess.latitude]);
     });
 
-    if (points.length === 0 || typeof ymaps3 === 'undefined') {
+    if (points.length === 0) {
+        destroyFinalMap();
         container.classList.add('hidden');
         return;
     }
-    destroyFinalMap();
+    const loadId = ++state.finalMapLoadId;
+    disposeFinalMap();
     container.classList.remove('hidden');
     container.innerHTML = '';
 
     try {
-        await ymaps3.ready;
+        await ymapsV3Ready();
+        if (loadId !== state.finalMapLoadId ||
+                !document.getElementById('final-screen').classList.contains('active')) {
+            return false;
+        }
         const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
 
         // Вписываем все точки в контейнер (той же меркаторской математикой,
@@ -314,8 +409,10 @@ export async function renderFinalMap(rounds) {
                 }, createPinElement(PIN_NAVY)));
             }
         });
+        return true;
     } catch (error) {
         console.error('Не удалось построить карту раундов:', error);
-        container.classList.add('hidden');
+        if (loadId === state.finalMapLoadId) container.classList.add('hidden');
+        return false;
     }
 }

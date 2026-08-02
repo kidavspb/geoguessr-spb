@@ -33,6 +33,20 @@ def test_no_coordinates_in_cookie_session(client):
         assert 'current_round' not in sess
 
 
+def test_critical_round_locations_are_embedded_in_mutation_responses(client):
+    started = client.post('/api/game/start', json={'difficulty': 'medium'}).get_json()
+    assert started['location']['round'] == 1
+    first = started['location']
+
+    result = client.post('/api/game/guess', json={
+        'round_id': first['round_id'],
+        'latitude': first['latitude'],
+        'longitude': first['longitude'],
+    }).get_json()
+    assert result['next_location']['round'] == 2
+    assert result['next_location']['round_id'] != first['round_id']
+
+
 def test_replayed_cookie_cannot_replay_round(client):
     """Реплей старой cookie не откатывает игру: прогресс хранится в БД."""
     client.post('/api/game/start', json={'difficulty': 'medium'})
@@ -67,6 +81,38 @@ def test_skip_limit_enforced_server_side(client, app_module):
         assert client.post('/api/game/skip_location').status_code == 200
     over = client.post('/api/game/skip_location')
     assert over.status_code == 429
+
+
+def test_skip_retry_with_same_location_version_is_idempotent(client, app_module):
+    from models import VerifiedPoint
+
+    client.post('/api/game/start', json={'difficulty': 'medium'})
+    first = client.get('/api/game/location').get_json()
+    with app_module.app.app_context():
+        app_module.db.session.add(VerifiedPoint(
+            latitude=first['latitude'], longitude=first['longitude'],
+            lat_key=int(round(first['latitude'] * 10000)),
+            lon_key=int(round(first['longitude'] * 10000)),
+            dist_from_center_km=1.0,
+        ))
+        app_module.db.session.commit()
+    payload = {
+        'round_id': first['round_id'],
+        'location_version': first['location_version'],
+        'reason': 'no_coverage',
+    }
+
+    changed = client.post('/api/game/skip_location', json=payload).get_json()
+    replayed = client.post('/api/game/skip_location', json=payload).get_json()
+
+    assert changed['location_version'] == 1
+    assert replayed['location_version'] == 1
+    assert replayed['replayed'] is True
+    assert (replayed['latitude'], replayed['longitude']) == (
+        changed['latitude'], changed['longitude']
+    )
+    with app_module.app.app_context():
+        assert VerifiedPoint.query.first().fail_count == 1
 
 
 # --------------------------------------------------------------------------
@@ -104,6 +150,34 @@ def test_rejected_actual_point_not_in_pool(client, app_module):
         assert VerifiedPoint.query.count() == 0
 
 
+def test_guess_atomically_uses_panorama_point_and_grows_pool(client, app_module):
+    """Счёт и пул не зависят от порядка /set_actual_point и /guess."""
+    from models import GameRound, VerifiedPoint
+
+    client.post('/api/game/start', json={'difficulty': 'medium'})
+    loc = client.get('/api/game/location').get_json()
+    pano_lat = loc['latitude'] + 0.001
+    pano_lon = loc['longitude']
+    response = client.post('/api/game/guess', json={
+        'round_id': loc['round_id'],
+        'latitude': pano_lat,
+        'longitude': pano_lon,
+        'panorama_latitude': pano_lat,
+        'panorama_longitude': pano_lon,
+    })
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['score'] == app_module.MAX_SCORE_PER_ROUND
+    assert data['correct_location'] == {
+        'latitude': pano_lat, 'longitude': pano_lon,
+    }
+    with app_module.app.app_context():
+        rnd = app_module.db.session.get(GameRound, loc['round_id'])
+        assert rnd.actual_latitude == pano_lat
+        assert VerifiedPoint.query.count() == 1
+
+
 def test_choose_round_points_uses_pool(app, app_module, monkeypatch):
     from models import VerifiedPoint, db
 
@@ -127,6 +201,26 @@ def test_choose_round_points_uses_pool(app, app_module, monkeypatch):
     assert len(points) == 5
     for p in points:
         assert p in seeded
+
+
+def test_regular_games_keep_exploring_new_places(app, app_module, monkeypatch):
+    """Большой пул не отключает прежние 30% исследовательских кандидатов."""
+    from models import VerifiedPoint, db
+
+    with app.app_context():
+        for i in range(app_module.POOL_MIN_SIZE):
+            lat = 59.9300 + i * 0.0005
+            lon = 30.3100 + i * 0.0005
+            db.session.add(VerifiedPoint(
+                latitude=lat, longitude=lon,
+                lat_key=int(round(lat * 10000)), lon_key=int(round(lon * 10000)),
+                dist_from_center_km=1.0,
+            ))
+        db.session.commit()
+        monkeypatch.setattr('random.random', lambda: 0.99)
+        candidate = app_module.choose_round_candidates('center', 1)[0]
+
+    assert candidate[2] == 'explore'
 
 
 def test_choose_round_points_generates_when_pool_small(app, app_module):
@@ -155,6 +249,9 @@ def test_time_limit_saved_and_validated(client):
 def test_late_guess_scores_zero(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
     loc = client.get('/api/game/location').get_json()
+    ready = client.post('/api/game/ready', json={'round_id': loc['round_id']})
+    assert ready.status_code == 200
+    assert ready.get_json()['deadline_ms'] is not None
 
     # Отматываем старт раунда далеко в прошлое — лимит и запас точно истекли
     from models import GameRound, db
@@ -168,6 +265,53 @@ def test_late_guess_scores_zero(client, app_module):
     }).get_json()
     assert result['score'] == 0
     assert result['timed_out'] is True
+
+
+def test_guess_retry_is_idempotent_and_stale_mutation_is_rejected(client):
+    """Потерянный HTTP-ответ не двигает игру дважды и не портит новый раунд."""
+    client.post('/api/game/start', json={'difficulty': 'center'})
+    first = client.get('/api/game/location').get_json()
+    payload = {
+        'round_id': first['round_id'],
+        'latitude': first['latitude'],
+        'longitude': first['longitude'],
+    }
+
+    original = client.post('/api/game/guess', json=payload)
+    replay = client.post('/api/game/guess', json=payload)
+    assert original.status_code == 200
+    assert replay.status_code == 200
+    assert replay.get_json()['replayed'] is True
+    assert replay.get_json()['score'] == original.get_json()['score']
+
+    second = client.get('/api/game/location').get_json()
+    assert second['round'] == 2
+    stale = client.post('/api/game/set_actual_point', json={
+        'round_id': first['round_id'],
+        'latitude': first['latitude'],
+        'longitude': first['longitude'],
+    })
+    assert stale.status_code == 409
+
+
+def test_panorama_metric_is_saved_for_round(client, app_module):
+    from models import GameRound
+
+    client.post('/api/game/start', json={'difficulty': 'center'})
+    loc = client.get('/api/game/location').get_json()
+    response = client.post('/api/game/panorama_metric', json={
+        'round_id': loc['round_id'],
+        'status': 'ready',
+        'lookup_ms': 321,
+        'ready_ms': 654,
+        'attempts': 1,
+    })
+    assert response.status_code == 200
+    with app_module.app.app_context():
+        rnd = app_module.db.session.get(GameRound, loc['round_id'])
+        assert rnd.panorama_status == 'ready'
+        assert rnd.panorama_lookup_ms == 321
+        assert rnd.panorama_ready_ms == 654
 
 
 def test_timeout_round_without_guess(client):

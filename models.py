@@ -81,7 +81,22 @@ class GameRound(db.Model):
     answered_at = db.Column(db.DateTime)
     # Раунд завершён по истечении времени (без догадки или принудительно)
     timed_out = db.Column(db.Boolean, default=False)
+    # Откуда взялась выданная точка: проверенный пул, исследовательская
+    # генерация, ежедневный вызов или челлендж. Нужна для контроля качества
+    # пула и сравнения скорости разных типов раундов.
+    location_source = db.Column(db.String(20))
+    # Клиентские метрики загрузки панорамы. Они не участвуют в игровой логике
+    # и заполняются best-effort после появления панорамы на экране.
+    panorama_lookup_ms = db.Column(db.Integer)
+    panorama_ready_ms = db.Column(db.Integer)
+    panorama_attempts = db.Column(db.Integer)
+    panorama_status = db.Column(db.String(24))
     created_at = db.Column(db.DateTime, default=utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('session_id', 'round_number',
+                            name='uq_game_round_session_round'),
+    )
 
 
 class VerifiedPoint(db.Model):

@@ -1,169 +1,483 @@
 /**
- * Работа с панорамами Яндекса (JS API v2): поиск, плееры,
- * режим «без перемещения», предзагрузка, клиентский геокодер.
+ * Панорамы Яндекса: один поиск ближайшей съёмки, отменяемая подготовка
+ * следующего раунда и дешёвый прогрев низкодетализированных тайлов.
  */
 import { state, MAX_PANORAMA_RETRIES } from './state.js';
 import { showToast } from './utils.js';
 import { api } from './api.js';
+import { reloadFailedScript } from './sdk.js';
 
 const PLAYER_OPTIONS = {
-    // Без встроенной кнопки fullscreen: она пересоздавала панораму при
-    // выходе, сбрасывая положение игрока. Карту прячет своя «ручка» панели.
     controls: ['zoomControl'],
-    direction: [0, 0], // Начальное направление взгляда (азимут, наклон)
-    span: [130, 80],   // Угол обзора
-    suppressMapOpenBlock: true // Скрыть кнопку «Открыть в Яндекс.Картах»
+    direction: [0, 0],
+    span: [130, 80],
+    suppressMapOpenBlock: true
 };
 
-/**
- * Оверлей «Загрузка…»: показывается ОТЛОЖЕННО (300 мс). Прогретый раунд
- * успевает подключиться раньше — экран загрузки даже не мелькает.
- */
-export function scheduleLoadingOverlay() {
-    clearTimeout(state.overlayTimer);
-    state.overlayTimer = setTimeout(() => {
-        const overlay = document.getElementById('photo-overlay');
-        overlay.querySelector('span').textContent = 'Загрузка...';
-        overlay.classList.remove('hidden');
-    }, 300);
+const API_READY_TIMEOUT_MS = 12000;
+const LOCATE_TIMEOUT_MS = 7000;
+const PLAYER_OPEN_TIMEOUT_MS = 10000;
+const NETWORK_RETRY_DELAY_MS = 300;
+const MAX_WARM_TILES = 8;
+
+let v2ReadyPromise = null;
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function showLoadingOverlay(text) {
+function distanceKm(lat1, lon1, lat2, lon2) {
+    const toRad = value => value * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    const clamped = Math.min(1, Math.max(0, a));
+    return 6371 * 2 * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
+}
+
+function withTimeout(value, timeoutMs, message) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        Promise.resolve(value).then(
+            result => {
+                clearTimeout(timer);
+                resolve(result);
+            },
+            error => {
+                clearTimeout(timer);
+                reject(error);
+            }
+        );
+    });
+}
+
+function setOverlayActions({ retry = false, skip = false } = {}) {
+    const actions = document.getElementById('photo-overlay-actions');
+    if (!actions) return;
+    document.getElementById('retry-panorama-btn').classList.toggle('hidden', !retry);
+    document.getElementById('skip-panorama-btn').classList.toggle('hidden', !skip);
+    actions.classList.toggle('hidden', !retry && !skip);
+}
+
+/** Оверлей появляется с задержкой, чтобы прогретый раунд не мигал. */
+export function scheduleLoadingOverlay() {
+    clearTimeout(state.overlayTimer);
+    setOverlayActions();
+    state.overlayTimer = setTimeout(() => {
+        const overlay = document.getElementById('photo-overlay');
+        overlay.querySelector('span').textContent = 'Загрузка панорамы…';
+        overlay.classList.remove('hidden');
+    }, 250);
+}
+
+export function showLoadingOverlay(text, actions = {}) {
     clearTimeout(state.overlayTimer);
     const overlay = document.getElementById('photo-overlay');
     overlay.querySelector('span').textContent = text;
+    setOverlayActions(actions);
     overlay.classList.remove('hidden');
 }
 
 function hideLoadingOverlay() {
     clearTimeout(state.overlayTimer);
+    setOverlayActions();
     document.getElementById('photo-overlay').classList.add('hidden');
 }
 
-/**
- * Дождаться загрузки JS API v2 (панорамы). Скрипт подключён в <head>,
- * но мог ещё не доехать по сети.
- */
+/** Дождаться асинхронно подключённого JS API v2. */
 export function ymapsV2Ready() {
-    return new Promise((resolve, reject) => {
-        if (typeof ymaps !== 'undefined' && ymaps.ready) {
-            ymaps.ready(resolve);
-            return;
-        }
-        let attempts = 0;
-        const checkYmaps = setInterval(() => {
-            attempts++;
-            if (typeof ymaps !== 'undefined' && ymaps.ready) {
-                clearInterval(checkYmaps);
-                ymaps.ready(resolve);
-            } else if (attempts > 50) {
-                clearInterval(checkYmaps);
-                reject(new Error('API v2 не загружен'));
+    if (v2ReadyPromise) return v2ReadyPromise;
+
+    v2ReadyPromise = new Promise((resolve, reject) => {
+        const started = performance.now();
+        let scriptRetried = false;
+        const check = () => {
+            if (window.yandexMapsLoadErrors && window.yandexMapsLoadErrors.v2) {
+                const reloading = !scriptRetried
+                    ? reloadFailedScript('yandex-maps-v2', 'v2') : null;
+                if (reloading) {
+                    scriptRetried = true;
+                    reloading.then(check, reject);
+                    return;
+                }
+                reject(new Error('API панорам не загрузился'));
+                return;
             }
-        }, 100);
+            if (typeof ymaps !== 'undefined' && ymaps.ready) {
+                try {
+                    ymaps.ready(resolve);
+                } catch (error) {
+                    reject(error);
+                }
+                return;
+            }
+            if (performance.now() - started >= API_READY_TIMEOUT_MS) {
+                reject(new Error('Таймаут загрузки API панорам'));
+                return;
+            }
+            setTimeout(check, 100);
+        };
+        check();
+    }).catch(error => {
+        // Следующая ручная попытка после сетевого восстановления должна иметь
+        // возможность снова дождаться API.
+        v2ReadyPromise = null;
+        throw error;
+    });
+    return v2ReadyPromise;
+}
+
+/**
+ * Один locate уже ищет ближайшую панораму вокруг координаты. Пустой успешный
+ * ответ и транспортная ошибка принципиально различаются.
+ */
+export async function locatePanorama(latitude, longitude) {
+    try {
+        const result = await withTimeout(
+            ymaps.panorama.locate([latitude, longitude]),
+            LOCATE_TIMEOUT_MS,
+            'Таймаут поиска панорамы'
+        );
+        if (result && result.length) {
+            return { status: 'ready', panorama: result[0] };
+        }
+        return { status: 'no_coverage', panorama: null };
+    } catch (error) {
+        return { status: 'network_error', panorama: null, error };
+    }
+}
+
+function metricFor(prepared, status, readyMs = null) {
+    if (!prepared || !prepared.location || !prepared.location.round_id) return;
+    api.panoramaMetric({
+        round_id: prepared.location.round_id,
+        status,
+        lookup_ms: prepared.lookupMs,
+        ready_ms: readyMs,
+        attempts: prepared.attempts
     });
 }
 
 /**
- * Найти панораму: сначала в самой точке, затем по сетке смещений вокруг
- * (до ~200 м). Возвращает панораму или null.
+ * Найти рабочую панораму. Новая случайная точка всегда получает честную
+ * попытку; после подтверждённого отсутствия сервер выдаёт точку восстановления
+ * из пула. Сетевой сбой повторяется один раз на той же точке и не портит пул.
  */
-export async function locatePanorama(latitude, longitude) {
-    const offsets = [
-        [0, 0],
-        [0.0005, 0], [-0.0005, 0], [0, 0.0005], [0, -0.0005],
-        [0.001, 0], [-0.001, 0], [0, 0.001], [0, -0.001],
-        [0.002, 0], [-0.002, 0], [0, 0.002], [0, -0.002],
-        [0.0015, 0.0015], [-0.0015, 0.0015], [0.0015, -0.0015], [-0.0015, -0.0015]
-    ];
-
-    for (const [latOffset, lonOffset] of offsets) {
-        try {
-            const result = await ymaps.panorama.locate([latitude + latOffset, longitude + lonOffset]);
-            if (result.length > 0) return result[0];
-        } catch (e) {
-            // точка без покрытия — пробуем следующее смещение
-        }
-    }
-    return null;
-}
-
-/**
- * Загрузка панорамы раунда. Если панорамы нет и рядом — просит у сервера
- * новую точку (до лимита). preloadedPanorama — найденная при прогреве
- * панорама: пропускаем поиск, тайлы уже в HTTP-кэше браузера.
- */
-export async function loadPanorama(latitude, longitude, preloadedPanorama = null) {
-    // Уничтожаем плеер прошлого раунда ДО очистки контейнера: иначе он
-    // продолжает жить, опрашивает вырванный из DOM элемент и заваливает
-    // консоль ошибками offsetWidth (заметно тормозит страницу).
-    destroyPanoramaPlayer();
-    const panoramaContainer = document.getElementById('panorama-player');
-    panoramaContainer.innerHTML = '';
+async function prepareRound(initialLocation, task = null) {
+    const started = performance.now();
+    let location = initialLocation;
+    let attempts = 0;
+    let skips = 0;
 
     try {
         await ymapsV2Ready();
     } catch (error) {
-        console.error('Ошибка загрузки панорамы:', error);
-        showLoadingOverlay('Ошибка загрузки. Попробуйте перезагрузить страницу.');
-        return;
+        return {
+            ok: false, status: 'api_error', error, location,
+            attempts, lookupMs: Math.round(performance.now() - started)
+        };
     }
 
-    const panorama = preloadedPanorama || await locatePanorama(latitude, longitude);
+    if (ymaps.panorama && typeof ymaps.panorama.isSupported === 'function' &&
+            !ymaps.panorama.isSupported()) {
+        return {
+            ok: false, status: 'unsupported', location,
+            attempts, lookupMs: Math.round(performance.now() - started)
+        };
+    }
 
-    if (!panorama) {
-        // Панорамы нет — защищаемся от бесконечного цикла перегенераций
-        if (state.panoramaRetries >= MAX_PANORAMA_RETRIES) {
-            showLoadingOverlay('Не удалось найти панораму поблизости. Начните игру заново.');
-            return;
+    while (skips <= MAX_PANORAMA_RETRIES) {
+        if (task && task.cancelled) {
+            return {
+                ok: false, status: 'cancelled', location,
+                attempts, lookupMs: Math.round(performance.now() - started)
+            };
         }
-        state.panoramaRetries++;
-        showLoadingOverlay('Здесь нет панорамы, выбираем другое место...');
 
-        const skipped = await api.skipLocation();
-        if (skipped.ok && skipped.data) {
-            await loadPanorama(skipped.data.latitude, skipped.data.longitude);
-        } else {
-            showLoadingOverlay('Ошибка загрузки. Попробуйте перезагрузить страницу.');
+        let located = null;
+        for (let networkTry = 0; networkTry < 2; networkTry++) {
+            attempts++;
+            located = await locatePanorama(location.latitude, location.longitude);
+            if (located.status !== 'network_error' || networkTry === 1) break;
+            await delay(NETWORK_RETRY_DELAY_MS);
         }
-        return;
+
+        if (located.status === 'ready') {
+            const panorama = located.panorama;
+            const position = panorama.getPosition().slice(0, 2);
+            const drift = distanceKm(
+                location.latitude, location.longitude, position[0], position[1]
+            );
+            const maxDrift = Number(location.max_panorama_drift_km) || 1;
+            if (drift <= maxDrift) {
+                return {
+                    ok: true,
+                    status: 'ready',
+                    location,
+                    panorama,
+                    position,
+                    attempts,
+                    lookupMs: Math.round(performance.now() - started)
+                };
+            }
+            // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
+            // может оказаться слишком далеко от загаданного места. Такой Player
+            // дал бы визуально один адрес, а сервер считал бы по другому.
+            located = { status: 'no_coverage', panorama: null };
+        }
+
+        if (located.status === 'network_error') {
+            return {
+                ok: false, status: 'network_error', error: located.error,
+                location, attempts,
+                lookupMs: Math.round(performance.now() - started)
+            };
+        }
+
+        if (skips >= MAX_PANORAMA_RETRIES) {
+            return {
+                ok: false, status: 'no_coverage', location, attempts,
+                lookupMs: Math.round(performance.now() - started)
+            };
+        }
+
+        const skipped = await api.skipLocation(
+            location.round_id, 'no_coverage', location.location_version
+        );
+        if (!skipped.ok || !skipped.data) {
+            return {
+                ok: false,
+                status: skipped.networkError ? 'network_error' : 'api_error',
+                location,
+                attempts,
+                lookupMs: Math.round(performance.now() - started)
+            };
+        }
+        location = skipped.data;
+        skips++;
     }
-
-    state.lastPanorama = panorama;
-
-    // Реальные координаты панорамы — на сервер (по ним считаются очки)
-    const position = panorama.getPosition();
-    state.panoStartPoint = position.slice(0, 2); // для «к началу» и no-move
-    state.noMoveWarned = false;
-    await api.setActualPoint(position[0], position[1]);
-
-    state.panoramaPlayer = new ymaps.panorama.Player(panoramaContainer, panorama, PLAYER_OPTIONS);
-    startNoMoveWatchdog();
-
-    if (preloadedPanorama) {
-        // Тайлы уже в HTTP-кэше после прогрева — прячем оверлей сразу,
-        // экран загрузки даже не появится (он отложен на 300 мс)
-        hideLoadingOverlay();
-        return;
-    }
-
-    // Прячем оверлей по факту загрузки (и по таймауту — на случай, если
-    // событие не сработает)
-    state.panoramaPlayer.events.add('panoramachange', hideLoadingOverlay);
-    setTimeout(hideLoadingOverlay, 2000);
 }
 
 /**
- * Страховка режима «без перемещения»: событие panoramachange иногда
- * теряется при быстрых переходах, поэтому позицию дополнительно
- * сторожит интервал — любой уход от стартовой точки откатывается.
+ * Прогреть самый дешёвый уровень детализации напрямую через публичные URL
+ * тайлов Panorama. В отличие от скрытого Player это не создаёт Canvas/WebGL,
+ * но даёт следующему видимому Player мгновенную низкодетализированную картинку.
  */
+function warmPanoramaTiles(prepared, task) {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection && (connection.saveData || /(^|-)2g$/.test(connection.effectiveType || ''))) {
+        return;
+    }
+    const panorama = prepared.panorama;
+    if (!panorama || typeof panorama.getTileLevels !== 'function' ||
+            typeof panorama.getTileSize !== 'function') return;
+
+    try {
+        const tileSize = panorama.getTileSize();
+        const candidates = panorama.getTileLevels().map(level => {
+            const imageSize = level.getImageSize();
+            const columns = Math.ceil(imageSize[0] / tileSize[0]);
+            const rows = Math.ceil(imageSize[1] / tileSize[1]);
+            return { level, columns, rows, count: columns * rows };
+        }).sort((a, b) => a.count - b.count);
+        if (!candidates.length) return;
+
+        const selected = candidates[0];
+        task.tileImages = [];
+        for (let y = 0; y < selected.rows; y++) {
+            for (let x = 0; x < selected.columns; x++) {
+                if (task.tileImages.length >= MAX_WARM_TILES || task.cancelled) return;
+                const image = new Image();
+                image.decoding = 'async';
+                if ('fetchPriority' in image) image.fetchPriority = 'low';
+                image.src = selected.level.getTileUrl(x, y);
+                task.tileImages.push(image);
+            }
+        }
+        // Ссылки нужны только до завершения запросов; HTTP-кэш останется.
+        setTimeout(() => {
+            if (!task.cancelled) task.tileImages = [];
+        }, 6000);
+    } catch (error) {
+        // Прогрев — оптимизация: нестандартная панорама не ломает раунд.
+        task.tileImages = [];
+    }
+}
+
+/** Создать единственную задачу подготовки следующего раунда. */
+export function prefetchNextRound(location = null) {
+    if (location && state.preloaded &&
+            state.preloaded.roundId === location.round_id &&
+            !state.preloaded.cancelled) {
+        return state.preloaded.promise;
+    }
+    discardPreloaded(state.preloaded);
+    state.preloaded = null;
+    if (!location || !location.round_id) return null;
+
+    const task = {
+        roundId: location.round_id,
+        location,
+        cancelled: false,
+        tileImages: [],
+        prepared: null,
+        promise: null
+    };
+    task.promise = prepareRound(location, task).then(prepared => {
+        if (task.cancelled) return null;
+        task.prepared = prepared;
+        if (prepared && prepared.ok) warmPanoramaTiles(prepared, task);
+        return prepared;
+    }).catch(error => ({
+        ok: false, status: 'api_error', error, location,
+        attempts: 0, lookupMs: 0
+    }));
+    state.preloaded = task;
+    return task.promise;
+}
+
+/** Отменить только действительно устаревшую подготовку. */
+export function discardPreloaded(preloaded) {
+    if (!preloaded) return;
+    preloaded.cancelled = true;
+    (preloaded.tileImages || []).forEach(image => {
+        try { image.removeAttribute('src'); } catch (error) { /* запрос уже завершён */ }
+    });
+    preloaded.tileImages = [];
+}
+
+async function openPlayer(container, panorama, options) {
+    if (panorama && typeof panorama.createPlayer === 'function') {
+        const opening = Promise.resolve(panorama.createPlayer(container, options));
+        try {
+            return await withTimeout(
+                opening,
+                PLAYER_OPEN_TIMEOUT_MS,
+                'Таймаут открытия панорамы'
+            );
+        } catch (error) {
+            // Promise API Яндекса нельзя отменить. Если он всё же завершится
+            // после нашего таймаута, сразу освободим запоздавший WebGL Player.
+            opening.then(player => {
+                try { player.destroy(); } catch (destroyError) { /* уже закрыт */ }
+            }).catch(() => {});
+            throw error;
+        }
+    }
+    // Заглушка E2E и старые реализации API не имеют Panorama.createPlayer.
+    return new ymaps.panorama.Player(container, panorama, options);
+}
+
+function nextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+/**
+ * Открыть раунд. Если prefetch ещё идёт, используется ровно тот же Promise —
+ * второго locate и второго комплекта тайлов не возникает.
+ */
+export async function loadPanorama(location, preloadTask = null) {
+    const visibleStarted = performance.now();
+    const loadId = ++state.roundLoadId;
+    disposePanoramaPlayer();
+    state.actualPoint = null;
+
+    const container = document.getElementById('panorama-player');
+    container.innerHTML = '';
+
+    let prepared;
+    if (preloadTask && preloadTask.roundId === location.round_id) {
+        prepared = preloadTask.prepared || await preloadTask.promise;
+        // Задача потреблена, но уже начатые Image-запросы не прерываем: Player
+        // переиспользует их или получит тайлы из HTTP-кэша.
+        state.preloaded = null;
+        // Фоновая сеть могла кратко пропасть именно во время экрана
+        // результата. Видимый переход получает свежую попытку на той же
+        // версии точки, а идемпотентный skip не перескочит лишний раз.
+        if (prepared && !prepared.ok && prepared.status === 'network_error') {
+            prepared = await prepareRound(prepared.location || location);
+        }
+    } else {
+        prepared = await prepareRound(location);
+    }
+
+    if (loadId !== state.roundLoadId) return { ok: false, status: 'cancelled' };
+    if (!prepared || !prepared.ok) {
+        const status = prepared ? prepared.status : 'api_error';
+        metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
+        if (status === 'unsupported') {
+            showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
+        } else if (status === 'no_coverage') {
+            showLoadingOverlay('Не удалось найти съёмку рядом.', { retry: true, skip: true });
+        } else {
+            showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
+                               { retry: true, skip: false });
+        }
+        return { ok: false, status, location: prepared ? prepared.location : location };
+    }
+
+    state.currentLocation = prepared.location;
+    state.currentRoundId = prepared.location.round_id;
+    state.lastPanorama = prepared.panorama;
+    state.panoStartPoint = prepared.position;
+    state.actualPoint = prepared.position;
+    state.noMoveWarned = false;
+
+    try {
+        const player = await openPlayer(container, prepared.panorama, PLAYER_OPTIONS);
+        if (loadId !== state.roundLoadId) {
+            try { player.destroy(); } catch (error) { /* уже закрыт */ }
+            return { ok: false, status: 'cancelled' };
+        }
+        state.panoramaPlayer = player;
+        if (player.events && typeof player.events.add === 'function') {
+            player.events.add('error', () => {
+                if (state.currentRoundId === prepared.location.round_id) {
+                    showLoadingOverlay('Яндекс не смог дорисовать панораму.', { retry: true });
+                }
+            });
+        }
+        startNoMoveWatchdog();
+        // Запускаем фиксацию дедлайна параллельно первому paint: сеть не должна
+        // задерживать появление уже открытого Player.
+        const readyPromise = api.roundReady(prepared.location.round_id);
+        await nextPaint();
+        if (loadId !== state.roundLoadId) {
+            return { ok: false, status: 'cancelled' };
+        }
+        hideLoadingOverlay();
+        const readyMs = Math.round(performance.now() - visibleStarted);
+        metricFor(prepared, 'ready', readyMs);
+        return {
+            ok: true,
+            status: 'ready',
+            location: prepared.location,
+            // Сеть не держит уже интерактивный экран. Клиент начинает отсчёт
+            // от первого кадра, а Promise ниже уточнит его серверным временем.
+            deadlineMs: state.gameData.timeLimit
+                ? Date.now() + state.gameData.timeLimit * 1000 : null,
+            readyPromise,
+            loadId,
+            readyMs
+        };
+    } catch (error) {
+        if (loadId !== state.roundLoadId) {
+            return { ok: false, status: 'cancelled' };
+        }
+        metricFor(prepared, 'api_error');
+        showLoadingOverlay('Не удалось открыть панораму.', { retry: true });
+        return { ok: false, status: 'api_error', location: prepared.location };
+    }
+}
+
 function startNoMoveWatchdog() {
     stopNoMoveWatchdog();
     if (!state.gameData.noMove || !state.panoramaPlayer) return;
-
-    state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
-    state.noMoveWatchdog = setInterval(enforceNoMove, 400);
+    if (state.panoramaPlayer.events) {
+        state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
+    }
+    state.noMoveWatchdog = setInterval(enforceNoMove, 900);
 }
 
 function stopNoMoveWatchdog() {
@@ -173,234 +487,144 @@ function stopNoMoveWatchdog() {
     }
 }
 
-/**
- * Откат перехода в режиме «без перемещения»
- */
 function enforceNoMove() {
+    if (document.hidden) return;
     const player = state.panoramaPlayer;
     const start = state.panoStartPoint;
     if (!player || !start) return;
-
     try {
         const pos = player.getPanorama().getPosition();
         const drifted = Math.abs(pos[0] - start[0]) > 0.00005 ||
                         Math.abs(pos[1] - start[1]) > 0.00005;
         if (!drifted) return;
-
         player.moveTo(start);
         if (!state.noMoveWarned) {
             state.noMoveWarned = true;
             showToast('🚷 Режим «не сходя с места» — ходить нельзя, только осматриваться');
         }
     } catch (error) {
-        // панорама в переходном состоянии — откатим на следующем тике
+        // Плеер в переходном состоянии — проверим на следующем редком тике.
     }
 }
 
-/**
- * Предзагрузка следующего раунда с экрана результата: находим панораму
- * И создаём плеер в невидимом контейнере размером с экран — тайлы
- * загружаются, пока игрок изучает карту промаха. Сервер по ?peek=1
- * не запускает таймер раунда.
- */
-export async function prefetchNextRound() {
-    discardPreloaded(state.preloaded);
-    state.preloaded = null;
-    try {
-        const location = await api.getLocation(true);
-        if (!location.ok || !location.data || location.data.game_over) return;
-
-        await ymapsV2Ready();
-        const panorama = await locatePanorama(location.data.latitude, location.data.longitude);
-        if (!panorama) return;
-
-        // Координаты панорамы — на сервер уже сейчас (раунд на сервере
-        // уже текущий, а клиенту потом не придётся ждать этот запрос)
-        const position = panorama.getPosition();
-        await api.setActualPoint(position[0], position[1]);
-
-        // Невидимый контейнер во весь экран: плеер честно грузит тайлы
-        const stagingDiv = document.createElement('div');
-        stagingDiv.style.cssText =
-            'position:fixed; inset:0; opacity:0; pointer-events:none; z-index:-1;';
-        document.body.appendChild(stagingDiv);
-        const player = new ymaps.panorama.Player(stagingDiv, panorama, PLAYER_OPTIONS);
-
-        state.preloaded = {
-            round: location.data.round,
-            latitude: location.data.latitude,
-            longitude: location.data.longitude,
-            panorama,
-            player,
-            stagingDiv
-        };
-
-        // Прогревочный плеер нужен лишь на несколько секунд — тайлы панорамы
-        // за это время оседают в HTTP-кэше. Дальше держать WebGL-контекст
-        // незачем: на iOS лишние контексты приводят к вылету вкладки.
-        const preloadedRef = state.preloaded;
-        setTimeout(() => {
-            if (preloadedRef.player) {
-                try {
-                    preloadedRef.player.destroy();
-                } catch (error) {
-                    // уже уничтожен
-                }
-                preloadedRef.player = null;
-            }
-            if (preloadedRef.stagingDiv && preloadedRef.stagingDiv.parentNode) {
-                preloadedRef.stagingDiv.remove();
-            }
-            preloadedRef.stagingDiv = null;
-        }, 4000);
-    } catch (error) {
-        // предзагрузка — чистая оптимизация; не получилось — загрузим как обычно
-    }
-}
-
-/**
- * Убрать неиспользованный прогретый плеер (смена раунда, конец игры)
- */
-export function discardPreloaded(preloaded) {
-    if (!preloaded) return;
-    if (preloaded.player) {
-        try {
-            preloaded.player.destroy();
-        } catch (error) {
-            // уже уничтожен
-        }
-    }
-    if (preloaded.stagingDiv && preloaded.stagingDiv.parentNode) {
-        preloaded.stagingDiv.remove();
-    }
-}
-
-/**
- * Вернуть панораму к стартовой точке раунда (если далеко ушёл по стрелкам)
- */
 export async function returnToPanoStart() {
     if (!state.panoramaPlayer || !state.panoStartPoint) return;
+    const loadId = state.roundLoadId;
+    const panorama = state.lastPanorama;
     try {
         await state.panoramaPlayer.moveTo(state.panoStartPoint);
     } catch (error) {
-        // moveTo мог не сработать (панорама пропала) — пересоздаём плеер
+        if (loadId !== state.roundLoadId) return;
         console.error('Не удалось вернуться к началу:', error);
-        if (state.lastPanorama) {
+        if (panorama) {
             const container = document.getElementById('panorama-player');
-            destroyPanoramaPlayer();
+            disposePanoramaPlayer();
             container.innerHTML = '';
-            state.panoramaPlayer = new ymaps.panorama.Player(container, state.lastPanorama, PLAYER_OPTIONS);
+            try {
+                const player = await openPlayer(container, panorama, PLAYER_OPTIONS);
+                if (loadId !== state.roundLoadId) {
+                    try { player.destroy(); } catch (destroyError) { /* уже закрыт */ }
+                    return;
+                }
+                state.panoramaPlayer = player;
+                startNoMoveWatchdog();
+            } catch (openError) {
+                if (loadId === state.roundLoadId) {
+                    showLoadingOverlay('Не удалось восстановить панораму.', { retry: true });
+                }
+            }
         }
     }
 }
 
 /**
- * Мини-плеер с панорамой раунда в круглом окне панели результата:
- * к месту можно вернуться и осмотреться ещё раз
+ * На результате оставляем лёгкую кнопку вместо второго живого Player. Полная
+ * панорама по-прежнему открывается по нажатию.
  */
 export function showResultPano() {
     const container = document.getElementById('result-pano');
     destroyResultPano();
     container.innerHTML = '';
-
-    if (!state.lastPanorama || typeof ymaps === 'undefined') {
+    if (!state.lastPanorama) {
         container.classList.add('hidden');
         return;
     }
-
-    try {
-        state.resultPanoPlayer = new ymaps.panorama.Player(container, state.lastPanorama, {
-            controls: [],
-            // Взгляд слегка вверх: стрелки переходов рисуются на земле внутри
-            // WebGL-сцены (их не отключить), так они уходят за нижний край круга
-            direction: [0, 12],
-            suppressMapOpenBlock: true
-        });
-        container.classList.remove('hidden');
-    } catch (error) {
-        console.error('Не удалось показать панораму в результате:', error);
-        container.classList.add('hidden');
-    }
+    const logo = document.createElement('img');
+    logo.src = '/static/img/logo-mark.svg';
+    logo.alt = '';
+    const label = document.createElement('span');
+    label.textContent = 'Осмотреть место';
+    container.append(logo, label);
+    container.classList.remove('hidden');
 }
 
-/**
- * Уничтожить основной плеер панорамы (перед новым раундом / после игры)
- */
-export function destroyPanoramaPlayer() {
+function disposePanoramaPlayer() {
     stopNoMoveWatchdog();
     if (state.panoramaPlayer) {
-        try {
-            state.panoramaPlayer.destroy();
-        } catch (error) {
-            // плеер мог уже умереть вместе с DOM-узлом
-        }
+        try { state.panoramaPlayer.destroy(); } catch (error) { /* уже уничтожен */ }
         state.panoramaPlayer = null;
     }
+    const container = document.getElementById('panorama-player');
+    if (container) container.innerHTML = '';
 }
 
-/**
- * Полноэкранный просмотр панорамы раунда (клик по кругу на результате)
- */
-export function openPanoModal() {
-    if (!state.lastPanorama || typeof ymaps === 'undefined') return;
+export function destroyPanoramaPlayer() {
+    state.roundLoadId++;
+    disposePanoramaPlayer();
+}
 
+export async function openPanoModal() {
+    if (!state.lastPanorama || typeof ymaps === 'undefined') return;
     const modal = document.getElementById('pano-modal');
     const container = document.getElementById('pano-modal-player');
     closePanoModal();
+    const loadId = state.modalLoadId;
+    const panorama = state.lastPanorama;
     container.innerHTML = '';
     modal.classList.remove('hidden');
-
     try {
-        state.modalPlayer = new ymaps.panorama.Player(container, state.lastPanorama, {
+        const player = await openPlayer(container, panorama, {
             controls: ['zoomControl'],
             suppressMapOpenBlock: true
         });
+        if (loadId !== state.modalLoadId || modal.classList.contains('hidden')) {
+            try { player.destroy(); } catch (destroyError) { /* уже закрыт */ }
+            return;
+        }
+        state.modalPlayer = player;
     } catch (error) {
+        if (loadId !== state.modalLoadId) return;
         console.error('Не удалось открыть панораму на весь экран:', error);
         modal.classList.add('hidden');
+        showToast('Не удалось открыть панораму');
     }
 }
 
 export function closePanoModal() {
+    state.modalLoadId++;
     const modal = document.getElementById('pano-modal');
     modal.classList.add('hidden');
     if (state.modalPlayer) {
-        try {
-            state.modalPlayer.destroy();
-        } catch (error) {
-            // уже уничтожен
-        }
+        try { state.modalPlayer.destroy(); } catch (error) { /* уже уничтожен */ }
         state.modalPlayer = null;
     }
+    const container = document.getElementById('pano-modal-player');
+    if (container) container.innerHTML = '';
 }
 
-/**
- * Уничтожить мини-плеер при уходе с экрана результата
- */
 export function destroyResultPano() {
-    if (state.resultPanoPlayer) {
-        try {
-            state.resultPanoPlayer.destroy();
-        } catch (error) {
-            // плеер мог уже умереть вместе с DOM-узлом
-        }
-        state.resultPanoPlayer = null;
-    }
+    const container = document.getElementById('result-pano');
+    if (container) container.innerHTML = '';
 }
 
-/**
- * Обратное геокодирование на клиенте (JS API v2, ymaps.geocode).
- * Возвращает «улица, дом» или null — фолбэк, когда сервер без ключа геокодера.
- */
 export async function clientReverseGeocode(latitude, longitude) {
     try {
-        if (typeof ymaps === 'undefined' || typeof ymaps.geocode !== 'function') {
-            return null;
-        }
-        const result = await ymaps.geocode([latitude, longitude], {
+        await ymapsV2Ready();
+        if (typeof ymaps.geocode !== 'function') return null;
+        const result = await withTimeout(ymaps.geocode([latitude, longitude], {
             kind: 'house',
             results: 1
-        });
+        }), 5000, 'Таймаут геокодера');
         const geoObject = result.geoObjects.get(0);
         return geoObject ? (geoObject.properties.get('name') || null) : null;
     } catch (error) {

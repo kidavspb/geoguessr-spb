@@ -33,7 +33,11 @@ def get_or_create_daily():
     if challenge is not None:
         return challenge
 
-    points = choose_round_points(DAILY_DIFFICULTY, ROUNDS_PER_GAME)
+    # Общий набор не должен расходиться после индивидуальных skip у игроков.
+    # Когда в пуле есть хотя бы пять точек, берём только подтверждённые. В
+    # самом начале жизни проекта сохраняется безопасный случайный фолбэк.
+    points = choose_round_points(DAILY_DIFFICULTY, ROUNDS_PER_GAME,
+                                 pool_only=True)
     challenge = DailyChallenge(date=date, points_json=json.dumps(points))
     try:
         db.session.add(challenge)

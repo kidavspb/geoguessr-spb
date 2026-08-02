@@ -2,7 +2,7 @@
 
 Опциональная косметика: если ключ не задан или сервис недоступен, игра
 работает без адресов (клиент дополнительно умеет геокодировать сам через
-JS API — см. clientReverseGeocode в game.js).
+JS API — см. clientReverseGeocode в static/js/panorama.js).
 """
 import json
 import logging

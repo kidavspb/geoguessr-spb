@@ -57,7 +57,14 @@ def test_guess_returns_difficulty_percentile(client, app_module):
     # История: в этой точке уже промахивались, плюс три «лёгкие» точки для фона
     _seed_point_with_misses(app_module, loc['latitude'], loc['longitude'], [8.0] * 3)
     for i in range(3):
-        _seed_point_with_misses(app_module, 59.90 + i * 0.01, 30.20, [0.5] * 3)
+        # Фон строим относительно случайной точки раунда: он гарантированно
+        # не сольётся с ней в один округлённый ключ статистики.
+        _seed_point_with_misses(
+            app_module,
+            loc['latitude'] + (i + 1) * 0.02,
+            loc['longitude'] + 0.02,
+            [0.5] * 3,
+        )
 
     client.post('/api/game/set_actual_point',
                 json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
@@ -104,7 +111,7 @@ def test_no_move_flag_flows_to_challenge_and_leaderboard(client, app):
 # Предзагрузка следующего раунда
 # --------------------------------------------------------------------------
 
-def test_peek_does_not_start_round_timer(client, app_module):
+def test_location_does_not_start_timer_until_panorama_ready(client, app_module):
     from models import GameRound
 
     client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
@@ -119,7 +126,14 @@ def test_peek_does_not_start_round_timer(client, app_module):
     assert normal['latitude'] == peek.get_json()['latitude']
     with app_module.app.app_context():
         rnd = GameRound.query.filter_by(round_number=1).order_by(GameRound.id.desc()).first()
-        assert rnd.started_at is not None  # обычный запрос запустил отсчёт
+        assert rnd.started_at is None
+
+    ready = client.post('/api/game/ready', json={'round_id': normal['round_id']})
+    assert ready.status_code == 200
+    assert ready.get_json()['deadline_ms'] is not None
+    with app_module.app.app_context():
+        rnd = GameRound.query.filter_by(round_number=1).order_by(GameRound.id.desc()).first()
+        assert rnd.started_at is not None
 
 
 # --------------------------------------------------------------------------

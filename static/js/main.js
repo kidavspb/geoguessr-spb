@@ -13,7 +13,7 @@ import {
 } from './panorama.js';
 import {
     initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap,
-    destroyResultMap, destroyFinalMap
+    destroyMainMap, destroyResultMap, destroyFinalMap
 } from './maps.js';
 
 const { gameData } = state;
@@ -56,6 +56,8 @@ function initEventListeners() {
     document.getElementById('guess-btn').addEventListener('click', submitGuess);
     document.getElementById('map-handle').addEventListener('click', toggleMapPanel);
     document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
+    document.getElementById('retry-panorama-btn').addEventListener('click', retryPanorama);
+    document.getElementById('skip-panorama-btn').addEventListener('click', skipPanorama);
 
     // Экран результата. ВАЖНО: обработчик кнопки «Продолжить» назначается
     // только через onclick в showRoundResult — addEventListener здесь дал бы
@@ -65,6 +67,10 @@ function initEventListeners() {
 
     // Финальный экран
     document.getElementById('play-again-btn').addEventListener('click', () => {
+        discardPreloaded(state.preloaded);
+        state.preloaded = null;
+        closePanoModal();
+        destroyMainMap();
         destroyFinalMap();
         showScreen('start-screen');
     });
@@ -88,6 +94,8 @@ function initEventListeners() {
     });
 
     document.getElementById('back-btn').addEventListener('click', () => {
+        state.leaderboardLoadId++;
+        destroyFinalMap();
         showScreen('start-screen');
     });
 
@@ -161,18 +169,21 @@ async function initDailyButton() {
 async function initChallengeFromUrl() {
     const token = new URLSearchParams(window.location.search).get('challenge');
     if (!token) return;
+    // Токен известен из URL сразу: быстрый клик «Начать» не должен случайно
+    // запустить обычную игру, пока декоративный запрос данных соперника летит.
+    gameData.challengeToken = token;
 
     const banner = document.getElementById('challenge-banner');
     try {
         const { ok, data } = await api.challengeInfo(token);
+        if (gameData.challengeToken !== token) return;
 
         if (!ok) {
+            gameData.challengeToken = null;
             banner.textContent = 'Челлендж не найден — можно сыграть обычную игру.';
             banner.classList.remove('hidden');
             return;
         }
-
-        gameData.challengeToken = token;
         const extras = [];
         if (data.time_limit) extras.push(`${Math.round(data.time_limit / 60) || 1} мин на раунд`);
         if (data.no_move) extras.push('не сходя с места');
@@ -196,23 +207,29 @@ async function initChallengeFromUrl() {
  */
 function checkYandexMapsAPI() {
     setTimeout(() => {
-        if (typeof ymaps3 === 'undefined') {
-            console.error('Яндекс.Карты API не загружен');
+        const errors = window.yandexMapsLoadErrors || {};
+        if (errors.v2 || errors.v3) {
+            console.error('Один из API Яндекс.Карт не загрузился');
             const startBtn = document.getElementById('start-btn');
-            if (startBtn) {
+            if (startBtn && !document.querySelector('.api-warning')) {
                 const warning = document.createElement('div');
                 warning.className = 'api-warning';
-                warning.textContent = '⚠️ Проблема с загрузкой карт. Проверьте подключение к интернету.';
+                warning.textContent = '⚠️ Карты пока не загрузились. Можно попробовать начать — приложение повторит подключение.';
                 startBtn.parentElement.insertBefore(warning, startBtn);
             }
         }
-    }, 1000);
+    }, 10000);
 }
 
 /**
  * Начало новой игры
  */
 async function startGame(opts = {}) {
+    if (state.gameStarting) return;
+    state.gameStarting = true;
+    stopRoundTimer();
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('daily-btn').disabled = true;
     const playerName = document.getElementById('player-name').value.trim() || randomPlayerName();
     document.getElementById('player-name').value = playerName;
     try {
@@ -251,7 +268,18 @@ async function startGame(opts = {}) {
         gameData.timeLimit = data.time_limit || 0;   // серверные значения — истина
         gameData.noMove = !!data.no_move;
         gameData.daily = !!data.daily;
+        discardPreloaded(state.preloaded);
         state.preloaded = null;
+        state.currentLocation = null;
+        state.currentRoundId = null;
+        state.actualPoint = null;
+        state.lastPanorama = null;
+        state.panoStartPoint = null;
+        destroyPanoramaPlayer();
+        closePanoModal();
+        destroyMainMap();
+        destroyResultMap();
+        destroyFinalMap();
 
         // Метрика: какие режимы реально играют
         reachGoal(gameData.daily ? 'daily_start'
@@ -273,91 +301,180 @@ async function startGame(opts = {}) {
 
         showScreen('game-screen');
 
-        try {
-            await initMap();
-            loadCurrentLocation();
-        } catch (mapError) {
-            console.error('Ошибка инициализации карты:', mapError);
-            alert('Не удалось загрузить карту. Проверьте подключение к интернету и перезагрузите страницу.');
-            showScreen('start-screen');
-        }
+        // Панорама — главный контент раунда. Она начинает грузиться сразу, а
+        // карта выбора инициализируется параллельно и не держит первый кадр.
+        const roundPromise = loadCurrentLocation(data.location || null);
+        initGuessMapWithRecovery();
+        await roundPromise;
     } catch (error) {
         console.error('Ошибка запуска игры:', error);
         alert('Не удалось начать игру. Проверьте подключение. Детали: ' + error.message);
+    } finally {
+        state.gameStarting = false;
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('daily-btn').disabled = false;
+    }
+}
+
+async function initGuessMapWithRecovery() {
+    const hint = document.getElementById('map-hint');
+    try {
+        const initialized = await initMap();
+        if (!initialized) return;
+        resetMapForNewRound();
+    } catch (mapError) {
+        if (!document.getElementById('game-screen').classList.contains('active')) return;
+        console.error('Ошибка инициализации карты:', mapError);
+        hint.textContent = 'Карта не загрузилась — нажмите, чтобы повторить';
+        hint.classList.remove('hidden');
+        hint.classList.add('map-retry');
+        hint.onclick = () => initGuessMapWithRecovery();
+        showToast('Панорама работает; карту выбора можно повторно загрузить отдельно');
     }
 }
 
 /**
  * Загрузка текущего раунда (панорама + сброс карты + таймер)
  */
-async function loadCurrentLocation() {
+async function loadCurrentLocation(locationOverride = null) {
     // Защита от параллельного запуска (двойной клик, поспешный повтор):
     // две одновременные загрузки панорамы оставляют пустой экран
     if (state.roundLoading) return;
     state.roundLoading = true;
+    state.roundInteractive = false;
+    document.getElementById('guess-btn').disabled = true;
 
     // Оверлей загрузки появится, только если раунд грузится дольше 300 мс:
     // прогретый раунд подключается мгновенно, без мелькания «Загрузки»
     scheduleLoadingOverlay();
 
-    state.panoramaRetries = 0; // новый раунд — сбрасываем счётчик попыток
-
     try {
-        const { ok, data } = await api.getLocation();
+        let data = locationOverride;
+        const preload = state.preloaded;
+
+        // После результата координаты следующего раунда уже лежат в единой
+        // preload-задаче. Не делаем второй GET и не запускаем второй locate.
+        if (!data && preload && preload.location) data = preload.location;
+        if (!data) {
+            const response = await api.getLocation();
+            data = response.data;
+
+            if (data && data.game_over) {
+                showFinalResults();
+                return;
+            }
+            if (!response.ok) {
+                showLoadingOverlay(data && data.error ? data.error : 'Сервер не ответил',
+                                   { retry: true });
+                return;
+            }
+        }
 
         if (data && data.game_over) {
             showFinalResults();
             return;
         }
-        if (!ok) {
-            alert('Ошибка: ' + (data ? data.error : 'нет ответа'));
+        if (!data || !data.round_id) {
+            showLoadingOverlay('Сервер вернул неполные данные раунда.', { retry: true });
             return;
         }
 
         gameData.currentRound = data.round;
+        state.currentLocation = data;
+        state.currentRoundId = data.round_id;
         document.getElementById('current-round').textContent = data.round;
 
         // «Вернуться к началу» бессмысленна, когда ходить нельзя
         document.getElementById('pano-home').classList.toggle('hidden', !!gameData.noMove);
 
-        // Если этот раунд прогрет с экрана результата, панорама уже найдена,
-        // а её тайлы — в HTTP-кэше браузера. Прогревочный плеер уничтожаем
-        // (переносить WebGL-канвас нельзя: Safari теряет контекст), а новый
-        // создаётся из готовой панорамы почти мгновенно.
-        const pre = state.preloaded;
-        const usePreloaded = pre && pre.round === data.round &&
-            pre.latitude === data.latitude && pre.longitude === data.longitude;
-        state.preloaded = null;
-        if (pre) discardPreloaded(pre);
-
-        await loadPanorama(data.latitude, data.longitude,
-                           usePreloaded ? pre.panorama : null);
-
         resetMapForNewRound();
+        const matchingPreload = preload && preload.roundId === data.round_id
+            ? preload : null;
+        if (preload && !matchingPreload) {
+            discardPreloaded(preload);
+            state.preloaded = null;
+        }
 
-        // Панорама на экране — запускаем отсчёт времени раунда
-        startRoundTimer();
+        const loaded = await loadPanorama(data, matchingPreload);
+        if (!loaded.ok) {
+            if (loaded.location) state.currentLocation = loaded.location;
+            return;
+        }
+
+        state.currentLocation = loaded.location;
+        state.currentRoundId = loaded.location.round_id;
+        state.roundInteractive = true;
+        document.getElementById('guess-btn').disabled = !state.guessCoords;
+        // Первый кадр уже нарисован: интерфейс и локальный отсчёт доступны
+        // немедленно, даже если подтверждение сервера идёт по плохой сети.
+        startRoundTimer(loaded.deadlineMs);
+        if (loaded.readyPromise) {
+            loaded.readyPromise.then(ready => {
+                const serverDeadline = ready && ready.ok && ready.data
+                    ? ready.data.deadline_ms : null;
+                if (serverDeadline && loaded.loadId === state.roundLoadId &&
+                        state.currentRoundId === loaded.location.round_id &&
+                        document.getElementById('game-screen').classList.contains('active')) {
+                    startRoundTimer(serverDeadline);
+                }
+            });
+        }
     } catch (error) {
         console.error('Ошибка загрузки локации:', error);
-        showLoadingOverlay('Ошибка загрузки');
+        showLoadingOverlay('Ошибка загрузки', { retry: true });
     } finally {
         state.roundLoading = false;
     }
+}
+
+function retryPanorama() {
+    if (!state.currentLocation || state.roundLoading) return;
+    loadCurrentLocation(state.currentLocation);
+}
+
+async function skipPanorama() {
+    if (!state.currentRoundId || state.roundLoading) return;
+    state.roundLoading = true;
+    showLoadingOverlay('Выбираем другое место…');
+    let skipped;
+    try {
+        skipped = await api.skipLocation(
+            state.currentRoundId,
+            'manual_retry',
+            state.currentLocation ? state.currentLocation.location_version : null
+        );
+    } finally {
+        state.roundLoading = false;
+    }
+    if (!skipped || !skipped.ok || !skipped.data) {
+        const message = skipped && skipped.data && skipped.data.error
+            ? skipped.data.error : 'Не получилось сменить место.';
+        showLoadingOverlay(message, {
+            retry: true,
+            skip: !skipped || skipped.status !== 429
+        });
+        return;
+    }
+    state.currentLocation = skipped.data;
+    loadCurrentLocation(skipped.data);
 }
 
 // --------------------------------------------------------------------------
 // Таймер раунда
 // --------------------------------------------------------------------------
 
-function startRoundTimer() {
+function startRoundTimer(serverDeadlineMs = null) {
     stopRoundTimer();
     const chip = document.getElementById('timer-chip');
     if (!gameData.timeLimit) {
+        state.roundDeadline = null;
+        state.lastTimerSecond = null;
         chip.classList.add('hidden');
         return;
     }
 
-    state.roundDeadline = Date.now() + gameData.timeLimit * 1000;
+    state.roundDeadline = serverDeadlineMs || (Date.now() + gameData.timeLimit * 1000);
+    state.lastTimerSecond = null;
     chip.classList.remove('hidden', 'timer-low');
     updateTimerDisplay();
     state.roundTimerInterval = setInterval(updateTimerDisplay, 250);
@@ -367,9 +484,12 @@ function updateTimerDisplay() {
     const chip = document.getElementById('timer-chip');
     const secondsLeft = Math.max(0, Math.ceil((state.roundDeadline - Date.now()) / 1000));
 
-    const min = Math.floor(secondsLeft / 60);
-    const sec = String(secondsLeft % 60).padStart(2, '0');
-    document.getElementById('timer-value').textContent = `${min}:${sec}`;
+    if (secondsLeft !== state.lastTimerSecond) {
+        state.lastTimerSecond = secondsLeft;
+        const min = Math.floor(secondsLeft / 60);
+        const sec = String(secondsLeft % 60).padStart(2, '0');
+        document.getElementById('timer-value').textContent = `${min}:${sec}`;
+    }
 
     if (secondsLeft <= 10) chip.classList.add('timer-low');
 
@@ -403,6 +523,7 @@ function onRoundTimeExpired() {
 // --------------------------------------------------------------------------
 
 function submitGuess() {
+    if (!state.roundInteractive) return;
     if (!state.guessCoords) {
         alert('Отметьте точку на карте!');
         return;
@@ -417,31 +538,55 @@ function submitGuess() {
 async function sendGuess(payload) {
     if (state.guessSubmitting) return;
     state.guessSubmitting = true;
+    document.getElementById('guess-btn').disabled = true;
     stopRoundTimer();
 
+    let retryTimedOut = false;
     try {
-        const { ok, data } = await api.guess(payload);
+        const requestPayload = { ...payload, round_id: state.currentRoundId };
+        // Проверяемый actual point попадает в ту же транзакцию /guess: счёт
+        // всегда считается по той съёмке, которую видел игрок.
+        if (state.actualPoint) {
+            requestPayload.panorama_latitude = state.actualPoint[0];
+            requestPayload.panorama_longitude = state.actualPoint[1];
+        }
+        const { ok, data, networkError } = await api.guess(requestPayload);
         if (ok) {
             showRoundResult(data);
         } else {
-            alert('Ошибка: ' + (data ? data.error : 'нет ответа'));
+            const message = data && data.error ? data.error : 'Ответ не отправлен';
+            showToast(message);
+            retryTimedOut = !!payload.timed_out && !!networkError;
+            if (!retryTimedOut) {
+                document.getElementById('guess-btn').disabled = !state.guessCoords;
+                if (gameData.timeLimit && state.roundDeadline > Date.now()) {
+                    startRoundTimer(state.roundDeadline);
+                }
+            }
         }
     } catch (error) {
         console.error('Ошибка отправки ответа:', error);
-        alert('Не удалось отправить ответ.');
+        showToast('Не удалось отправить ответ');
+        document.getElementById('guess-btn').disabled = !state.guessCoords;
     } finally {
         state.guessSubmitting = false;
+        if (retryTimedOut) {
+            setTimeout(() => sendGuess(payload), 1200);
+        }
     }
 }
 
 /**
  * Показ результата раунда
  */
-async function showRoundResult(data) {
-    // Основной плеер панорамы на экране результата не нужен (в круге — свой
-    // мини-плеер), а его WebGL-контекст и текстуры — самое тяжёлое, что есть
-    // на странице. На iOS без этой уборки вкладка вылетала по памяти.
+function showRoundResult(data) {
+    // Основной Player на экране результата не нужен: его WebGL-контекст и
+    // текстуры — самое тяжёлое, что есть на странице.
     destroyPanoramaPlayer();
+    state.panoStartPoint = null;
+    state.actualPoint = null;
+    state.roundInteractive = false;
+    state.resultRoundId = data.round_id;
 
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
@@ -462,9 +607,12 @@ async function showRoundResult(data) {
             data.correct_location.latitude,
             data.correct_location.longitude
         ).then(address => {
-            if (address) {
+            if (address && state.resultRoundId === data.round_id) {
                 addressLink.textContent = address;
                 locationBlock.classList.remove('hidden');
+                // Геокодирование больше не держит ответ /guess, но адрес
+                // сохраняется для финальной сводки и следующих посещений.
+                api.setRoundAddress(data.round_id, address);
             }
         });
     }
@@ -511,6 +659,7 @@ async function showRoundResult(data) {
 
     // Кнопка следующего раунда
     const nextBtn = document.getElementById('next-round-btn');
+    nextBtn.disabled = false;
     if (data.is_game_over) {
         reachGoal('game_complete');
         nextBtn.textContent = 'Посмотреть результаты';
@@ -518,21 +667,39 @@ async function showRoundResult(data) {
     } else {
         nextBtn.textContent = 'Продолжить';
         nextBtn.onclick = nextRound;
-        // Пока игрок изучает промах — уже ищем следующую панораму
-        prefetchNextRound();
     }
 
     showScreen('result-screen');
 
-    // Панорама раунда в круге + карта с результатом
+    // Лёгкая кнопка возврата к панораме + карта с результатом.
     showResultPano();
-    await showResultMap(data);
+    // Первый paint результата важнее фоновой сети. Сразу после него начинаем
+    // единственную подготовку следующего раунда и низкоприоритетный warm-up.
+    if (!data.is_game_over && data.next_location) {
+        requestAnimationFrame(() => {
+            if (state.resultRoundId === data.round_id &&
+                    document.getElementById('result-screen').classList.contains('active')) {
+                prefetchNextRound(data.next_location);
+            }
+        });
+    }
+    showResultMap(data).catch(error => {
+        console.error('Не удалось показать карту результата:', error);
+        if (state.resultRoundId === data.round_id) {
+            showToast('Карта результата не загрузилась, но игру можно продолжить');
+        }
+    });
 }
 
 /**
  * Переход к следующему раунду
  */
 function nextRound() {
+    const button = document.getElementById('next-round-btn');
+    if (button.disabled) return;
+    button.disabled = true;
+    state.resultRoundId = null;
+    closePanoModal();
     destroyResultPano();
     destroyResultMap();
     showScreen('game-screen');
@@ -544,9 +711,19 @@ function nextRound() {
 // --------------------------------------------------------------------------
 
 async function showFinalResults() {
+    if (state.finalLoading) return;
+    state.finalLoading = true;
+    const nextButton = document.getElementById('next-round-btn');
+    nextButton.disabled = true;
     destroyResultPano();
     destroyResultMap();
     destroyPanoramaPlayer();
+    state.lastPanorama = null;
+    state.panoStartPoint = null;
+    state.actualPoint = null;
+    closePanoModal();
+    destroyMainMap();
+    state.resultRoundId = null;
     discardPreloaded(state.preloaded);
     state.preloaded = null;
     try {
@@ -595,6 +772,8 @@ async function showFinalResults() {
     } catch (error) {
         console.error('Ошибка получения результатов:', error);
         showScreen('final-screen');
+    } finally {
+        state.finalLoading = false;
     }
 }
 
@@ -712,8 +891,12 @@ async function loadPlayerStats(playerName) {
 // --------------------------------------------------------------------------
 
 function openLeaderboard() {
+    destroyFinalMap();
     state.lbState = { difficulty: 'all', period: 'all' };
     syncLeaderboardFilters();
+    document.getElementById('leaderboard-table').innerHTML =
+        '<div class="leaderboard-empty">Загрузка…</div>';
+    showScreen('leaderboard-screen');
     showLeaderboard();
 }
 
@@ -737,7 +920,13 @@ function syncLeaderboardFilters() {
  * Период 'daily' — отдельный топ сегодняшнего вызова дня.
  */
 async function showLeaderboard() {
-    const { lbState } = state;
+    const loadId = ++state.leaderboardLoadId;
+    const lbState = { ...state.lbState };
+    if (!document.getElementById('leaderboard-screen').classList.contains('active')) {
+        document.getElementById('leaderboard-table').innerHTML =
+            '<div class="leaderboard-empty">Загрузка…</div>';
+        showScreen('leaderboard-screen');
+    }
 
     try {
         let result;
@@ -748,6 +937,12 @@ async function showLeaderboard() {
             if (lbState.difficulty !== 'all') params.set('difficulty', lbState.difficulty);
             if (lbState.period !== 'all') params.set('period', lbState.period);
             result = await api.leaderboard(params);
+        }
+        if (loadId !== state.leaderboardLoadId) return;
+        if (!result.ok) {
+            document.getElementById('leaderboard-table').innerHTML =
+                '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
+            return;
         }
         const data = result.data;
 
@@ -801,9 +996,11 @@ async function showLeaderboard() {
         } else {
             tableContainer.innerHTML = '<div class="leaderboard-empty">Пока нет результатов</div>';
         }
-
-        showScreen('leaderboard-screen');
     } catch (error) {
         console.error('Ошибка загрузки таблицы лидеров:', error);
+        if (loadId === state.leaderboardLoadId) {
+            document.getElementById('leaderboard-table').innerHTML =
+                '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
+        }
     }
 }

@@ -126,6 +126,30 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
         assert VerifiedPoint.query.count() == 0
 
 
+def test_network_error_does_not_poison_verified_pool(client, app_module):
+    from models import GameRound, VerifiedPoint, db
+
+    client.post('/api/game/start', json={'difficulty': 'medium'})
+    loc = client.get('/api/game/location').get_json()
+    with app_module.app.app_context():
+        rnd = db.session.get(GameRound, loc['round_id'])
+        db.session.add(VerifiedPoint(
+            latitude=rnd.gen_latitude, longitude=rnd.gen_longitude,
+            lat_key=int(round(rnd.gen_latitude * 10000)),
+            lon_key=int(round(rnd.gen_longitude * 10000)),
+            dist_from_center_km=1.0,
+        ))
+        db.session.commit()
+
+    skipped = client.post('/api/game/skip_location', json={
+        'round_id': loc['round_id'], 'reason': 'network_error'
+    })
+    assert skipped.status_code == 200
+    assert skipped.get_json()['source'] == f"{loc['source']}_recovery"
+    with app_module.app.app_context():
+        assert VerifiedPoint.query.first().fail_count == 0
+
+
 def test_confirmed_panorama_resets_fail_count(client, app_module):
     from models import VerifiedPoint, db
 

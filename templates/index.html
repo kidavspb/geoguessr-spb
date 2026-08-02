@@ -37,14 +37,18 @@
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicons/favicon-16.png') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicons/favicon.ico') }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicons/apple-touch-icon.png') }}">
-    <link rel="preload" href="{{ url_for('static', filename='fonts/ALS_SPb.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="preconnect" href="https://api-maps.yandex.ru">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version }}">
-    <!-- Подключение Яндекс.Карт API v3 для карты -->
-    <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
-            onerror="console.error('Не удалось загрузить Яндекс.Карты API v3')"></script>
-    <!-- Подключение Яндекс.Карт API v2 для панорам -->
-    <script src="https://api-maps.yandex.ru/2.1/?apikey={{ yandex_api_key }}&lang=ru_RU"
-            onerror="console.error('Не удалось загрузить Яндекс.Карты API v2')"></script>
+    <link rel="modulepreload" href="{{ url_for('static', filename='js/main.js') }}?v={{ asset_version }}">
+    <!-- API загружаются параллельно и не блокируют первый экран. Код игры
+         умеет дождаться каждого SDK и показать восстановимую ошибку. -->
+    <script>window.yandexMapsLoadErrors = {};</script>
+    <script async fetchpriority="high" id="yandex-maps-v2"
+            src="https://api-maps.yandex.ru/2.1/?apikey={{ yandex_api_key }}&lang=ru_RU"
+            onerror="window.yandexMapsLoadErrors.v2=true"></script>
+    <script async fetchpriority="low" id="yandex-maps-v3"
+            src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
+            onerror="window.yandexMapsLoadErrors.v3=true"></script>
 </head>
 <body>
     <!-- Стартовый экран -->
@@ -109,6 +113,10 @@
                 <div class="photo-overlay" id="photo-overlay">
                     <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="" class="overlay-logo">
                     <span>Загрузка…</span>
+                    <div id="photo-overlay-actions" class="photo-overlay-actions hidden">
+                        <button type="button" id="retry-panorama-btn" class="btn btn-primary hidden">Повторить</button>
+                        <button type="button" id="skip-panorama-btn" class="btn btn-secondary hidden">Другое место</button>
+                    </div>
                 </div>
             </div>
 

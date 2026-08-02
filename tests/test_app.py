@@ -165,6 +165,14 @@ def test_set_actual_point_rejects_bad_coords(client):
     assert resp.status_code == 400
 
 
+def test_non_finite_coordinates_are_rejected(client):
+    client.post('/api/game/start', json={'difficulty': 'medium'})
+    response = client.post('/api/game/guess', json={
+        'latitude': 'Infinity', 'longitude': 30.3,
+    })
+    assert response.status_code == 400
+
+
 def test_skip_location_regenerates_point(client):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     first = client.get('/api/game/location').get_json()

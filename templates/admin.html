@@ -112,11 +112,27 @@
             if (!response.ok) return;
             const s = await response.json();
             const block = document.getElementById('game-stats');
+            const sourceLabels = {
+                pool: 'пул', explore: 'новые', pool_recovery: 'пул → замена',
+                explore_recovery: 'новые → замена', daily: 'вызов дня',
+                daily_recovery: 'вызов дня → замена', challenge: 'челлендж',
+                challenge_recovery: 'челлендж → замена', legacy: 'старые'
+            };
+            const sources = Object.entries(s.round_sources || {})
+                .map(([name, count]) => `${sourceLabels[name] || name}: <strong>${count}</strong>`)
+                .join(' · ');
             block.innerHTML =
                 `🎮 Игр всего: <strong>${s.games_total}</strong> (доиграно ${s.games_completed_total})<br>` +
                 `📅 За 7 дней: начато <strong>${s.games_started_7d}</strong>, доиграно <strong>${s.games_completed_7d}</strong>` +
                 (s.completion_rate_7d != null ? ` (${Math.round(s.completion_rate_7d * 100)}%)` : '') + `<br>` +
-                `🗓 Вызов дня сегодня: <strong>${s.daily_players_today}</strong> игроков`;
+                `🗓 Вызов дня сегодня: <strong>${s.daily_players_today}</strong> игроков<br>` +
+                (s.panorama_ready_p50_ms != null
+                    ? `⚡ Панорама: p50 <strong>${(s.panorama_ready_p50_ms / 1000).toFixed(1)} с</strong>, ` +
+                      `p95 <strong>${(s.panorama_ready_p95_ms / 1000).toFixed(1)} с</strong>` +
+                      (s.panorama_failure_rate != null
+                          ? `, ошибок <strong>${Math.round(s.panorama_failure_rate * 100)}%</strong>` : '')
+                    : '⚡ Метрики панорам пока не накоплены') +
+                (sources ? `<br>🧭 Раунды: ${sources}` : '');
             block.classList.remove('hidden');
         }
 

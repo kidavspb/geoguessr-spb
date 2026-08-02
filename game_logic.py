@@ -114,7 +114,7 @@ def parse_coords(data):
         lon = float(data['longitude'])
     except (KeyError, TypeError, ValueError):
         return None
-    if math.isnan(lat) or math.isnan(lon):
+    if not math.isfinite(lat) or not math.isfinite(lon):
         return None
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return None

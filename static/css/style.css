@@ -71,10 +71,15 @@ h1, h2 {
 
 .screen.active {
     display: block;
-    animation: fadeIn 0.3s ease-out;
 }
 
-@keyframes fadeIn {
+#start-screen.active .start-card,
+#final-screen.active .page-card,
+#leaderboard-screen.active .page-card {
+    animation: cardIn 0.25s ease-out;
+}
+
+@keyframes cardIn {
     from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: translateY(0); }
 }
@@ -398,6 +403,22 @@ h1, h2 {
     z-index: 5;
 }
 
+.photo-overlay-actions {
+    display: flex;
+    gap: 0.65rem;
+    width: min(360px, calc(100vw - 2rem));
+}
+
+.photo-overlay-actions .btn {
+    margin: 0;
+    padding: 0.7rem 1rem;
+    font-size: 0.95rem;
+}
+
+.photo-overlay-actions .btn-secondary {
+    background: rgba(255, 255, 255, 0.7);
+}
+
 .overlay-logo {
     width: 96px;
     animation: pulse 1.6s ease-in-out infinite;
@@ -465,7 +486,7 @@ h1, h2 {
     width: min(340px, calc(100vw - 2rem));
     z-index: 10;
     opacity: 0.55;
-    transition: width 0.25s ease, opacity 0.2s ease;
+    transition: opacity 0.18s ease;
 }
 
 .map-panel:hover,
@@ -480,8 +501,8 @@ h1, h2 {
     overflow: hidden;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     border: 3px solid rgba(255, 255, 255, 0.9);
-    transition: height 0.25s ease;
     background: var(--cream);
+    contain: layout paint;
 }
 
 .map-panel:hover,
@@ -512,6 +533,14 @@ h1, h2 {
     pointer-events: none;
     white-space: nowrap;
     z-index: 5;
+}
+
+.map-hint.map-retry {
+    pointer-events: auto;
+    cursor: pointer;
+    background: var(--red);
+    white-space: normal;
+    text-align: center;
 }
 
 .btn-answer {
@@ -560,8 +589,7 @@ h1, h2 {
     text-align: center;
 }
 
-/* Круглое окно с панорамой, по которой только что угадывали:
-   живой мини-плеер, можно осмотреться ещё раз */
+/* Лёгкая кнопка просмотра места; живой Player создаётся только по клику. */
 .result-pano {
     width: 190px;
     height: 190px;
@@ -569,20 +597,24 @@ h1, h2 {
     overflow: hidden;
     margin: 0 auto;
     flex: 0 0 auto;
-    background: rgba(255, 255, 255, 0.06);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(38, 86, 170, 0.28));
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35),
                 0 0 0 4px rgba(253, 250, 228, 0.15);
 }
 
-/* В маленьком круге прячем кнопки плеера (зум, фулскрин, промо) —
-   остаётся только сама панорама и копирайт */
-.result-pano [class*="gotoymaps"],
-.result-pano [class*="panorama-control__zoom"],
-.result-pano [class*="panorama-control__fullscreen"],
-.result-pano [class*="panorama-control__close"],
-.result-pano [class*="panorama-control__name"],
-.result-pano [class*="panorama-control__inception"] {
-    display: none !important;
+.result-pano > img {
+    width: 76px;
+    height: 76px;
+    object-fit: contain;
+    opacity: 0.9;
+}
+
+.result-pano > span {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--cream);
+    font-size: 0.78rem;
+    font-weight: 600;
 }
 
 .result-score-block {
@@ -926,6 +958,16 @@ h1, h2 {
         height: 96px;
     }
 
+    .result-pano > img {
+        width: 42px;
+        height: 42px;
+    }
+
+    .result-pano > span {
+        margin-top: 0.15rem;
+        font-size: 0.65rem;
+    }
+
     .result-miss {
         font-size: 0.85rem;
     }
@@ -1182,14 +1224,16 @@ h1, h2 {
     display: block;
 }
 
-/* Плеер внутри не реагирует на мышь — выглядит и ведёт себя как фото */
-.result-pano > * {
-    pointer-events: none;
+.result-pano:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
 }
 
-/* Прячем DOM-маркеры панорамы (номера домов и т.п.) */
-.result-pano [class*="panorama-marker"] {
-    display: none !important;
+/* Дочерние картинка и подпись не перехватывают клик кнопки. */
+.result-pano > * {
+    pointer-events: none;
 }
 
 /* Значок «развернуть» в углу круга */
@@ -1279,5 +1323,14 @@ h1, h2 {
         .result-panel {
             max-height: 56dvh;
         }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
