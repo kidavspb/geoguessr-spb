@@ -131,6 +131,21 @@ docker compose up --build
 Приложение поднимется на [http://localhost:8000](http://localhost:8000) под
 gunicorn; база SQLite хранится на хосте в `./instance/`.
 
+### Production: Apache → Gunicorn
+
+Продовая схема не запускает Flask через `mod_wsgi`: Apache завершает TLS и
+проксирует запросы в Gunicorn на `127.0.0.1:8000`. Готовый vhost хранится в
+[`deploy/apache/geoguessr.conf`](deploy/apache/geoguessr.conf), поэтому конфиг
+можно одинаково развернуть на другом Ubuntu-сервере.
+
+Необходимые модули Apache: `proxy`, `proxy_http`, `ssl`, `headers`, `rewrite`
+и `http2`. Сертификат Certbot должен использовать Apache как authenticator и
+installer; после настройки это проверяется командой `certbot renew --dry-run`.
+
+Файлы `geoguessr-staging.conf.example` и `ports-staging.conf.example` позволяют
+сначала проверить проксирование на `127.0.0.1:8081`, пока текущий frontend всё
+ещё занимает порты 80/443.
+
 ## 🗃️ Миграции БД
 
 Схема управляется Flask-Migrate (Alembic). По умолчанию миграции применяются

@@ -1,0 +1,20 @@
+# Временный vhost для проверки Apache параллельно с работающим nginx.
+# Используется только вместе с ports-staging.conf.example.
+ServerName geoguessr.spb.ru
+
+<VirtualHost 127.0.0.1:8081>
+    ServerName geoguessr.spb.ru
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+    ProxyTimeout 65
+    ProxyPass / http://127.0.0.1:8000/ connectiontimeout=5 timeout=65
+    ProxyPassReverse / http://127.0.0.1:8000/
+
+    # Имитируем внешний HTTPS, чтобы Flask/ProxyFix формировали правильные URL.
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port "443"
+
+    ErrorLog ${APACHE_LOG_DIR}/geoguessr-staging-error.log
+    CustomLog ${APACHE_LOG_DIR}/geoguessr-staging-access.log combined
+</VirtualHost>
