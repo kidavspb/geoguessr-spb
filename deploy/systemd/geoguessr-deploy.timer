@@ -1,0 +1,12 @@
+[Unit]
+Description=Check origin/main for GeoGuessr SPb updates
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+RandomizedDelaySec=15s
+Unit=geoguessr-deploy.service
+
+[Install]
+WantedBy=timers.target
