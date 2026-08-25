@@ -134,17 +134,25 @@ gunicorn; база SQLite хранится на хосте в `./instance/`.
 ### Production: Apache → Gunicorn
 
 Продовая схема не запускает Flask через `mod_wsgi`: Apache завершает TLS и
-проксирует запросы в Gunicorn на `127.0.0.1:8000`. Готовый vhost хранится в
-[`deploy/apache/geoguessr.conf`](deploy/apache/geoguessr.conf), поэтому конфиг
-можно одинаково развернуть на другом Ubuntu-сервере.
+проксирует запросы в Gunicorn на `127.0.0.1:8000`. Production-vhost хранится в
+[`deploy/apache/geoguessr.conf`](deploy/apache/geoguessr.conf), а конфигурация
+dev-сервера — в
+[`deploy/apache/geoguessr-dev.conf`](deploy/apache/geoguessr-dev.conf).
 
 Необходимые модули Apache: `proxy`, `proxy_http`, `ssl`, `headers`, `rewrite`
 и `http2`. Сертификат Certbot должен использовать Apache как authenticator и
 installer; после настройки это проверяется командой `certbot renew --dry-run`.
 
-Файлы `geoguessr-staging.conf.example` и `ports-staging.conf.example` позволяют
-сначала проверить проксирование на `127.0.0.1:8081`, пока текущий frontend всё
-ещё занимает порты 80/443.
+## 🔄 Разработка и доставка
+
+Рабочая версия живёт на защищённом HTTP Basic Auth домене
+`dev.geoguessr.spb.ru` и соответствует постоянной ветке `dev`. Релиз
+выполняется pull request’ом `dev → main`; GitHub Actions только запускает
+тесты. Production самостоятельно проверяет публичный `origin/main` по
+systemd-таймеру и применяет новый commit после merge.
+
+Одноразовая настройка GitHub и production, а также обычный рабочий цикл
+описаны в [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
 
 ## 🗃️ Миграции БД
 
@@ -184,7 +192,8 @@ python -m playwright install chromium   # один раз
 pytest tests/e2e/
 ```
 
-Всё вместе автоматически запускается в GitHub Actions на каждый push.
+Всё вместе автоматически запускается в GitHub Actions для каждого push в
+`dev` и pull request’ов в `main`.
 
 ## 📁 Структура проекта
 
@@ -218,7 +227,7 @@ geoguessr-spb/
 
 ## ⚙️ Технологии
 
-- **Backend**: Python 3, Flask, SQLAlchemy, Flask-Migrate (Alembic), Flask-Limiter, Gunicorn (прод за nginx)
+- **Backend**: Python 3, Flask, SQLAlchemy, Flask-Migrate (Alembic), Flask-Limiter, Gunicorn (прод за Apache)
 - **Frontend**: HTML5, CSS3, JavaScript (ES6+)
 - **Карты**: Яндекс.Карты JS API v3 (карта выбора/результата) + v2 (панорамы и асинхронный адрес)
 - **База данных**: SQLite (через `DATABASE_URL` можно заменить на PostgreSQL и т.п.)
