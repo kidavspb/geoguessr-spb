@@ -17,6 +17,8 @@ import {
 } from './maps.js';
 
 const { gameData } = state;
+const TERRITORIES = ['center', 'medium', 'hard'];
+const TERRITORY_NAMES = ['Центр', 'Средняя', 'Весь город'];
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
@@ -105,35 +107,61 @@ function initEventListeners() {
     });
 }
 
-/**
- * Переключатели стартового экрана: сложность, таймер, перемещение
- */
+/** Настройки стартового экрана используют нативные controls, а gameData
+ * остаётся единым состоянием, которое затем отправляется на сервер. */
 function initToggles() {
-    document.querySelectorAll('.difficulty-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            gameData.difficulty = btn.dataset.difficulty;
-            const hint = document.querySelector('.difficulty-hint');
-            if (hint) hint.textContent = DIFFICULTY_HINTS[gameData.difficulty];
+    const territoryRange = document.getElementById('territory-range');
+    territoryRange.addEventListener('input', () => {
+        const index = Math.max(0, Math.min(TERRITORIES.length - 1,
+            Number.parseInt(territoryRange.value, 10) || 0));
+        gameData.difficulty = TERRITORIES[index];
+        syncSettingsControls();
+    });
+
+    document.querySelectorAll('.territory-label').forEach(label => {
+        label.addEventListener('click', () => {
+            territoryRange.value = label.dataset.territoryIndex;
+            territoryRange.dispatchEvent(new Event('input', { bubbles: true }));
         });
     });
 
-    document.querySelectorAll('.timer-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.timer-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            gameData.timeLimit = parseInt(btn.dataset.timer, 10) || 0;
+    document.querySelectorAll('input[name="round-time"]').forEach(input => {
+        input.addEventListener('change', () => {
+            if (!input.checked) return;
+            gameData.timeLimit = Number.parseInt(input.value, 10) || 0;
         });
     });
 
-    document.querySelectorAll('.move-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            gameData.noMove = btn.dataset.move === 'no';
-        });
+    document.getElementById('movement-toggle').addEventListener('change', event => {
+        gameData.noMove = !event.target.checked;
+        syncSettingsControls();
     });
+
+    syncSettingsControls();
+}
+
+function syncSettingsControls() {
+    const territoryIndex = Math.max(0, TERRITORIES.indexOf(gameData.difficulty));
+    const territoryRange = document.getElementById('territory-range');
+    const territoryControl = document.getElementById('territory-control');
+    territoryRange.value = String(territoryIndex);
+    territoryRange.setAttribute('aria-valuetext', TERRITORY_NAMES[territoryIndex]);
+    territoryControl.style.setProperty('--territory-position', `${territoryIndex * 50}%`);
+    document.querySelectorAll('.territory-label').forEach((label, index) => {
+        label.setAttribute('aria-pressed', String(index === territoryIndex));
+    });
+    document.getElementById('territory-hint').textContent = DIFFICULTY_HINTS[gameData.difficulty];
+
+    const timerValue = String(gameData.timeLimit || 0);
+    document.querySelectorAll('input[name="round-time"]').forEach(input => {
+        input.checked = input.value === timerValue;
+    });
+
+    const movementToggle = document.getElementById('movement-toggle');
+    movementToggle.checked = !gameData.noMove;
+    document.getElementById('movement-description').textContent = gameData.noMove
+        ? 'Начальная точка обзора будет зафиксирована'
+        : 'Свободно перемещайтесь по панораме';
 }
 
 /**
@@ -265,9 +293,11 @@ async function startGame(opts = {}) {
         gameData.totalRounds = data.total_rounds;
         gameData.currentRound = 1;
         gameData.totalScore = data.total_score || 0; // >0 при возврате в недоигранный вызов дня
+        gameData.difficulty = data.difficulty || gameData.difficulty;
         gameData.timeLimit = data.time_limit || 0;   // серверные значения — истина
         gameData.noMove = !!data.no_move;
         gameData.daily = !!data.daily;
+        syncSettingsControls();
         discardPreloaded(state.preloaded);
         state.preloaded = null;
         state.currentLocation = null;

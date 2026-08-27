@@ -27,6 +27,90 @@ def _play_round(page):
     expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=10000)
 
 
+def test_start_settings_are_semantic_and_responsive(page, server):
+    """Настройки работают как шкала, presets и switch, включая клавиатуру."""
+    js_errors = []
+    page.on('pageerror', lambda error: js_errors.append(str(error)))
+    page.on('console', lambda message: js_errors.append(message.text)
+            if message.type == 'error' else None)
+    page.set_viewport_size({'width': 320, 'height': 780})
+    page.goto(server)
+
+    # Нативная семантика доступна не только мыши: range, radio group, switch.
+    territory = page.get_by_role('slider', name='Территория')
+    expect(territory).to_have_value('1')
+    expect(territory).to_have_attribute('aria-valuetext', 'Средняя')
+    expect(page.get_by_role('radio', name='Без лимита')).to_be_checked()
+    movement = page.get_by_role('switch', name=re.compile('Можно перемещаться'))
+    expect(movement).to_be_checked()
+
+    # Клик по каждой подписи выбирает соответствующую дискретную позицию.
+    for label, value in [('Центр', '0'), ('Средняя', '1'), ('Весь город', '2')]:
+        page.get_by_role('button', name=label, exact=True).click()
+        expect(territory).to_have_value(value)
+        expect(page.get_by_role('button', name=label, exact=True)).to_have_attribute(
+            'aria-pressed', 'true')
+
+    # Сам track кликается, thumb перетаскивается и всегда snap'ится к шагу.
+    box = territory.bounding_box()
+    page.mouse.click(box['x'] + 2, box['y'] + box['height'] / 2)
+    expect(territory).to_have_value('0')
+    page.mouse.move(box['x'] + 10, box['y'] + box['height'] / 2)
+    page.mouse.down()
+    page.mouse.move(box['x'] + box['width'] - 10, box['y'] + box['height'] / 2)
+    page.mouse.up()
+    expect(territory).to_have_value('2')
+
+    # Клавиши range и radio сохраняют ожидаемый порядок слева направо.
+    territory.focus()
+    page.keyboard.press('Home')
+    expect(territory).to_have_value('0')
+    page.keyboard.press('ArrowRight')
+    expect(territory).to_have_value('1')
+    page.keyboard.press('End')
+    expect(territory).to_have_value('2')
+
+    page.get_by_text('1 мин', exact=True).click()
+    expect(page.get_by_role('radio', name='1 мин')).to_be_checked()
+    page.get_by_text('3 мин', exact=True).click()
+    expect(page.get_by_role('radio', name='3 мин')).to_be_checked()
+    page.get_by_role('radio', name='3 мин').focus()
+    page.keyboard.press('ArrowRight')
+    expect(page.get_by_role('radio', name='Без лимита')).to_be_checked()
+
+    movement.click()
+    expect(movement).not_to_be_checked()
+    expect(page.locator('#movement-description')).to_have_text(
+        'Начальная точка обзора будет зафиксирована')
+    movement.focus()
+    page.keyboard.press('Space')
+    expect(movement).to_be_checked()
+    expect(page.locator('#movement-description')).to_have_text(
+        'Свободно перемещайтесь по панораме')
+
+    # На минимальной ширине нет горизонтального overflow, touch targets >= 44px.
+    sizes = page.locator(
+        '.territory-label, .segmented-control label, .move-setting'
+    ).evaluate_all("elements => elements.map(el => el.getBoundingClientRect())")
+    assert all(size['height'] >= 44 for size in sizes)
+    for width, height in [(320, 780), (390, 844), (1280, 800)]:
+        page.set_viewport_size({'width': width, 'height': height})
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    # Основная комбинация доходит до прежнего API без нового механизма состояния.
+    page.get_by_role('button', name='Центр', exact=True).click()
+    page.get_by_text('1 мин', exact=True).click()
+    movement.click()
+    with page.expect_request(lambda request: request.url.endswith('/api/game/start')) as request_info:
+        page.locator('#start-btn').click()
+    payload = request_info.value.post_data_json
+    assert payload['difficulty'] == 'center'
+    assert payload['time_limit'] == 60
+    assert payload['no_move'] is True
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
+    assert js_errors == []
+
+
 def test_full_game_flow(page, server):
     # Первый location приходит прямо из /start, последующие — из ответа guess.
     # Отдельные GET больше не нужны; их появление означает потерю prefetch-задачи.
@@ -84,7 +168,7 @@ def test_no_move_round_and_map_toggle(page, server):
     page.goto(server)
 
     # Включаем «не сходя с места» и играем один раунд
-    page.locator('.move-btn[data-move="no"]').click()
+    page.get_by_role('switch', name=re.compile('Можно перемещаться')).click()
     page.locator('#start-btn').click()
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)

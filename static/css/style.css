@@ -178,49 +178,28 @@ h1, h2 {
     color: rgba(253, 250, 228, 0.75);
 }
 
-#start-screen .input-group label {
+#start-screen .input-group > label:not(.move-setting),
+#start-screen .setting-label {
     color: rgba(253, 250, 228, 0.7);
 }
 
-#start-screen .input-group input {
+#start-screen .input-group input[type="text"] {
     background: rgba(255, 255, 255, 0.07);
     border-color: rgba(253, 250, 228, 0.25);
     color: var(--cream);
 }
 
-#start-screen .input-group input::placeholder {
+#start-screen .input-group input[type="text"]::placeholder {
     color: rgba(253, 250, 228, 0.4);
 }
 
-#start-screen .input-group input:focus {
+#start-screen .input-group input[type="text"]:focus {
     border-color: var(--green-light);
     background: rgba(255, 255, 255, 0.12);
 }
 
-#start-screen .difficulty-btn,
-#start-screen .timer-btn,
-#start-screen .move-btn {
-    background: transparent;
-    border-color: rgba(253, 250, 228, 0.25);
-    color: rgba(253, 250, 228, 0.75);
-}
-
-#start-screen .difficulty-btn:hover,
-#start-screen .timer-btn:hover,
-#start-screen .move-btn:hover {
-    border-color: var(--cream);
-    color: var(--cream);
-}
-
-#start-screen .difficulty-btn.active,
-#start-screen .timer-btn.active,
-#start-screen .move-btn.active {
-    background: var(--cream);
-    border-color: var(--cream);
-    color: var(--navy);
-}
-
-#start-screen .difficulty-hint {
+#start-screen .setting-hint,
+#start-screen .move-setting-copy small {
     color: rgba(253, 250, 228, 0.55);
 }
 
@@ -274,14 +253,15 @@ h1, h2 {
     text-align: left;
 }
 
-.input-group label {
+.input-group > label:not(.move-setting),
+.setting-label {
     display: block;
     margin-bottom: 0.5rem;
     color: var(--text-muted);
     font-size: 0.9rem;
 }
 
-.input-group input {
+.input-group input[type="text"] {
     width: 100%;
     padding: 0.75rem 1rem;
     border: 2px solid var(--border-color);
@@ -292,58 +272,359 @@ h1, h2 {
     transition: border-color 0.3s;
 }
 
-.input-group input::placeholder {
+.input-group input[type="text"]::placeholder {
     color: #aaa68f;
 }
 
-.input-group input:focus {
+.input-group input[type="text"]:focus {
     outline: none;
     border-color: var(--blue);
     background: #fff;
 }
 
-/* Переключатель сложности */
-.difficulty-toggle {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
+/* ===== Настройки новой игры ===== */
+.settings-group {
+    min-width: 0;
+    padding: 0;
+    border: 0;
 }
 
-.difficulty-btn,
-.timer-btn,
-.move-btn {
-    flex: 1;
-    padding: 0.6rem 0.5rem;
-    border: 2px solid var(--border-color);
-    border-radius: 999px;
-    background: #fff;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
+.setting-label {
+    width: 100%;
+    padding: 0;
+    text-align: left;
 }
 
-.difficulty-btn:hover,
-.timer-btn:hover,
-.move-btn:hover {
-    border-color: var(--blue);
-    color: var(--blue);
-}
-
-.difficulty-btn.active,
-.timer-btn.active,
-.move-btn.active {
-    border-color: var(--navy);
-    background: var(--navy);
-    color: var(--cream);
-}
-
-.difficulty-hint {
+.setting-hint {
     display: block;
     margin-top: 0.5rem;
     color: var(--text-muted);
     font-size: 0.8rem;
+}
+
+/* Три дискретные позиции: нативный range отвечает за drag, snap и клавиатуру. */
+.territory-control {
+    --territory-position: 50%;
+}
+
+.territory-labels {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.territory-label {
+    min-width: 0;
+    min-height: 44px;
+    padding: 0.35rem 0.15rem;
+    border: 0;
+    background: transparent;
+    color: rgba(253, 250, 228, 0.62);
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+
+.territory-label:first-child {
+    text-align: left;
+}
+
+.territory-label:last-child {
+    text-align: right;
+}
+
+.territory-label:hover,
+.territory-label[aria-pressed="true"] {
+    color: var(--cream);
+}
+
+.territory-label[aria-pressed="true"] {
+    font-weight: 600;
+}
+
+.territory-label:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: -2px;
+    border-radius: 6px;
+}
+
+.territory-slider-wrap {
+    position: relative;
+    height: 44px;
+}
+
+.territory-track {
+    position: absolute;
+    top: 50%;
+    left: 9px;
+    right: 9px;
+    height: 4px;
+    transform: translateY(-50%);
+    border-radius: 2px;
+    background: rgba(253, 250, 228, 0.24);
+}
+
+.territory-track::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--territory-position);
+    border-radius: inherit;
+    background: rgba(253, 250, 228, 0.78);
+    transition: width 0.15s ease;
+}
+
+.territory-tick {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(253, 250, 228, 0.72);
+    border-radius: 50%;
+    background: var(--navy);
+}
+
+.territory-tick:nth-child(1) { left: 0; }
+.territory-tick:nth-child(2) { left: 50%; }
+.territory-tick:nth-child(3) { left: 100%; }
+
+.territory-slider {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 44px;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    cursor: pointer;
+    touch-action: pan-y;
+}
+
+.territory-slider:focus {
+    outline: none;
+}
+
+.territory-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    background: transparent;
+}
+
+.territory-slider::-moz-range-track {
+    height: 4px;
+    background: transparent;
+}
+
+.territory-slider::-webkit-slider-thumb {
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    margin-top: -8px;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 3px solid var(--navy);
+    border-radius: 50%;
+    background: var(--cream);
+    box-shadow: 0 0 0 1px var(--cream);
+    transition: transform 0.15s ease;
+}
+
+.territory-slider::-moz-range-thumb {
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--navy);
+    border-radius: 50%;
+    background: var(--cream);
+    box-shadow: 0 0 0 1px var(--cream);
+    transition: transform 0.15s ease;
+}
+
+.territory-slider:active::-webkit-slider-thumb {
+    transform: scale(1.08);
+}
+
+.territory-slider:active::-moz-range-thumb {
+    transform: scale(1.08);
+}
+
+.territory-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--navy), 0 0 0 4px var(--green-light);
+}
+
+.territory-slider:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--navy), 0 0 0 4px var(--green-light);
+}
+
+/* Пресеты времени — одна radio group, визуально единый control. */
+.segmented-control {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: hidden;
+    border: 2px solid rgba(253, 250, 228, 0.25);
+    border-radius: var(--radius-control);
+}
+
+.segmented-control input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.segmented-control label {
+    display: flex;
+    min-width: 0;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0.55rem 0.25rem;
+    color: rgba(253, 250, 228, 0.72);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.segmented-control label + input + label {
+    border-left: 1px solid rgba(253, 250, 228, 0.25);
+}
+
+.segmented-control label:hover {
+    color: var(--cream);
+}
+
+.segmented-control label span {
+    margin-right: 0.2rem;
+    font-size: 1rem;
+}
+
+.segmented-control input:checked + label {
+    background: var(--cream);
+    color: var(--navy);
+}
+
+.segmented-control input:focus-visible + label {
+    outline: 2px solid var(--green-light);
+    outline-offset: -3px;
+}
+
+/* Бинарное перемещение: вся строка остаётся удобной touch target. */
+.move-setting {
+    position: relative;
+    display: flex;
+    min-height: 56px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0;
+    color: var(--cream);
+    cursor: pointer;
+}
+
+.move-setting-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.move-setting-title {
+    color: var(--cream);
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.move-setting-copy small {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
+.move-setting input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.switch-control {
+    position: relative;
+    width: 46px;
+    height: 28px;
+    flex: 0 0 auto;
+    border: 2px solid rgba(253, 250, 228, 0.4);
+    border-radius: 999px;
+    background: rgba(253, 250, 228, 0.16);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.switch-control::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--cream);
+    transition: transform 0.15s ease;
+}
+
+.move-setting input:checked + .switch-control {
+    border-color: var(--green-light);
+    background: var(--green);
+}
+
+.move-setting input:checked + .switch-control::after {
+    transform: translateX(18px);
+}
+
+.move-setting input:focus-visible + .switch-control {
+    outline: 2px solid var(--green-light);
+    outline-offset: 3px;
+}
+
+@media (max-width: 480px) {
+    .start-layout {
+        align-items: flex-start;
+        padding: 1.25rem 0.875rem;
+    }
+
+    #start-screen .start-card {
+        padding: 1.25rem 0 1rem;
+    }
+
+    #start-screen .start-logo {
+        width: 108px;
+        margin-bottom: 0.75rem;
+    }
+
+    #start-screen .brand-title {
+        font-size: 1.85rem;
+    }
+
+    #start-screen .start-tagline {
+        margin-bottom: 1.5rem;
+    }
+
+    #start-screen .input-group {
+        margin-bottom: 1.25rem;
+    }
+
+    .segmented-control label {
+        font-size: 0.82rem;
+    }
 }
 
 /* Предупреждение о проблемах с картами */

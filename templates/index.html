@@ -67,32 +67,51 @@
                 <!-- Баннер челленджа: показывается при заходе по ссылке-вызову -->
                 <div class="challenge-banner hidden" id="challenge-banner"></div>
 
-                <div class="input-group" id="difficulty-group">
-                    <label>Сложность</label>
-                    <div class="difficulty-toggle">
-                        <button type="button" class="difficulty-btn" data-difficulty="center">Центр</button>
-                        <button type="button" class="difficulty-btn active" data-difficulty="medium">Средняя</button>
-                        <button type="button" class="difficulty-btn" data-difficulty="hard">Весь город</button>
+                <fieldset class="input-group settings-group" id="difficulty-group">
+                    <legend class="setting-label" id="territory-title">Территория</legend>
+                    <div class="territory-control" id="territory-control">
+                        <div class="territory-labels">
+                            <button type="button" class="territory-label" data-territory-index="0">Центр</button>
+                            <button type="button" class="territory-label" data-territory-index="1" aria-pressed="true">Средняя</button>
+                            <button type="button" class="territory-label" data-territory-index="2">Весь город</button>
+                        </div>
+                        <div class="territory-slider-wrap">
+                            <div class="territory-track" aria-hidden="true">
+                                <span class="territory-tick"></span>
+                                <span class="territory-tick"></span>
+                                <span class="territory-tick"></span>
+                            </div>
+                            <input type="range" class="territory-slider" id="territory-range"
+                                   min="0" max="2" step="1" value="1"
+                                   aria-labelledby="territory-title" aria-valuetext="Средняя">
+                        </div>
                     </div>
-                    <small class="difficulty-hint">Средняя — центр и ближайшие районы</small>
-                </div>
+                    <small class="setting-hint" id="territory-hint">Центр и ближайшие районы</small>
+                </fieldset>
 
-                <div class="input-group" id="timer-group">
-                    <label>Время на раунд</label>
-                    <div class="difficulty-toggle">
-                        <button type="button" class="timer-btn active" data-timer="0">Без лимита</button>
-                        <button type="button" class="timer-btn" data-timer="180">3 минуты</button>
-                        <button type="button" class="timer-btn" data-timer="60">1 минута</button>
+                <fieldset class="input-group settings-group" id="timer-group">
+                    <legend class="setting-label">Время на раунд</legend>
+                    <div class="segmented-control">
+                        <input type="radio" name="round-time" id="timer-60" value="60">
+                        <label for="timer-60">1 мин</label>
+                        <input type="radio" name="round-time" id="timer-180" value="180">
+                        <label for="timer-180">3 мин</label>
+                        <input type="radio" name="round-time" id="timer-unlimited" value="0" checked>
+                        <label for="timer-unlimited"><span aria-hidden="true">∞</span> Без лимита</label>
                     </div>
-                </div>
+                </fieldset>
 
-                <div class="input-group" id="move-group">
-                    <label>Перемещение</label>
-                    <div class="difficulty-toggle">
-                        <button type="button" class="move-btn active" data-move="free">Свободное</button>
-                        <button type="button" class="move-btn" data-move="no">🚷 Не сходя с места</button>
-                    </div>
-                </div>
+                <fieldset class="input-group settings-group" id="move-group">
+                    <legend class="setting-label">Перемещение</legend>
+                    <label class="move-setting" for="movement-toggle">
+                        <span class="move-setting-copy">
+                            <span class="move-setting-title">Можно перемещаться</span>
+                            <small id="movement-description">Свободно перемещайтесь по панораме</small>
+                        </span>
+                        <input type="checkbox" id="movement-toggle" role="switch" checked>
+                        <span class="switch-control" aria-hidden="true"></span>
+                    </label>
+                </fieldset>
 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
                 <button id="daily-btn" class="btn btn-secondary">🗓 Вызов дня</button>
