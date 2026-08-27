@@ -107,6 +107,7 @@ cp .env.example .env
 - `ADMIN_KEY` — *(необязательно)* ключ страницы модерации пула `/admin` (там же — сводка: игры, доигрываемость)
 - `METRIKA_ID` — *(необязательно)* счётчик Яндекс Метрики с целями game_start/game_complete/daily_start/challenge_accept/challenge_share
 - `FLASK_DEBUG` — `true` только для локальной отладки
+- `FAVICON_VARIANT` — `dev` для экспериментальной иконки; без переменной используется production-иконка
 - `DATABASE_URL` — *(необязательно)* URI базы; по умолчанию SQLite-файл в `instance/`
 
 ### 3. Запуск приложения
@@ -219,7 +220,7 @@ geoguessr-spb/
 │   ├── js/api.js       # Таймауты, повторы и обёртки HTTP API
 │   ├── js/state.js     # Состояние клиента и поколения загрузок
 │   ├── js/sdk.js       # Восстановление не загрузившегося SDK карт
-│   └── favicons/       # Иконки приложения
+│   └── favicons/       # Иконки приложения: отдельные наборы dev/ и prod/
 ├── templates/
 │   └── index.html      # Главная страница
 └── tests/              # Тесты бэкенда (pytest)

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>Модерация пула точек — Петербургский следопыт</title>
-    <link rel="icon" href="{{ url_for('static', filename='favicons/favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ url_for('static', filename=favicon_asset('favicon.svg')) }}?v={{ asset_version }}" type="image/svg+xml">
     <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
