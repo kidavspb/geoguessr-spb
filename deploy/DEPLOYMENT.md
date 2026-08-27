@@ -278,13 +278,27 @@ git push origin --delete infra/dev-and-deploy
 
 ## 6. Обычная работа после перехода
 
-Для небольшой задачи:
+Перед любой новой задачей сначала синхронизировать обе remote-ссылки и
+разрешить только fast-forward. Рабочее дерево перед этим должно быть чистым:
 
 ```bash
 cd /root/geoguessr-spb
 git switch dev
+git status --short
+git fetch origin
 git pull --ff-only origin dev
+git merge --ff-only origin/main
+```
 
+Последняя команда будет no-op, если `main` уже содержится в `dev`. Если после
+предыдущего PR в `main` появился merge-коммит, локальный `dev` fast-forward'ится
+до него до начала новой работы. Если fast-forward невозможен, не начинать
+редактирование и не делать rebase/force-push автоматически: сначала исследовать
+расхождение веток.
+
+Для небольшой задачи после preflight:
+
+```bash
 # разработка
 
 venv/bin/flask db upgrade
@@ -304,7 +318,9 @@ git push
 
 ```bash
 git switch dev
+git fetch origin
 git pull --ff-only origin dev
+git merge --ff-only origin/main
 git switch -c feature/короткое-название
 
 # разработка и commits
