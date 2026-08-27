@@ -50,6 +50,12 @@ def _env_bool(name, default=False):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+# Брендинг переключается независимо от debug-режима: dev-сайт получает
+# экспериментальные иконки только при явном FAVICON_VARIANT=dev. Любое другое
+# значение безопасно оставляет production-набор.
+app.config['FAVICON_VARIANT'] = (
+    'dev' if os.environ.get('FAVICON_VARIANT', '').strip().lower() == 'dev' else 'prod'
+)
 # URI базы можно переопределить через DATABASE_URL (12-factor): удобно для
 # тестов (отдельная/временная БД) и для смены СУБД, не трогая код.
 # По умолчанию — sqlite-файл в папке instance/.
@@ -314,20 +320,40 @@ def _report_request_timing(response):
 
 @app.context_processor
 def inject_asset_version():
-    """Кэш-бастер для CSS/JS: версия — свежайший mtime файлов статики.
+    """Кэш-бастер ассетов: версия — свежайший mtime важных файлов статики.
 
     Считается на каждый запрос, чтобы правки статики подхватывались
     браузерами и без перезапуска сервиса.
     """
     version = 0
     for rel in ('css/style.css', 'js/main.js', 'js/panorama.js', 'js/maps.js',
-                'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js'):
+                'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
+                'manifest.json', 'manifest-dev.json',
+                'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
+                'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico'):
         path = os.path.join(app.static_folder, rel)
         try:
             version = max(version, os.stat(path).st_mtime_ns)
         except OSError:
             pass
     return {'asset_version': version}
+
+
+def favicon_asset(filename):
+    """Путь к favicon из набора, выбранного для текущего окружения."""
+    variant = app.config['FAVICON_VARIANT']
+    return f'favicons/{variant}/{filename}'
+
+
+def manifest_asset():
+    """PWA-манифест с иконками выбранного окружения."""
+    return 'manifest-dev.json' if app.config['FAVICON_VARIANT'] == 'dev' else 'manifest.json'
+
+
+app.jinja_env.globals.update(
+    favicon_asset=favicon_asset,
+    manifest_asset=manifest_asset,
+)
 
 
 # --------------------------------------------------------------------------
@@ -367,7 +393,7 @@ def index():
 @app.route('/favicon.ico')
 def favicon():
     """Фавиконка для запросов к корню сайта (браузеры/краулеры идут на /favicon.ico)."""
-    return send_from_directory(os.path.join(app.static_folder, 'favicons'), 'favicon.ico',
+    return send_from_directory(app.static_folder, favicon_asset('favicon.ico'),
                                mimetype='image/vnd.microsoft.icon')
 
 
