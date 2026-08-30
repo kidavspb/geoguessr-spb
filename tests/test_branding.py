@@ -37,3 +37,11 @@ def test_dev_branding_uses_separate_assets(client, app, monkeypatch):
         Path(app.static_folder) / 'favicons/dev/favicon.ico'
     ).read_bytes()
     _assert_manifest_icons_exist(app, 'manifest-dev.json')
+
+
+def test_index_revalidates_html_and_templates_auto_reload(client, app):
+    response = client.get('/')
+
+    assert app.config['TEMPLATES_AUTO_RELOAD'] is True
+    assert app.jinja_env.auto_reload is True
+    assert response.headers['Cache-Control'] == 'no-cache, max-age=0, must-revalidate'

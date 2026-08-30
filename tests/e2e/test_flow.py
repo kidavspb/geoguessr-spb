@@ -29,10 +29,10 @@ def _play_round(page):
 
 def test_start_settings_are_semantic_and_responsive(page, server):
     """Настройки работают как шкала, presets и switch, включая клавиатуру."""
-    js_errors = []
-    page.on('pageerror', lambda error: js_errors.append(str(error)))
-    page.on('console', lambda message: js_errors.append(message.text)
-            if message.type == 'error' else None)
+    console_issues = []
+    page.on('pageerror', lambda error: console_issues.append(str(error)))
+    page.on('console', lambda message: console_issues.append(message.text)
+            if message.type in ('warning', 'error') else None)
     page.set_viewport_size({'width': 320, 'height': 780})
     page.goto(server)
 
@@ -40,14 +40,26 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     territory = page.get_by_role('slider', name='Территория')
     expect(territory).to_have_value('1')
     expect(territory).to_have_attribute('aria-valuetext', 'Средняя')
+    expect(page.locator('#territory-value')).to_have_text('Средняя')
     expect(page.get_by_role('radio', name='Без лимита')).to_be_checked()
-    movement = page.get_by_role('switch', name=re.compile('Можно перемещаться'))
+    movement = page.get_by_role('switch')
     expect(movement).to_be_checked()
+    expect(page.locator('#movement-title')).to_have_text('Можно перемещаться')
+    assert page.evaluate(
+        "getComputedStyle(document.documentElement).backgroundColor"
+    ) == 'rgb(35, 28, 98)'
+
+    # Обычные reload получают согласованные HTML/CSS/JS без падения initToggles.
+    for _ in range(3):
+        page.reload()
+        expect(territory).to_have_value('1')
+        expect(page.locator('#territory-value')).to_have_text('Средняя')
 
     # Клик по каждой подписи выбирает соответствующую дискретную позицию.
     for label, value in [('Центр', '0'), ('Средняя', '1'), ('Весь город', '2')]:
         page.get_by_role('button', name=label, exact=True).click()
         expect(territory).to_have_value(value)
+        expect(page.locator('#territory-value')).to_have_text(label)
         expect(page.get_by_role('button', name=label, exact=True)).to_have_attribute(
             'aria-pressed', 'true')
 
@@ -60,11 +72,15 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     page.mouse.move(box['x'] + box['width'] - 10, box['y'] + box['height'] / 2)
     page.mouse.up()
     expect(territory).to_have_value('2')
+    assert territory.evaluate(
+        "element => getComputedStyle(element).webkitTapHighlightColor"
+    ) == 'rgba(0, 0, 0, 0)'
 
     # Клавиши range и radio сохраняют ожидаемый порядок слева направо.
     territory.focus()
     page.keyboard.press('Home')
     expect(territory).to_have_value('0')
+    assert territory.evaluate("element => element.matches(':focus-visible')")
     page.keyboard.press('ArrowRight')
     expect(territory).to_have_value('1')
     page.keyboard.press('End')
@@ -80,20 +96,24 @@ def test_start_settings_are_semantic_and_responsive(page, server):
 
     movement.click()
     expect(movement).not_to_be_checked()
+    expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
     expect(page.locator('#movement-description')).to_have_text(
-        'Начальная точка обзора будет зафиксирована')
+        'Начальная точка обзора зафиксирована')
+    expect(page.locator('.move-icon-fixed')).to_be_visible()
     movement.focus()
     page.keyboard.press('Space')
     expect(movement).to_be_checked()
+    expect(page.locator('#movement-title')).to_have_text('Можно перемещаться')
     expect(page.locator('#movement-description')).to_have_text(
         'Свободно перемещайтесь по панораме')
+    expect(page.locator('.move-icon-walk')).to_be_visible()
 
     # На минимальной ширине нет горизонтального overflow, touch targets >= 44px.
     sizes = page.locator(
         '.territory-label, .segmented-control label, .move-setting'
     ).evaluate_all("elements => elements.map(el => el.getBoundingClientRect())")
     assert all(size['height'] >= 44 for size in sizes)
-    for width, height in [(320, 780), (390, 844), (1280, 800)]:
+    for width, height in [(320, 780), (390, 844), (430, 860), (1280, 800)]:
         page.set_viewport_size({'width': width, 'height': height})
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
@@ -108,7 +128,58 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     assert payload['time_limit'] == 60
     assert payload['no_move'] is True
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
-    assert js_errors == []
+    assert console_issues == []
+
+
+def test_settings_have_styled_initial_render_without_javascript(browser, server):
+    """CSS оформляет native controls до и независимо от выполнения entry JS."""
+    context = browser.new_context(
+        viewport={'width': 320, 'height': 780},
+        java_script_enabled=False,
+    )
+    page = context.new_page()
+    try:
+        page.goto(server)
+        expect(page.locator('#territory-value')).to_have_text('Средняя')
+        expect(page.locator('#territory-range')).to_be_visible()
+        expect(page.locator('.segmented-control')).to_be_visible()
+        expect(page.locator('.switch-control')).to_be_visible()
+        expect(page.locator('.difficulty-btn, .timer-btn, .move-btn')).to_have_count(0)
+
+        styles = page.locator('#territory-range').evaluate(
+            "element => ({"
+            "appearance: getComputedStyle(element).appearance,"
+            "height: element.getBoundingClientRect().height"
+            "})"
+        )
+        assert styles['appearance'] == 'none'
+        assert styles['height'] >= 44
+        assert page.locator('.territory-label').first.evaluate(
+            "element => getComputedStyle(element).backgroundColor"
+        ) == 'rgba(0, 0, 0, 0)'
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    finally:
+        context.close()
+
+
+def test_missing_settings_component_does_not_abort_other_controls(page, server):
+    """Несовместимый/опциональный блок не обрушает инициализацию соседних."""
+    page_errors = []
+    page.on('pageerror', lambda error: page_errors.append(str(error)))
+    page.add_init_script("""
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('difficulty-group')?.remove();
+        }, { once: true });
+    """)
+    page.goto(server)
+
+    page.get_by_text('1 мин', exact=True).click()
+    expect(page.get_by_role('radio', name='1 мин')).to_be_checked()
+    movement = page.get_by_role('switch')
+    movement.click()
+    expect(movement).not_to_be_checked()
+    expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
+    assert page_errors == []
 
 
 def test_full_game_flow(page, server):

@@ -71,6 +71,10 @@ if database_uri.startswith('sqlite:'):
 # Фронтенд — ES-модули: импорты не имеют query-версии, поэтому статика
 # отдаётся с ревалидацией кэша (условные запросы → дешёвые 304)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+# Gunicorn workers живут дольше файлов между pull и restart. Без проверки
+# mtime один worker мог отдавать закэшированный старый HTML уже с новой
+# версией CSS/JS, взятой context processor с диска.
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Безопасность cookie сессии.
 # На проде (HTTPS) держим Secure=True; для локальной разработки можно
@@ -305,6 +309,10 @@ def _report_request_timing(response):
         # CSS и entry-модуль имеют версию ассетов в URL: повторный визит не
         # должен даже ревалидировать их. Импорты без версии остаются no-cache.
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    elif request.endpoint == 'index':
+        # HTML связывает конкретную разметку с versioned entry/CSS. Браузер
+        # может хранить документ, но перед использованием обязан сверить его.
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     started = getattr(g, 'api_started_at', None)
     if started is None:
         return response

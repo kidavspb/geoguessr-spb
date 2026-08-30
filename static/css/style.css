@@ -51,6 +51,11 @@
     --font-body: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
+html {
+    min-height: 100%;
+    background: var(--navy);
+}
+
 body {
     font-family: var(--font-body);
     background: var(--bg-color);
@@ -198,7 +203,6 @@ h1, h2 {
     background: rgba(255, 255, 255, 0.12);
 }
 
-#start-screen .setting-hint,
 #start-screen .move-setting-copy small {
     color: rgba(253, 250, 228, 0.55);
 }
@@ -295,11 +299,24 @@ h1, h2 {
     text-align: left;
 }
 
-.setting-hint {
-    display: block;
-    margin-top: 0.5rem;
-    color: var(--text-muted);
-    font-size: 0.8rem;
+.setting-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.2rem;
+}
+
+.setting-header .setting-label {
+    width: auto;
+    margin: 0;
+}
+
+.setting-value {
+    flex: 0 0 auto;
+    color: var(--cream);
+    font-size: 0.9rem;
+    font-weight: 600;
 }
 
 /* Три дискретные позиции: нативный range отвечает за drag, snap и клавиатуру. */
@@ -323,6 +340,7 @@ h1, h2 {
     font-size: 0.875rem;
     cursor: pointer;
     transition: color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .territory-label:first-child {
@@ -333,13 +351,14 @@ h1, h2 {
     text-align: right;
 }
 
-.territory-label:hover,
 .territory-label[aria-pressed="true"] {
-    color: var(--cream);
+    color: rgba(253, 250, 228, 0.82);
 }
 
-.territory-label[aria-pressed="true"] {
-    font-weight: 600;
+@media (hover: hover) {
+    .territory-label:hover {
+        color: var(--cream);
+    }
 }
 
 .territory-label:focus-visible {
@@ -401,6 +420,7 @@ h1, h2 {
     background: transparent;
     cursor: pointer;
     touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .territory-slider:focus {
@@ -528,9 +548,42 @@ h1, h2 {
     cursor: pointer;
 }
 
+.move-mode-icon {
+    display: flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    align-items: center;
+    justify-content: center;
+    color: rgba(253, 250, 228, 0.72);
+}
+
+.move-icon {
+    width: 23px;
+    height: 23px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.move-icon-fixed {
+    display: none;
+}
+
+.move-setting input:not(:checked) ~ .move-mode-icon .move-icon-walk {
+    display: none;
+}
+
+.move-setting input:not(:checked) ~ .move-mode-icon .move-icon-fixed {
+    display: block;
+}
+
 .move-setting-copy {
     display: flex;
     min-width: 0;
+    flex: 1 1 auto;
     flex-direction: column;
     gap: 0.2rem;
 }
@@ -581,18 +634,22 @@ h1, h2 {
     transition: transform 0.15s ease;
 }
 
-.move-setting input:checked + .switch-control {
+.move-setting input:checked ~ .switch-control {
     border-color: var(--green-light);
     background: var(--green);
 }
 
-.move-setting input:checked + .switch-control::after {
+.move-setting input:checked ~ .switch-control::after {
     transform: translateX(18px);
 }
 
-.move-setting input:focus-visible + .switch-control {
+.move-setting input:focus-visible ~ .switch-control {
     outline: 2px solid var(--green-light);
     outline-offset: 3px;
+}
+
+.movement-group {
+    margin-top: 0.25rem;
 }
 
 @media (max-width: 480px) {

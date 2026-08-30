@@ -67,14 +67,14 @@
                 <!-- Баннер челленджа: показывается при заходе по ссылке-вызову -->
                 <div class="challenge-banner hidden" id="challenge-banner"></div>
 
-                <fieldset class="input-group settings-group" id="difficulty-group">
-                    <legend class="setting-label" id="territory-title">Территория</legend>
+                <fieldset class="input-group settings-group" id="difficulty-group"
+                          aria-labelledby="territory-title">
+                    <div class="setting-header">
+                        <span class="setting-label" id="territory-title">Территория</span>
+                        <output class="setting-value" id="territory-value"
+                                for="territory-range">Средняя</output>
+                    </div>
                     <div class="territory-control" id="territory-control">
-                        <div class="territory-labels">
-                            <button type="button" class="territory-label" data-territory-index="0">Центр</button>
-                            <button type="button" class="territory-label" data-territory-index="1" aria-pressed="true">Средняя</button>
-                            <button type="button" class="territory-label" data-territory-index="2">Весь город</button>
-                        </div>
                         <div class="territory-slider-wrap">
                             <div class="territory-track" aria-hidden="true">
                                 <span class="territory-tick"></span>
@@ -85,8 +85,15 @@
                                    min="0" max="2" step="1" value="1"
                                    aria-labelledby="territory-title" aria-valuetext="Средняя">
                         </div>
+                        <div class="territory-labels">
+                            <button type="button" class="territory-label" data-territory-index="0"
+                                    aria-pressed="false">Центр</button>
+                            <button type="button" class="territory-label" data-territory-index="1"
+                                    aria-pressed="true">Средняя</button>
+                            <button type="button" class="territory-label" data-territory-index="2"
+                                    aria-pressed="false">Весь город</button>
+                        </div>
                     </div>
-                    <small class="setting-hint" id="territory-hint">Центр и ближайшие районы</small>
                 </fieldset>
 
                 <fieldset class="input-group settings-group" id="timer-group">
@@ -101,17 +108,33 @@
                     </div>
                 </fieldset>
 
-                <fieldset class="input-group settings-group" id="move-group">
-                    <legend class="setting-label">Перемещение</legend>
+                <div class="input-group settings-group movement-group" id="move-group">
                     <label class="move-setting" for="movement-toggle">
+                        <input type="checkbox" id="movement-toggle" role="switch" checked
+                               aria-labelledby="movement-title"
+                               aria-describedby="movement-description">
+                        <span class="move-mode-icon" aria-hidden="true">
+                            <svg class="move-icon move-icon-walk" viewBox="0 0 24 24"
+                                 focusable="false">
+                                <circle cx="13" cy="4" r="2"></circle>
+                                <path d="m10 22 1-7-3-3 2-5 4 3 3 1"></path>
+                                <path d="m14 22-3-7"></path>
+                                <path d="M7 22l1-10"></path>
+                                <path d="m14 7 2-2"></path>
+                            </svg>
+                            <svg class="move-icon move-icon-fixed" viewBox="0 0 24 24"
+                                 focusable="false">
+                                <path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"></path>
+                                <circle cx="12" cy="10" r="2.5"></circle>
+                            </svg>
+                        </span>
                         <span class="move-setting-copy">
-                            <span class="move-setting-title">Можно перемещаться</span>
+                            <span class="move-setting-title" id="movement-title">Можно перемещаться</span>
                             <small id="movement-description">Свободно перемещайтесь по панораме</small>
                         </span>
-                        <input type="checkbox" id="movement-toggle" role="switch" checked>
                         <span class="switch-control" aria-hidden="true"></span>
                     </label>
-                </fieldset>
+                </div>
 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
                 <button id="daily-btn" class="btn btn-secondary">🗓 Вызов дня</button>

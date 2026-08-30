@@ -2,7 +2,7 @@
  * Петербургский следопыт — точка входа.
  * Экраны, ход игры, таймер, лидерборд, вызов дня, челленджи.
  */
-import { state, DIFFICULTY_HINTS } from './state.js';
+import { state } from './state.js';
 import { plural, escapeHtml, getScoreClass, showScreen, showToast, reachGoal, randomPlayerName } from './utils.js';
 import { api } from './api.js';
 import {
@@ -110,57 +110,105 @@ function initEventListeners() {
 /** Настройки стартового экрана используют нативные controls, а gameData
  * остаётся единым состоянием, которое затем отправляется на сервер. */
 function initToggles() {
+    initTerritoryControl();
+    initTimeControl();
+    initMovementControl();
+    syncSettingsControls();
+}
+
+function initTerritoryControl() {
     const territoryRange = document.getElementById('territory-range');
+    const labels = document.querySelectorAll('#difficulty-group .territory-label');
+    if (!territoryRange || labels.length !== TERRITORIES.length) {
+        console.warn('Territory control markup is missing or incompatible');
+        return;
+    }
+
     territoryRange.addEventListener('input', () => {
         const index = Math.max(0, Math.min(TERRITORIES.length - 1,
             Number.parseInt(territoryRange.value, 10) || 0));
         gameData.difficulty = TERRITORIES[index];
-        syncSettingsControls();
+        syncTerritoryControl();
     });
 
-    document.querySelectorAll('.territory-label').forEach(label => {
+    labels.forEach(label => {
         label.addEventListener('click', () => {
             territoryRange.value = label.dataset.territoryIndex;
             territoryRange.dispatchEvent(new Event('input', { bubbles: true }));
         });
     });
+}
 
-    document.querySelectorAll('input[name="round-time"]').forEach(input => {
+function initTimeControl() {
+    const inputs = document.querySelectorAll('input[name="round-time"]');
+    if (!inputs.length) {
+        console.warn('Time control markup is missing');
+        return;
+    }
+
+    inputs.forEach(input => {
         input.addEventListener('change', () => {
             if (!input.checked) return;
             gameData.timeLimit = Number.parseInt(input.value, 10) || 0;
+            syncTimeControl();
         });
     });
+}
 
-    document.getElementById('movement-toggle').addEventListener('change', event => {
+function initMovementControl() {
+    const movementToggle = document.getElementById('movement-toggle');
+    if (!movementToggle) {
+        console.warn('Movement control markup is missing');
+        return;
+    }
+
+    movementToggle.addEventListener('change', event => {
         gameData.noMove = !event.target.checked;
-        syncSettingsControls();
+        syncMovementControl();
     });
-
-    syncSettingsControls();
 }
 
 function syncSettingsControls() {
+    syncTerritoryControl();
+    syncTimeControl();
+    syncMovementControl();
+}
+
+function syncTerritoryControl() {
     const territoryIndex = Math.max(0, TERRITORIES.indexOf(gameData.difficulty));
     const territoryRange = document.getElementById('territory-range');
     const territoryControl = document.getElementById('territory-control');
+    const territoryValue = document.getElementById('territory-value');
+    if (!territoryRange || !territoryControl || !territoryValue) return;
+
     territoryRange.value = String(territoryIndex);
     territoryRange.setAttribute('aria-valuetext', TERRITORY_NAMES[territoryIndex]);
+    territoryValue.textContent = TERRITORY_NAMES[territoryIndex];
     territoryControl.style.setProperty('--territory-position', `${territoryIndex * 50}%`);
-    document.querySelectorAll('.territory-label').forEach((label, index) => {
+    document.querySelectorAll('#difficulty-group .territory-label').forEach((label, index) => {
         label.setAttribute('aria-pressed', String(index === territoryIndex));
     });
-    document.getElementById('territory-hint').textContent = DIFFICULTY_HINTS[gameData.difficulty];
+}
 
+function syncTimeControl() {
     const timerValue = String(gameData.timeLimit || 0);
     document.querySelectorAll('input[name="round-time"]').forEach(input => {
         input.checked = input.value === timerValue;
     });
+}
 
+function syncMovementControl() {
     const movementToggle = document.getElementById('movement-toggle');
+    const movementTitle = document.getElementById('movement-title');
+    const movementDescription = document.getElementById('movement-description');
+    if (!movementToggle || !movementTitle || !movementDescription) return;
+
     movementToggle.checked = !gameData.noMove;
-    document.getElementById('movement-description').textContent = gameData.noMove
-        ? 'Начальная точка обзора будет зафиксирована'
+    movementTitle.textContent = gameData.noMove
+        ? 'Нельзя перемещаться'
+        : 'Можно перемещаться';
+    movementDescription.textContent = gameData.noMove
+        ? 'Начальная точка обзора зафиксирована'
         : 'Свободно перемещайтесь по панораме';
 }
 
