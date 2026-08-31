@@ -99,14 +99,17 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
     expect(page.locator('#movement-description')).to_have_text(
         'Начальная точка обзора зафиксирована')
-    expect(page.locator('.move-icon-fixed')).to_be_visible()
+    expect(page.locator('.move-emoji-fixed')).to_be_visible()
+    assert movement.evaluate(
+        "element => getComputedStyle(element).webkitTapHighlightColor"
+    ) == 'rgba(0, 0, 0, 0)'
     movement.focus()
     page.keyboard.press('Space')
     expect(movement).to_be_checked()
     expect(page.locator('#movement-title')).to_have_text('Можно перемещаться')
     expect(page.locator('#movement-description')).to_have_text(
         'Свободно перемещайтесь по панораме')
-    expect(page.locator('.move-icon-walk')).to_be_visible()
+    expect(page.locator('.move-emoji-walk')).to_be_visible()
 
     # На минимальной ширине нет горизонтального overflow, touch targets >= 44px.
     sizes = page.locator(
