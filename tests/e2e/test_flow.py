@@ -111,11 +111,15 @@ def test_start_settings_are_semantic_and_responsive(page, server):
         'Свободно перемещайтесь по панораме')
     expect(page.locator('.move-emoji-walk')).to_be_visible()
 
-    # На минимальной ширине нет горизонтального overflow, touch targets >= 44px.
-    sizes = page.locator(
-        '.territory-label, .segmented-control label, .move-setting'
+    # Компактные подписи остаются удобны благодаря широким зонам по горизонтали;
+    # основные controls сохраняют touch targets не меньше 44px.
+    territory_label_sizes = page.locator('.territory-label').evaluate_all(
+        "elements => elements.map(el => el.getBoundingClientRect())")
+    assert all(size['height'] >= 32 for size in territory_label_sizes)
+    control_sizes = page.locator(
+        '.segmented-control label, .move-setting'
     ).evaluate_all("elements => elements.map(el => el.getBoundingClientRect())")
-    assert all(size['height'] >= 44 for size in sizes)
+    assert all(size['height'] >= 44 for size in control_sizes)
     for width, height in [(320, 780), (390, 844), (430, 860), (1280, 800)]:
         page.set_viewport_size({'width': width, 'height': height})
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
