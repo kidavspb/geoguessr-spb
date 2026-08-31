@@ -30,9 +30,13 @@ def _play_round(page):
 def test_start_settings_are_semantic_and_responsive(page, server):
     """Настройки работают как шкала, presets и switch, включая клавиатуру."""
     console_issues = []
+    failed_resources = []
     page.on('pageerror', lambda error: console_issues.append(str(error)))
     page.on('console', lambda message: console_issues.append(message.text)
-            if message.type in ('warning', 'error') else None)
+            if message.type in ('warning', 'error')
+            and not message.text.startswith('Failed to load resource:') else None)
+    page.on('response', lambda response: failed_resources.append(response.url)
+            if response.status >= 400 else None)
     page.set_viewport_size({'width': 320, 'height': 780})
     page.goto(server)
 
@@ -135,6 +139,9 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     assert payload['time_limit'] == 60
     assert payload['no_move'] is True
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
+    # Лицензируемый ALS SPb на production установлен отдельно и
+    # намеренно не входит в Git; CI проверяет системный fallback.
+    assert all(url.endswith('/static/fonts/ALS_SPb.woff2') for url in failed_resources)
     assert console_issues == []
 
 
