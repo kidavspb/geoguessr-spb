@@ -145,6 +145,113 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     assert console_issues == []
 
 
+def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
+    """Район выбирается картой/клавиатурой и не блокирует прежнюю шкалу."""
+    console_issues = []
+    page.on('pageerror', lambda error: console_issues.append(str(error)))
+    page.on('console', lambda message: console_issues.append(message.text)
+            if message.type in ('warning', 'error')
+            and not message.text.startswith('Failed to load resource:') else None)
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(server)
+
+    picker = page.get_by_role('button', name='Выбрать конкретный район')
+    picker.click()
+    expect(page.locator('#district-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#district-screen-title')).to_be_focused()
+    expect(page.locator('#district-map')).to_be_visible(timeout=10000)
+    expect(page.locator('#district-map .district-shape')).to_have_count(18)
+    expect(page.locator('#district-list')).to_be_visible()
+    expect(page.locator('#district-selected-name')).to_have_text('Район не выбран')
+    expect(page.get_by_role('button', name='Выбрать район')).to_be_disabled()
+    assert page.locator('#district-map .district-shape[tabindex="0"]').count() == 1
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    # Маленькие центральные районы доступны на SVG; отдельная кнопка даёт
+    # удобное увеличение без pinch/pan, конфликтующего со scroll iPhone.
+    original_viewbox = page.locator('#district-map').get_attribute('viewBox')
+    page.get_by_role('button', name='Центр крупнее').click()
+    assert page.locator('#district-map').get_attribute('viewBox') != original_viewbox
+    expect(page.get_by_role('button', name='Показать весь город')).to_have_attribute(
+        'aria-pressed', 'true')
+    assert page.get_by_role('button', name='Показать весь город').evaluate(
+        'element => element.getBoundingClientRect().height') >= 44
+
+    petrogradsky = page.locator(
+        '#district-map [data-district-id="petrogradsky"]'
+    )
+    petrogradsky.click()
+    expect(page.locator('#district-selected-name')).to_have_text('Петроградский район')
+    expect(petrogradsky).to_have_attribute('aria-checked', 'true')
+    expect(page.locator('#district-list')).to_have_value('petrogradsky')
+    page.get_by_role('button', name='Выбрать район').click()
+
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#territory-value')).to_have_text('Петроградский район')
+    expect(page.locator('#territory-control')).to_have_class(
+        re.compile('district-active'))
+    expect(page.get_by_role('slider', name='Территория')).to_be_enabled()
+
+    # Внутренняя навигация приложения сохраняет ту же настройку территории.
+    page.locator('#show-leaderboard-btn').click()
+    expect(page.locator('#leaderboard-screen')).to_have_class(re.compile('active'))
+    page.locator('#back-btn').click()
+    expect(page.locator('#territory-value')).to_have_text('Петроградский район')
+
+    # Повторное открытие показывает текущий район; карта поддерживает radio-
+    # keyboard pattern, Escape отменяет draft и возвращает focus.
+    page.get_by_role('button', name=re.compile('Изменить район')).click()
+    expect(page.locator('#district-list')).to_have_value('petrogradsky')
+    admiralteysky = page.locator(
+        '#district-map [data-district-id="admiralteysky"]'
+    )
+    admiralteysky.focus()
+    page.keyboard.press('Space')
+    expect(page.locator('#district-selected-name')).to_have_text('Адмиралтейский район')
+    page.keyboard.press('Escape')
+    expect(page.locator('#territory-value')).to_have_text('Петроградский район')
+    expect(page.locator('#district-picker-btn')).to_be_focused()
+
+    # Любой обычный preset атомарно снимает район; отдельный reset не нужен.
+    page.get_by_role('button', name='Центр', exact=True).click()
+    expect(page.locator('#territory-value')).to_have_text('Центр')
+    expect(page.locator('#territory-control')).not_to_have_class(
+        re.compile('district-active'))
+    expect(page.locator('#district-action-label')).to_have_text(
+        'Выбрать конкретный район')
+
+    # Native select — компактный accessibility/touch fallback. Выбранная пара
+    # доходит до того же /start как единое district state.
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('kolpinsky')
+    expect(page.locator('#district-selected-name')).to_have_text('Колпинский район')
+    page.get_by_role('button', name='Выбрать район').click()
+    with page.expect_request(
+            lambda request: request.url.endswith('/api/game/start')) as request_info:
+        page.locator('#start-btn').click()
+    payload = request_info.value.post_data_json
+    assert payload['difficulty'] == 'district'
+    assert payload['district_id'] == 'kolpinsky'
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
+    assert console_issues == []
+
+
+def test_district_picker_list_fallback_when_geometry_fails(page, server):
+    """Локальная карта может сломаться отдельно, но район всё ещё выбирается."""
+    page.route('**/api/districts/geometry', lambda route: route.fulfill(
+        status=500, content_type='application/json', body='{"error":"broken"}'))
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+
+    expect(page.locator('#district-map-error')).to_be_visible(timeout=10000)
+    expect(page.locator('#district-list')).to_be_visible()
+    page.locator('#district-list').select_option('kronshtadtsky')
+    page.get_by_role('button', name='Выбрать район').click()
+    expect(page.locator('#territory-value')).to_have_text('Кронштадтский район')
+    expect(page.locator('#territory-control')).to_have_class(
+        re.compile('district-active'))
+
+
 def test_settings_have_styled_initial_render_without_javascript(browser, server):
     """CSS оформляет native controls до и независимо от выполнения entry JS."""
     context = browser.new_context(
@@ -309,6 +416,62 @@ def test_missing_new_place_falls_back_without_reload(page, server):
     assert stats['panoramaPlayersActive'] == 1
 
 
+def test_district_without_coverage_can_return_to_preserved_settings(page, server):
+    """Редкий район без съёмки не запирает игрока на игровом экране."""
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.add_init_script('window.__ymapsEmptyLocateCount = 100')
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('kurortny')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#photo-overlay')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay > span')).to_have_text(
+        'Не удалось найти съёмку рядом.'
+    )
+    expect(page.get_by_role('button', name='Повторить')).to_be_visible()
+    expect(page.get_by_role('button', name='Другое место')).to_be_visible()
+    back = page.get_by_role('button', name='К настройкам')
+    expect(back).to_be_visible()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    back.click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#territory-value')).to_have_text('Курортный район')
+    expect(page.locator('#territory-control')).to_have_class(
+        re.compile('district-active'))
+    expect(page.locator('#district-picker-btn')).to_be_focused()
+    page.wait_for_function(
+        'window.__ymapsStats.panoramaPlayersActive === 0 && '
+        'window.__ymapsStats.mapsActive === 0'
+    )
+
+
+def test_district_skip_limit_has_honest_recovery_message(page, server):
+    """429 лимита замен не маскируется под сетевую ошибку и имеет выход."""
+    page.add_init_script('window.__ymapsEmptyLocateCount = 100')
+    page.route('**/api/game/skip_location', lambda route: route.fulfill(
+        status=429,
+        content_type='application/json',
+        body='{"error":"Лимит перегенераций точки для этого раунда исчерпан"}',
+    ))
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('kronshtadtsky')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#photo-overlay > span')).to_have_text(
+        'В этом районе не удалось найти доступную панораму. '
+        'Выберите другой район или режим.',
+        timeout=10000,
+    )
+    expect(page.get_by_role('button', name='Повторить')).to_be_hidden()
+    expect(page.get_by_role('button', name='Другое место')).to_be_hidden()
+    expect(page.get_by_role('button', name='К настройкам')).to_be_visible()
+
+
 def test_too_distant_nearest_panorama_is_not_used_as_the_answer(page, server):
     """Ближайшая, но далёкая съёмка не рассинхронизирует картинку и счёт."""
     page.add_init_script('window.__ymapsFarLocateCount = 1')
@@ -319,6 +482,40 @@ def test_too_distant_nearest_panorama_is_not_used_as_the_answer(page, server):
     stats = page.evaluate('window.__ymapsStats')
     assert stats['locateCalls'] == 2
     assert stats['panoramaPlayersActive'] == 1
+
+
+def test_panorama_outside_district_is_replaced_before_player(page, server):
+    """Съёмка за границей района заменяется и не показывается игроку."""
+    validation_count = 0
+    skip_payloads = []
+
+    def validate_route(route):
+        nonlocal validation_count
+        validation_count += 1
+        if validation_count == 1:
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body='{"valid":false,"reason":"outside_district"}',
+            )
+        else:
+            route.continue_()
+
+    page.route('**/api/game/validate_panorama', validate_route)
+    page.on('request', lambda request: skip_payloads.append(request.post_data_json)
+            if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('petrogradsky')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    stats = page.evaluate('window.__ymapsStats')
+    assert validation_count == 2
+    assert stats['locateCalls'] == 2
+    assert skip_payloads[0]['reason'] == 'outside_district'
+    assert stats['panoramaPlayersCreated'] == 1
 
 
 def test_transient_panorama_error_retries_same_place_without_skip(page, server):

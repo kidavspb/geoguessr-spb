@@ -15,10 +15,32 @@ import {
     initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap,
     destroyMainMap, destroyResultMap, destroyFinalMap
 } from './maps.js';
+import {
+    initDistrictPicker, openDistrictPicker, closeDistrictPicker,
+    districtDisplayName
+} from './districts.js';
 
 const { gameData } = state;
 const TERRITORIES = ['center', 'medium', 'hard'];
 const TERRITORY_NAMES = ['Центр', 'Средняя', 'Весь город'];
+
+/** Атомарно обновить tagged-union территории.
+ * `districtId` существует только для активного district mode; последняя
+ * стандартная позиция хранится отдельно лишь для визуально приглушённой шкалы. */
+function setTerritoryState(difficulty, districtId = null, districtName = null) {
+    if (difficulty === 'district' && districtId) {
+        gameData.difficulty = 'district';
+        gameData.districtId = districtId;
+        gameData.districtName = districtName || districtDisplayName(districtId) || districtId;
+        return;
+    }
+
+    const normalized = TERRITORIES.includes(difficulty) ? difficulty : 'medium';
+    gameData.difficulty = normalized;
+    gameData.standardDifficulty = normalized;
+    gameData.districtId = null;
+    gameData.districtName = null;
+}
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
@@ -60,6 +82,9 @@ function initEventListeners() {
     document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
     document.getElementById('retry-panorama-btn').addEventListener('click', retryPanorama);
     document.getElementById('skip-panorama-btn').addEventListener('click', skipPanorama);
+    document.getElementById('back-to-district-btn').addEventListener(
+        'click', returnToDistrictSettings
+    );
 
     // Экран результата. ВАЖНО: обработчик кнопки «Продолжить» назначается
     // только через onclick в showRoundResult — addEventListener здесь дал бы
@@ -127,7 +152,7 @@ function initTerritoryControl() {
     territoryRange.addEventListener('input', () => {
         const index = Math.max(0, Math.min(TERRITORIES.length - 1,
             Number.parseInt(territoryRange.value, 10) || 0));
-        gameData.difficulty = TERRITORIES[index];
+        setTerritoryState(TERRITORIES[index]);
         syncTerritoryControl();
     });
 
@@ -137,6 +162,22 @@ function initTerritoryControl() {
             territoryRange.dispatchEvent(new Event('input', { bubbles: true }));
         });
     });
+
+    const pickerButton = document.getElementById('district-picker-btn');
+    if (pickerButton && document.getElementById('district-screen')) {
+        const pickerInitialized = initDistrictPicker({
+            onConfirm: district => {
+                setTerritoryState('district', district.id, district.name);
+                syncTerritoryControl();
+            }
+        });
+        if (pickerInitialized) {
+            pickerButton.addEventListener('click', () => {
+                openDistrictPicker(gameData.difficulty === 'district'
+                    ? gameData.districtId : null);
+            });
+        }
+    }
 }
 
 function initTimeControl() {
@@ -175,19 +216,42 @@ function syncSettingsControls() {
 }
 
 function syncTerritoryControl() {
-    const territoryIndex = Math.max(0, TERRITORIES.indexOf(gameData.difficulty));
     const territoryRange = document.getElementById('territory-range');
     const territoryControl = document.getElementById('territory-control');
     const territoryValue = document.getElementById('territory-value');
+    const districtActionLabel = document.getElementById('district-action-label');
+    const districtPicker = document.getElementById('district-picker-btn');
     if (!territoryRange || !territoryControl || !territoryValue) return;
 
+    const districtActive = gameData.difficulty === 'district' && !!gameData.districtId;
+    const standardDifficulty = TERRITORIES.includes(gameData.standardDifficulty)
+        ? gameData.standardDifficulty : 'medium';
+    const territoryIndex = Math.max(0, TERRITORIES.indexOf(
+        districtActive ? standardDifficulty : gameData.difficulty
+    ));
+    const activeName = districtActive
+        ? (gameData.districtName || districtDisplayName(gameData.districtId) || 'Выбранный район')
+        : TERRITORY_NAMES[territoryIndex];
+
     territoryRange.value = String(territoryIndex);
-    territoryRange.setAttribute('aria-valuetext', TERRITORY_NAMES[territoryIndex]);
-    territoryValue.textContent = TERRITORY_NAMES[territoryIndex];
+    territoryRange.setAttribute('aria-valuetext', districtActive
+        ? `${TERRITORY_NAMES[territoryIndex]}. Активен ${activeName}`
+        : TERRITORY_NAMES[territoryIndex]);
+    territoryValue.textContent = activeName;
     territoryControl.style.setProperty('--territory-position', `${territoryIndex * 50}%`);
+    territoryControl.classList.toggle('district-active', districtActive);
     document.querySelectorAll('#difficulty-group .territory-label').forEach((label, index) => {
-        label.setAttribute('aria-pressed', String(index === territoryIndex));
+        label.setAttribute('aria-pressed', String(!districtActive && index === territoryIndex));
     });
+    if (districtActionLabel) {
+        districtActionLabel.textContent = districtActive
+            ? activeName : 'Выбрать конкретный район';
+    }
+    if (districtPicker) {
+        districtPicker.setAttribute('aria-label', districtActive
+            ? `Изменить район. Сейчас выбран ${activeName}`
+            : 'Выбрать конкретный район');
+    }
 }
 
 function syncTimeControl() {
@@ -270,6 +334,9 @@ async function initChallengeFromUrl() {
         banner.classList.remove('hidden');
 
         // Параметры фиксированы челленджем — селекторы прячем
+        if (document.getElementById('district-screen')?.classList.contains('active')) {
+            closeDistrictPicker({ restoreFocus: false });
+        }
         document.getElementById('difficulty-group').classList.add('hidden');
         document.getElementById('timer-group').classList.add('hidden');
         document.getElementById('move-group').classList.add('hidden');
@@ -318,6 +385,7 @@ async function startGame(opts = {}) {
         const { ok, status, data } = await api.startGame({
             player_name: playerName,
             difficulty: gameData.difficulty,
+            district_id: gameData.difficulty === 'district' ? gameData.districtId : null,
             time_limit: gameData.timeLimit || null,
             no_move: gameData.noMove,
             challenge_token: gameData.challengeToken,
@@ -341,7 +409,11 @@ async function startGame(opts = {}) {
         gameData.totalRounds = data.total_rounds;
         gameData.currentRound = 1;
         gameData.totalScore = data.total_score || 0; // >0 при возврате в недоигранный вызов дня
-        gameData.difficulty = data.difficulty || gameData.difficulty;
+        setTerritoryState(
+            data.difficulty || gameData.difficulty,
+            data.district_id || null,
+            data.district_name || null,
+        );
         gameData.timeLimit = data.time_limit || 0;   // серверные значения — истина
         gameData.noMove = !!data.no_move;
         gameData.daily = !!data.daily;
@@ -510,6 +582,35 @@ function retryPanorama() {
     loadCurrentLocation(state.currentLocation);
 }
 
+/**
+ * В редком районе покрытие панорам может закончиться раньше серверного лимита.
+ * Возвращаем игрока к тем же настройкам и освобождаем тяжёлые объекты Яндекса;
+ * выбранный район остаётся в gameData, поэтому его можно повторить или сменить.
+ */
+function returnToDistrictSettings() {
+    if (gameData.difficulty !== 'district') return;
+    stopRoundTimer();
+    state.roundInteractive = false;
+    state.roundLoading = false;
+    state.currentLocation = null;
+    state.currentRoundId = null;
+    state.actualPoint = null;
+    state.lastPanorama = null;
+    state.panoStartPoint = null;
+    state.guessCoords = null;
+    state.currentMarker = null;
+    discardPreloaded(state.preloaded);
+    state.preloaded = null;
+    closePanoModal();
+    destroyPanoramaPlayer();
+    destroyMainMap();
+    destroyResultMap();
+    destroyFinalMap();
+    syncSettingsControls();
+    showScreen('start-screen');
+    document.getElementById('district-picker-btn')?.focus();
+}
+
 async function skipPanorama() {
     if (!state.currentRoundId || state.roundLoading) return;
     state.roundLoading = true;
@@ -525,11 +626,16 @@ async function skipPanorama() {
         state.roundLoading = false;
     }
     if (!skipped || !skipped.ok || !skipped.data) {
-        const message = skipped && skipped.data && skipped.data.error
-            ? skipped.data.error : 'Не получилось сменить место.';
+        const limitReached = skipped && skipped.status === 429;
+        const districtMode = gameData.difficulty === 'district';
+        const message = limitReached && districtMode
+            ? 'В этом районе не удалось найти доступную панораму. Выберите другой район или режим.'
+            : skipped && skipped.data && skipped.data.error
+                ? skipped.data.error : 'Не получилось сменить место.';
         showLoadingOverlay(message, {
-            retry: true,
-            skip: !skipped || skipped.status !== 429
+            retry: !limitReached,
+            skip: !limitReached,
+            back: districtMode,
         });
         return;
     }

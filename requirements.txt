@@ -5,3 +5,4 @@ Flask-Limiter==4.1.1
 Werkzeug==3.1.8
 python-dotenv==1.2.2
 gunicorn==26.0.0
+Shapely==2.1.1

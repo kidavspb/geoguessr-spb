@@ -94,6 +94,17 @@
                                     aria-pressed="false">Весь город</button>
                         </div>
                     </div>
+                    {# Rollout guard: старый worker может перечитать новый template
+                       до restart, но не должен показать UI, которого его API не знает. #}
+                    {% if district_feature_enabled|default(false) %}
+                    <button type="button" class="district-action" id="district-picker-btn">
+                        <svg class="district-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M3.5 5.5 8.7 3l6.6 2.4 5.2-2.1v15.2L15.3 21l-6.6-2.4-5.2 2.1V5.5Zm5.2-2.1v15.2m6.6-13.2V21"/>
+                        </svg>
+                        <span id="district-action-label">Выбрать конкретный район</span>
+                        <span class="district-action-chevron" aria-hidden="true">›</span>
+                    </button>
+                    {% endif %}
                 </fieldset>
 
                 <fieldset class="input-group settings-group" id="timer-group">
@@ -133,6 +144,80 @@
         </main>
     </div>
 
+    {% if district_feature_enabled|default(false) %}
+    <!-- Отдельный экран выбора административного района. Геометрия приходит
+         из локального canonical GeoJSON; список остаётся доступным fallback. -->
+    <div id="district-screen" class="screen">
+        <main class="district-layout">
+            <section class="district-card" aria-labelledby="district-screen-title">
+                <header class="district-screen-header">
+                    <div>
+                        <h1 id="district-screen-title" tabindex="-1">Выберите район</h1>
+                        <p>Все пять раундов пройдут в его границах</p>
+                    </div>
+                    <button type="button" class="district-back" id="district-back-btn"
+                            aria-label="Вернуться к настройкам">←</button>
+                </header>
+
+                <div class="district-selection" aria-live="polite" aria-atomic="true">
+                    <span>Выбранный район</span>
+                    <strong id="district-selected-name">Район не выбран</strong>
+                </div>
+
+                <div class="district-map-frame" id="district-map-frame">
+                    <div class="district-map-loading" id="district-map-loading"
+                         role="status">Загружаем карту районов…</div>
+                    <svg id="district-map" class="district-map hidden"
+                         viewBox="0 0 1000 680" role="radiogroup"
+                         aria-label="Карта административных районов Санкт-Петербурга"></svg>
+                    <p class="district-map-error hidden" id="district-map-error" role="alert">
+                        Карту районов открыть не удалось. Выберите район из списка ниже.
+                    </p>
+                    <button type="button" class="district-map-zoom hidden"
+                            id="district-map-zoom" aria-pressed="false">Центр крупнее</button>
+                </div>
+
+                <label class="district-list-label" for="district-list">
+                    Или выберите из списка
+                </label>
+                <select id="district-list" class="district-list">
+                    <option value="">Выберите район</option>
+                    <option value="admiralteysky">Адмиралтейский район</option>
+                    <option value="vasileostrovsky">Василеостровский район</option>
+                    <option value="vyborgsky">Выборгский район</option>
+                    <option value="kalininsky">Калининский район</option>
+                    <option value="kirovsky">Кировский район</option>
+                    <option value="kolpinsky">Колпинский район</option>
+                    <option value="krasnogvardeysky">Красногвардейский район</option>
+                    <option value="krasnoselsky">Красносельский район</option>
+                    <option value="kronshtadtsky">Кронштадтский район</option>
+                    <option value="kurortny">Курортный район</option>
+                    <option value="moskovsky">Московский район</option>
+                    <option value="nevsky">Невский район</option>
+                    <option value="petrogradsky">Петроградский район</option>
+                    <option value="petrodvortsovy">Петродворцовый район</option>
+                    <option value="primorsky">Приморский район</option>
+                    <option value="pushkinsky">Пушкинский район</option>
+                    <option value="frunzensky">Фрунзенский район</option>
+                    <option value="tsentralny">Центральный район</option>
+                </select>
+
+                <div class="district-screen-actions">
+                    <button type="button" class="btn btn-secondary"
+                            id="district-cancel-btn">Отмена</button>
+                    <button type="button" class="btn btn-primary"
+                            id="district-confirm-btn" disabled>Выбрать район</button>
+                </div>
+                <p class="district-attribution">
+                    Границы: <a href="https://www.openstreetmap.org/copyright"
+                                target="_blank" rel="noopener">© OpenStreetMap contributors</a>,
+                    ODbL 1.0
+                </p>
+            </section>
+        </main>
+    </div>
+    {% endif %}
+
     <!-- Игровой экран: панорама во весь экран, карта — оверлей в углу -->
     <div id="game-screen" class="screen">
         <div class="game-stage">
@@ -147,6 +232,7 @@
                     <div id="photo-overlay-actions" class="photo-overlay-actions hidden">
                         <button type="button" id="retry-panorama-btn" class="btn btn-primary hidden">Повторить</button>
                         <button type="button" id="skip-panorama-btn" class="btn btn-secondary hidden">Другое место</button>
+                        <button type="button" id="back-to-district-btn" class="btn btn-secondary hidden">К настройкам</button>
                     </div>
                 </div>
             </div>

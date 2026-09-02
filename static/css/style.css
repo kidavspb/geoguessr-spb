@@ -485,6 +485,315 @@ h1, h2 {
     box-shadow: 0 0 0 2px var(--navy), 0 0 0 4px var(--green-light);
 }
 
+/* Район — альтернативная территория, а не четвёртая позиция шкалы. */
+.district-action {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    gap: 0.65rem;
+    margin-top: 0.35rem;
+    padding: 0.55rem 0;
+    border: 0;
+    border-top: 1px solid rgba(253, 250, 228, 0.2);
+    background: transparent;
+    color: rgba(253, 250, 228, 0.82);
+    font: inherit;
+    font-size: 0.95rem;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.district-action:hover {
+    color: var(--cream);
+}
+
+.district-action:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 3px;
+    border-radius: 6px;
+}
+
+.district-action-icon {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.district-action-chevron {
+    font-size: 1.65rem;
+    font-weight: 300;
+    line-height: 1;
+}
+
+.territory-control {
+    transition: opacity 0.15s ease;
+}
+
+.territory-control.district-active {
+    opacity: 0.42;
+}
+
+.territory-control.district-active:hover,
+.territory-control.district-active:focus-within {
+    opacity: 0.72;
+}
+
+/* ===== Выбор административного района ===== */
+#district-screen {
+    min-height: 100vh;
+    background: var(--navy);
+}
+
+.district-layout {
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 1rem;
+}
+
+.district-card {
+    width: min(100%, 720px);
+    color: var(--cream);
+}
+
+.district-screen-header {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.district-screen-header > div {
+    grid-column: 2;
+    text-align: center;
+}
+
+.district-screen-header h1 {
+    color: var(--cream);
+    font-size: 1.85rem;
+    line-height: 1.1;
+}
+
+.district-screen-header h1:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 4px;
+    border-radius: 4px;
+}
+
+.district-screen-header p {
+    margin-top: 0.35rem;
+    color: rgba(253, 250, 228, 0.62);
+    font-size: 0.9rem;
+}
+
+.district-back {
+    grid-column: 1;
+    grid-row: 1;
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgba(253, 250, 228, 0.28);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--cream);
+    font: inherit;
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+
+.district-back:hover {
+    border-color: var(--cream);
+}
+
+.district-back:focus-visible,
+.district-map-zoom:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 3px;
+}
+
+.district-selection {
+    margin-bottom: 0.75rem;
+    text-align: center;
+}
+
+.district-selection span {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: rgba(253, 250, 228, 0.58);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.district-selection strong {
+    display: block;
+    min-height: 1.45em;
+    color: var(--cream);
+    font-family: var(--font-accent);
+    font-size: 1.35rem;
+    font-weight: normal;
+}
+
+.district-map-frame {
+    position: relative;
+    min-height: 340px;
+    overflow: hidden;
+    border: 2px solid rgba(253, 250, 228, 0.25);
+    border-radius: var(--radius-card);
+    background: rgba(253, 250, 228, 0.055);
+}
+
+.district-map-loading,
+.district-map-error {
+    display: flex;
+    min-height: 340px;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: rgba(253, 250, 228, 0.7);
+    line-height: 1.5;
+    text-align: center;
+}
+
+.district-map-error {
+    color: var(--yellow);
+}
+
+.district-map {
+    display: block;
+    width: 100%;
+    height: 420px;
+    touch-action: pan-y;
+}
+
+.district-shape {
+    fill: rgba(253, 250, 228, 0.16);
+    stroke: rgba(253, 250, 228, 0.72);
+    stroke-width: 1.4;
+    vector-effect: non-scaling-stroke;
+    fill-rule: evenodd;
+    cursor: pointer;
+    transition: fill 0.15s ease, stroke 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.district-shape:hover,
+.district-shape:focus {
+    fill: rgba(253, 250, 228, 0.3);
+    stroke: var(--cream);
+    stroke-width: 2.2;
+    outline: none;
+}
+
+.district-shape.is-selected {
+    fill: var(--green-light);
+    stroke: var(--cream);
+    stroke-width: 2.4;
+}
+
+.district-shape:focus-visible {
+    stroke: var(--yellow);
+    stroke-width: 4;
+}
+
+.district-map-zoom {
+    position: absolute;
+    right: 0.65rem;
+    bottom: 0.65rem;
+    min-height: 44px;
+    padding: 0.45rem 0.8rem;
+    border: 1px solid rgba(253, 250, 228, 0.45);
+    border-radius: 999px;
+    background: var(--navy);
+    color: var(--cream);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.district-list-label {
+    display: block;
+    margin: 1rem 0 0.4rem;
+    color: rgba(253, 250, 228, 0.68);
+    font-size: 0.85rem;
+}
+
+.district-list {
+    width: 100%;
+    min-height: 48px;
+    padding: 0.65rem 2.5rem 0.65rem 0.9rem;
+    border: 2px solid rgba(253, 250, 228, 0.28);
+    border-radius: var(--radius-control);
+    background: var(--navy-soft);
+    color: var(--cream);
+    font: inherit;
+    font-size: 1rem;
+}
+
+.district-list:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 2px;
+}
+
+.district-screen-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.district-screen-actions .btn {
+    min-height: 48px;
+    margin: 0;
+    padding: 0.75rem 1rem;
+}
+
+.district-screen-actions .btn-secondary {
+    border-color: rgba(253, 250, 228, 0.3);
+    color: rgba(253, 250, 228, 0.82);
+}
+
+.district-attribution {
+    margin-top: 0.85rem;
+    color: rgba(253, 250, 228, 0.5);
+    font-size: 0.72rem;
+    text-align: center;
+}
+
+.district-attribution a {
+    color: rgba(253, 250, 228, 0.75);
+}
+
+@media (max-width: 600px) {
+    .district-layout {
+        min-height: auto;
+        align-items: flex-start;
+        padding: 1rem 0.75rem 1.25rem;
+    }
+
+    .district-screen-header h1 {
+        font-size: 1.55rem;
+    }
+
+    .district-map-frame,
+    .district-map-loading,
+    .district-map-error {
+        min-height: 300px;
+    }
+
+    .district-map {
+        height: 360px;
+    }
+}
+
 /* Пресеты времени — одна radio group, визуально единый control. */
 .segmented-control {
     display: grid;
@@ -747,6 +1056,8 @@ h1, h2 {
 
 .photo-overlay-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 0.65rem;
     width: min(360px, calc(100vw - 2rem));
 }

@@ -26,9 +26,12 @@ class GameSession(db.Model):
     player_name = db.Column(db.String(100), default='Аноним')
     total_score = db.Column(db.Integer, default=0)
     rounds_played = db.Column(db.Integer, default=0)
-    # Режим сложности, в котором сыграна игра (center / medium / hard).
+    # Территория игры: center / medium / hard или district.
     # Нужен, чтобы таблица лидеров была честной: режимы не сравнимы напрямую.
     difficulty = db.Column(db.String(10), default='medium')
+    # Стабильный slug административного района. Заполнен только при
+    # difficulty=district; для старых режимов остаётся NULL.
+    district_id = db.Column(db.String(32), index=True)
     # Номер текущего раунда (0-based). Раньше жил в cookie-сессии клиента,
     # что позволяло реплеить старую cookie и переигрывать раунды.
     current_round = db.Column(db.Integer, default=0)
@@ -117,6 +120,9 @@ class VerifiedPoint(db.Model):
     lon_key = db.Column(db.Integer, nullable=False)
     # Расстояние до центра города — для отбора точек под режим сложности
     dist_from_center_km = db.Column(db.Float, nullable=False)
+    # Пространственный кэш: какому району принадлежит панорама.
+    # NULL допустим для legacy-точек и координат вне административной границы.
+    district_id = db.Column(db.String(32), index=True)
     # Сколько раз подряд у точки не нашлась панорама (панорамы иногда
     # пропадают). На пороге точка удаляется из пула; при успешном
     # подтверждении панорамы счётчик сбрасывается.

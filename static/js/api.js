@@ -82,6 +82,14 @@ export const api = {
     roundReady: roundId =>
         post('/api/game/ready', { round_id: roundId }, { retries: 1 }),
 
+    validatePanorama: (roundId, latitude, longitude, locationVersion = null) =>
+        post('/api/game/validate_panorama', {
+            round_id: roundId,
+            latitude,
+            longitude,
+            location_version: locationVersion
+        }, { retries: 1 }),
+
     guess: payload => post('/api/game/guess', payload, {
         timeoutMs: 12000,
         retries: payload && payload.round_id ? 1 : 0

@@ -53,7 +53,11 @@ export const state = {
         totalRounds: 5,
         currentRound: 1,
         totalScore: 0,
-        difficulty: 'medium', // center, medium, hard, hardcore
+        // Tagged union территории: districtId непустой только при district.
+        difficulty: 'medium', // center, medium, hard, district
+        standardDifficulty: 'medium', // позиция приглушённой шкалы при district
+        districtId: null,
+        districtName: null,
         timeLimit: 0,         // секунд на раунд, 0 — без лимита
         noMove: false,        // режим «без перемещения»
         challengeToken: null, // токен челленджа из ссылки-вызова

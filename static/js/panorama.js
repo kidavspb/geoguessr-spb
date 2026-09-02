@@ -52,12 +52,13 @@ function withTimeout(value, timeoutMs, message) {
     });
 }
 
-function setOverlayActions({ retry = false, skip = false } = {}) {
+function setOverlayActions({ retry = false, skip = false, back = false } = {}) {
     const actions = document.getElementById('photo-overlay-actions');
     if (!actions) return;
     document.getElementById('retry-panorama-btn').classList.toggle('hidden', !retry);
     document.getElementById('skip-panorama-btn').classList.toggle('hidden', !skip);
-    actions.classList.toggle('hidden', !retry && !skip);
+    document.getElementById('back-to-district-btn').classList.toggle('hidden', !back);
+    actions.classList.toggle('hidden', !retry && !skip && !back);
 }
 
 /** Оверлей появляется с задержкой, чтобы прогретый раунд не мигал. */
@@ -196,6 +197,7 @@ async function prepareRound(initialLocation, task = null) {
         }
 
         let located = null;
+        let skipReason = 'no_coverage';
         for (let networkTry = 0; networkTry < 2; networkTry++) {
             attempts++;
             located = await locatePanorama(location.latitude, location.longitude);
@@ -211,20 +213,59 @@ async function prepareRound(initialLocation, task = null) {
             );
             const maxDrift = Number(location.max_panorama_drift_km) || 1;
             if (drift <= maxDrift) {
-                return {
-                    ok: true,
-                    status: 'ready',
-                    location,
-                    panorama,
-                    position,
-                    attempts,
-                    lookupMs: Math.round(performance.now() - started)
-                };
+                const districtId = location.district_id ||
+                    (state.gameData.difficulty === 'district'
+                        ? state.gameData.districtId : null);
+                if (districtId) {
+                    const validation = await api.validatePanorama(
+                        location.round_id,
+                        position[0],
+                        position[1],
+                        location.location_version,
+                    );
+                    if (!validation.ok || !validation.data) {
+                        return {
+                            ok: false,
+                            status: validation.networkError ? 'network_error' : 'api_error',
+                            location,
+                            attempts,
+                            lookupMs: Math.round(performance.now() - started)
+                        };
+                    }
+                    if (!validation.data.valid) {
+                        // Ближайшая съёмка может оказаться через улицу, но уже
+                        // в соседнем районе. Это не no-coverage и не портит пул.
+                        located = { status: 'outside_district', panorama: null };
+                        skipReason = 'outside_district';
+                    } else {
+                        return {
+                            ok: true,
+                            status: 'ready',
+                            location,
+                            panorama,
+                            position,
+                            attempts,
+                            lookupMs: Math.round(performance.now() - started)
+                        };
+                    }
+                } else {
+                    return {
+                        ok: true,
+                        status: 'ready',
+                        location,
+                        panorama,
+                        position,
+                        attempts,
+                        lookupMs: Math.round(performance.now() - started)
+                    };
+                }
             }
-            // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
-            // может оказаться слишком далеко от загаданного места. Такой Player
-            // дал бы визуально один адрес, а сервер считал бы по другому.
-            located = { status: 'no_coverage', panorama: null };
+            if (located.status !== 'outside_district') {
+                // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
+                // может оказаться слишком далеко от загаданного места. Такой Player
+                // дал бы визуально один адрес, а сервер считал бы по другому.
+                located = { status: 'no_coverage', panorama: null };
+            }
         }
 
         if (located.status === 'network_error') {
@@ -243,9 +284,20 @@ async function prepareRound(initialLocation, task = null) {
         }
 
         const skipped = await api.skipLocation(
-            location.round_id, 'no_coverage', location.location_version
+            location.round_id, skipReason, location.location_version
         );
         if (!skipped.ok || !skipped.data) {
+            if (skipped.status === 429) {
+                return {
+                    ok: false,
+                    status: 'no_coverage',
+                    exhausted: true,
+                    error: skipped.data && skipped.data.error,
+                    location,
+                    attempts,
+                    lookupMs: Math.round(performance.now() - started)
+                };
+            }
             return {
                 ok: false,
                 status: skipped.networkError ? 'network_error' : 'api_error',
@@ -409,7 +461,19 @@ export async function loadPanorama(location, preloadTask = null) {
         if (status === 'unsupported') {
             showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
         } else if (status === 'no_coverage') {
-            showLoadingOverlay('Не удалось найти съёмку рядом.', { retry: true, skip: true });
+            const districtMode = state.gameData.difficulty === 'district';
+            if (prepared && prepared.exhausted) {
+                showLoadingOverlay(
+                    'В этом районе не удалось найти доступную панораму. Выберите другой район или режим.',
+                    { back: districtMode }
+                );
+            } else {
+                showLoadingOverlay('Не удалось найти съёмку рядом.', {
+                    retry: true,
+                    skip: true,
+                    back: districtMode,
+                });
+            }
         } else {
             showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
                                { retry: true, skip: false });
