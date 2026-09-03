@@ -772,6 +772,11 @@ h1, h2 {
     cursor: pointer;
 }
 
+.district-map-reset-icon {
+    display: block;
+    transform: translateY(-0.08em);
+}
+
 .district-list-label {
     display: block;
     margin: 1rem 0 0.4rem;
