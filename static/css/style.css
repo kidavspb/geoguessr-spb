@@ -570,7 +570,8 @@ h1, h2 {
     --territory-tick-color: rgba(253, 250, 228, 0.28);
     --territory-label-color: rgba(253, 250, 228, 0.36);
     --territory-label-active-color: rgba(253, 250, 228, 0.42);
-    --territory-thumb-color: rgba(253, 250, 228, 0.48);
+    /* Непрозрачная смесь cream/navy: tick и track не просвечивают через thumb. */
+    --territory-thumb-color: #8c87a0;
 }
 
 .territory-control.district-active:hover,
@@ -580,7 +581,7 @@ h1, h2 {
     --territory-tick-color: rgba(253, 250, 228, 0.46);
     --territory-label-color: rgba(253, 250, 228, 0.55);
     --territory-label-active-color: rgba(253, 250, 228, 0.6);
-    --territory-thumb-color: rgba(253, 250, 228, 0.7);
+    --territory-thumb-color: #bcb7bd;
 }
 
 /* ===== Выбор административного района ===== */
