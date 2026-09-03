@@ -13,10 +13,12 @@ const MAP_HEIGHT = 680;
 const FULL_VIEWBOX = `0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`;
 const EXPECTED_DISTRICT_COUNT = 18;
 const GEOMETRY_TIMEOUT_MS = 8000;
-const CORE_DISTRICTS = new Set([
-    'admiralteysky', 'vasileostrovsky', 'petrogradsky', 'tsentralny',
-    'kirovsky', 'moskovsky', 'frunzensky', 'nevsky',
-]);
+const MAX_ZOOM = 4.5;
+const FIT_PADDING_RATIO = 0.035;
+const MIN_FIT_PADDING = 18;
+const PAN_THRESHOLD_PX = 5;
+const CLICK_SUPPRESSION_MS = 250;
+const MIN_VISIBLE_EXTENT = 0.2;
 
 let initialized = false;
 let geometryPromise = null;
@@ -24,8 +26,13 @@ let geometryRendered = false;
 let draftDistrictId = null;
 let confirmSelection = null;
 let pickerOpenId = 0;
-let coreViewBox = null;
-let coreZoomed = false;
+let geometryBounds = null;
+let camera = null;
+let resizeObserver = null;
+const activePointers = new Map();
+let panGesture = null;
+let pinchGesture = null;
+let suppressMapClicksUntil = 0;
 
 function districtOptions() {
     const select = document.getElementById('district-list');
@@ -148,20 +155,356 @@ function featurePath(feature, project, pointCollector) {
     }).join('')).join('');
 }
 
-function paddedViewBox(points) {
+function pointsBounds(points) {
     if (!points.length) return null;
-    let minX = Math.min(...points.map(point => point[0]));
-    let maxX = Math.max(...points.map(point => point[0]));
-    let minY = Math.min(...points.map(point => point[1]));
-    let maxY = Math.max(...points.map(point => point[1]));
-    const padX = Math.max(24, (maxX - minX) * 0.1);
-    const padY = Math.max(24, (maxY - minY) * 0.1);
-    minX = Math.max(0, minX - padX);
-    maxX = Math.min(MAP_WIDTH, maxX + padX);
-    minY = Math.max(0, minY - padY);
-    maxY = Math.min(MAP_HEIGHT, maxY + padY);
-    return `${minX.toFixed(1)} ${minY.toFixed(1)} ` +
-        `${(maxX - minX).toFixed(1)} ${(maxY - minY).toFixed(1)}`;
+    const xs = points.map(point => point[0]);
+    const ys = points.map(point => point[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function copyViewBox(box) {
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+}
+
+function viewBoxValue(box) {
+    return `${box.x.toFixed(2)} ${box.y.toFixed(2)} ` +
+        `${box.width.toFixed(2)} ${box.height.toFixed(2)}`;
+}
+
+/**
+ * Начальный viewport следует не условному холсту 1000x680, а реальному bbox
+ * всех районов. Дополнительное расширение короткой оси до aspect ratio DOM
+ * убирает второй слой letterbox, сохраняя всю разорванную геометрию города.
+ */
+function fittedViewBox(svg) {
+    if (!geometryBounds) return null;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    const padding = Math.max(
+        MIN_FIT_PADDING,
+        Math.min(geometryBounds.width, geometryBounds.height) * FIT_PADDING_RATIO,
+    );
+    const box = {
+        x: geometryBounds.x - padding,
+        y: geometryBounds.y - padding,
+        width: geometryBounds.width + padding * 2,
+        height: geometryBounds.height + padding * 2,
+    };
+    const viewportAspect = rect.width / rect.height;
+    const boxAspect = box.width / box.height;
+    if (boxAspect < viewportAspect) {
+        const expandedWidth = box.height * viewportAspect;
+        box.x -= (expandedWidth - box.width) / 2;
+        box.width = expandedWidth;
+    } else if (boxAspect > viewportAspect) {
+        const expandedHeight = box.width / viewportAspect;
+        box.y -= (expandedHeight - box.height) / 2;
+        box.height = expandedHeight;
+    }
+    return box;
+}
+
+function mapIsZoomed() {
+    return Boolean(camera && camera.zoom > 1.001);
+}
+
+function updateCameraUi() {
+    const svg = document.getElementById('district-map');
+    const reset = document.getElementById('district-map-reset');
+    const zoomed = mapIsZoomed();
+    svg?.classList.toggle('is-zoomed', zoomed);
+    if (!zoomed) svg?.classList.remove('is-panning');
+    reset?.classList.toggle('hidden', !zoomed);
+}
+
+function applyCamera() {
+    const svg = document.getElementById('district-map');
+    if (!svg || !camera) return;
+    svg.setAttribute('viewBox', viewBoxValue(camera.view));
+    updateCameraUi();
+}
+
+function resetMapView() {
+    const svg = document.getElementById('district-map');
+    if (!svg || !geometryRendered) return false;
+    const fit = fittedViewBox(svg);
+    if (!fit) return false;
+    camera = { base: fit, view: copyViewBox(fit), zoom: 1 };
+    applyCamera();
+    return true;
+}
+
+function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(maximum, value));
+}
+
+function boundedViewBox(box) {
+    const base = camera.base;
+    const width = Math.min(base.width, box.width);
+    const height = Math.min(base.height, box.height);
+    const visibleWidth = Math.min(width * MIN_VISIBLE_EXTENT, geometryBounds.width);
+    const visibleHeight = Math.min(height * MIN_VISIBLE_EXTENT, geometryBounds.height);
+    const minimumX = Math.max(base.x, geometryBounds.x - width + visibleWidth);
+    const maximumX = Math.min(
+        base.x + base.width - width,
+        geometryBounds.x + geometryBounds.width - visibleWidth,
+    );
+    const minimumY = Math.max(base.y, geometryBounds.y - height + visibleHeight);
+    const maximumY = Math.min(
+        base.y + base.height - height,
+        geometryBounds.y + geometryBounds.height - visibleHeight,
+    );
+    return {
+        x: clamp(box.x, minimumX, maximumX),
+        y: clamp(box.y, minimumY, maximumY),
+        width,
+        height,
+    };
+}
+
+function zoomAt(clientX, clientY, requestedZoom) {
+    const svg = document.getElementById('district-map');
+    if (!svg || !camera) return false;
+    const nextZoom = clamp(requestedZoom, 1, MAX_ZOOM);
+    if (Math.abs(nextZoom - camera.zoom) < 0.0001) return false;
+
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const screenX = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const screenY = clamp((clientY - rect.top) / rect.height, 0, 1);
+    const anchorX = camera.view.x + screenX * camera.view.width;
+    const anchorY = camera.view.y + screenY * camera.view.height;
+    const width = camera.base.width / nextZoom;
+    const height = camera.base.height / nextZoom;
+
+    camera.view = boundedViewBox({
+        x: anchorX - screenX * width,
+        y: anchorY - screenY * height,
+        width,
+        height,
+    });
+    camera.zoom = nextZoom;
+    applyCamera();
+    return true;
+}
+
+function panByPixels(deltaX, deltaY) {
+    const svg = document.getElementById('district-map');
+    if (!svg || !camera || !mapIsZoomed()) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    camera.view = boundedViewBox({
+        x: camera.view.x - deltaX * camera.view.width / rect.width,
+        y: camera.view.y - deltaY * camera.view.height / rect.height,
+        width: camera.view.width,
+        height: camera.view.height,
+    });
+    applyCamera();
+}
+
+function pointerDistance(first, second) {
+    return Math.hypot(second.x - first.x, second.y - first.y);
+}
+
+function pointerMidpoint(first, second) {
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+}
+
+function capturePointer(svg, pointerId) {
+    try {
+        svg.setPointerCapture(pointerId);
+    } catch (error) {
+        // Pointer мог завершиться между двумя событиями pinch — это безопасно.
+    }
+}
+
+function beginPinch(svg) {
+    const pointers = Array.from(activePointers.values()).slice(0, 2);
+    if (pointers.length < 2) return;
+    const distance = pointerDistance(pointers[0], pointers[1]);
+    if (distance <= 0) return;
+    const midpoint = pointerMidpoint(pointers[0], pointers[1]);
+    pinchGesture = {
+        pointerIds: pointers.map(pointer => pointer.id),
+        previousDistance: distance,
+        previousMidpoint: midpoint,
+        startDistance: distance,
+        startMidpoint: midpoint,
+        moved: false,
+    };
+    panGesture = null;
+    pinchGesture.pointerIds.forEach(pointerId => capturePointer(svg, pointerId));
+}
+
+function beginPan(pointer) {
+    panGesture = {
+        pointerId: pointer.id,
+        startX: pointer.x,
+        startY: pointer.y,
+        previousX: pointer.x,
+        previousY: pointer.y,
+        moved: false,
+    };
+}
+
+function handleMapPointerDown(event) {
+    if (!camera || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const svg = event.currentTarget;
+    activePointers.set(event.pointerId, {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+    });
+    if (activePointers.size >= 2) {
+        event.preventDefault();
+        beginPinch(svg);
+    } else {
+        // В fit это только tap-vs-scroll detector: движение страницы не
+        // перехватываем, но и click после свайпа не считаем выбором района.
+        beginPan(activePointers.get(event.pointerId));
+    }
+}
+
+function handleMapPointerMove(event) {
+    if (!activePointers.has(event.pointerId) || !camera) return;
+    activePointers.set(event.pointerId, {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+    });
+
+    if (pinchGesture) {
+        const pointers = pinchGesture.pointerIds.map(id => activePointers.get(id));
+        if (pointers.some(pointer => !pointer)) return;
+        event.preventDefault();
+        const distance = pointerDistance(pointers[0], pointers[1]);
+        const midpoint = pointerMidpoint(pointers[0], pointers[1]);
+        if (distance > 0 && pinchGesture.previousDistance > 0) {
+            zoomAt(
+                midpoint.x,
+                midpoint.y,
+                camera.zoom * distance / pinchGesture.previousDistance,
+            );
+            panByPixels(
+                midpoint.x - pinchGesture.previousMidpoint.x,
+                midpoint.y - pinchGesture.previousMidpoint.y,
+            );
+        }
+        if (Math.abs(distance - pinchGesture.startDistance) >= PAN_THRESHOLD_PX ||
+                Math.hypot(
+                    midpoint.x - pinchGesture.startMidpoint.x,
+                    midpoint.y - pinchGesture.startMidpoint.y,
+                ) >= PAN_THRESHOLD_PX) {
+            pinchGesture.moved = true;
+        }
+        pinchGesture.previousDistance = distance;
+        pinchGesture.previousMidpoint = midpoint;
+        return;
+    }
+
+    if (!panGesture || panGesture.pointerId !== event.pointerId) return;
+    const totalDistance = Math.hypot(
+        event.clientX - panGesture.startX,
+        event.clientY - panGesture.startY,
+    );
+    if (!mapIsZoomed()) {
+        if (totalDistance >= PAN_THRESHOLD_PX) panGesture.moved = true;
+        panGesture.previousX = event.clientX;
+        panGesture.previousY = event.clientY;
+        return;
+    }
+    if (!panGesture.moved && totalDistance >= PAN_THRESHOLD_PX) {
+        panGesture.moved = true;
+        capturePointer(event.currentTarget, event.pointerId);
+        event.currentTarget.classList.add('is-panning');
+    }
+    if (panGesture.moved) {
+        event.preventDefault();
+        panByPixels(
+            event.clientX - panGesture.previousX,
+            event.clientY - panGesture.previousY,
+        );
+    }
+    panGesture.previousX = event.clientX;
+    panGesture.previousY = event.clientY;
+}
+
+function suppressSyntheticMapClick() {
+    suppressMapClicksUntil = performance.now() + CLICK_SUPPRESSION_MS;
+}
+
+function handleMapPointerEnd(event) {
+    if (!activePointers.has(event.pointerId)) return;
+    const pinchMoved = Boolean(pinchGesture && pinchGesture.moved);
+    const panMoved = Boolean(panGesture && panGesture.moved &&
+        panGesture.pointerId === event.pointerId);
+    activePointers.delete(event.pointerId);
+
+    if (pinchGesture && pinchGesture.pointerIds.includes(event.pointerId)) {
+        if (pinchMoved) suppressSyntheticMapClick();
+        pinchGesture = null;
+        const remaining = activePointers.values().next().value;
+        if (remaining && mapIsZoomed()) beginPan(remaining);
+    } else if (panGesture && panGesture.pointerId === event.pointerId) {
+        if (panMoved) suppressSyntheticMapClick();
+        panGesture = null;
+    }
+    document.getElementById('district-map')?.classList.remove('is-panning');
+}
+
+function handleMapClickCapture(event) {
+    // Клавиатурный click (detail=0) всегда должен доходить до radio-path.
+    if (event.detail !== 0 && performance.now() < suppressMapClicksUntil) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+}
+
+function handleMapWheel(event) {
+    if (!camera) return;
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.currentTarget.clientHeight : 1;
+    const delta = event.deltaY * unit;
+    const requestedZoom = camera.zoom * Math.exp(-delta * 0.0018);
+    const nextZoom = clamp(requestedZoom, 1, MAX_ZOOM);
+
+    // В исходном fit прокрутка вниз остаётся обычным scroll страницы.
+    if (camera.zoom <= 1.001 && nextZoom <= 1.001) return;
+    event.preventDefault();
+    zoomAt(event.clientX, event.clientY, nextZoom);
+}
+
+function initMapInteractions(svg, reset) {
+    svg.addEventListener('pointerdown', handleMapPointerDown);
+    svg.addEventListener('pointermove', handleMapPointerMove);
+    svg.addEventListener('click', handleMapClickCapture, true);
+    svg.addEventListener('wheel', handleMapWheel, { passive: false });
+    window.addEventListener('pointerup', handleMapPointerEnd);
+    window.addEventListener('pointercancel', handleMapPointerEnd);
+    reset.addEventListener('click', () => {
+        const focusTarget = svg.querySelector('.district-shape[tabindex="0"]');
+        resetMapView();
+        focusTarget?.focus({ preventScroll: true });
+    });
+
+    if ('ResizeObserver' in window) {
+        resizeObserver = new ResizeObserver(() => {
+            if ((!camera || !mapIsZoomed()) && svg.clientWidth > 0 && svg.clientHeight > 0) {
+                resetMapView();
+            }
+        });
+        resizeObserver.observe(svg);
+    } else {
+        window.addEventListener('resize', () => {
+            if (!mapIsZoomed()) resetMapView();
+        });
+    }
 }
 
 function handleMapKeydown(event) {
@@ -210,14 +553,13 @@ function renderGeometry(collection) {
 
     const svg = document.getElementById('district-map');
     const { project } = projectedBounds(collection.features);
-    const corePoints = [];
+    const allPoints = [];
     svg.replaceChildren();
 
     options.forEach(option => {
         const feature = collection.features.find(item => item.properties.id === option.id);
-        const featurePoints = [];
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', featurePath(feature, project, point => featurePoints.push(point)));
+        path.setAttribute('d', featurePath(feature, project, point => allPoints.push(point)));
         path.setAttribute('class', 'district-shape');
         path.setAttribute('role', 'radio');
         path.setAttribute('tabindex', '-1');
@@ -230,13 +572,16 @@ function renderGeometry(collection) {
         });
         path.addEventListener('keydown', handleMapKeydown);
         svg.appendChild(path);
-        if (CORE_DISTRICTS.has(option.id)) corePoints.push(...featurePoints);
     });
 
-    coreViewBox = paddedViewBox(corePoints);
+    geometryBounds = pointsBounds(allPoints);
+    if (!geometryBounds || geometryBounds.width <= 0 || geometryBounds.height <= 0) {
+        throw new Error('Пустая или вырожденная SVG-геометрия');
+    }
     svg.setAttribute('viewBox', FULL_VIEWBOX);
-    coreZoomed = false;
+    camera = null;
     geometryRendered = true;
+    updateCameraUi();
     updateSelectionUi();
 }
 
@@ -244,20 +589,20 @@ async function ensureGeometry(openId) {
     const loading = document.getElementById('district-map-loading');
     const error = document.getElementById('district-map-error');
     const svg = document.getElementById('district-map');
-    const zoom = document.getElementById('district-map-zoom');
+    const reset = document.getElementById('district-map-reset');
 
     if (geometryRendered) {
         loading.classList.add('hidden');
         error.classList.add('hidden');
         svg.classList.remove('hidden');
-        zoom.classList.toggle('hidden', !coreViewBox);
+        resetMapView();
         return;
     }
 
     loading.classList.remove('hidden');
     error.classList.add('hidden');
     svg.classList.add('hidden');
-    zoom.classList.add('hidden');
+    reset.classList.add('hidden');
     if (!geometryPromise) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), GEOMETRY_TIMEOUT_MS);
@@ -283,14 +628,14 @@ async function ensureGeometry(openId) {
         if (openId !== pickerOpenId) return;
         loading.classList.add('hidden');
         svg.classList.remove('hidden');
-        zoom.classList.toggle('hidden', !coreViewBox);
+        resetMapView();
     } catch (loadError) {
         console.error('Не удалось загрузить карту административных районов:', loadError);
         if (openId !== pickerOpenId) return;
         loading.classList.add('hidden');
         error.classList.remove('hidden');
         svg.classList.add('hidden');
-        zoom.classList.add('hidden');
+        reset.classList.add('hidden');
     }
 }
 
@@ -305,6 +650,11 @@ export function openDistrictPicker(currentDistrictId = null) {
 
 export function closeDistrictPicker({ restoreFocus = true } = {}) {
     pickerOpenId++;
+    activePointers.clear();
+    panGesture = null;
+    pinchGesture = null;
+    suppressMapClicksUntil = 0;
+    document.getElementById('district-map')?.classList.remove('is-panning');
     showScreen('start-screen');
     if (restoreFocus) {
         // На низком мобильном viewport action может быть ниже fold. Обычный
@@ -321,7 +671,8 @@ export function initDistrictPicker({ onConfirm }) {
         back: document.getElementById('district-back-btn'),
         cancel: document.getElementById('district-cancel-btn'),
         confirm: document.getElementById('district-confirm-btn'),
-        zoom: document.getElementById('district-map-zoom'),
+        map: document.getElementById('district-map'),
+        reset: document.getElementById('district-map-reset'),
     };
     if (Object.values(controls).some(control => !control)) {
         console.warn('District picker markup is missing or incompatible');
@@ -330,6 +681,7 @@ export function initDistrictPicker({ onConfirm }) {
 
     initialized = true;
     confirmSelection = onConfirm;
+    initMapInteractions(controls.map, controls.reset);
 
     controls.select.addEventListener('change', event => {
         setDraftDistrict(event.target.value);
@@ -347,13 +699,6 @@ export function initDistrictPicker({ onConfirm }) {
             confirmSelection({ id: draftDistrictId, name });
         }
         closeDistrictPicker();
-    });
-    controls.zoom.addEventListener('click', event => {
-        const svg = document.getElementById('district-map');
-        coreZoomed = !coreZoomed;
-        svg.setAttribute('viewBox', coreZoomed && coreViewBox ? coreViewBox : FULL_VIEWBOX);
-        event.currentTarget.textContent = coreZoomed ? 'Показать весь город' : 'Центр крупнее';
-        event.currentTarget.setAttribute('aria-pressed', String(coreZoomed));
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' &&

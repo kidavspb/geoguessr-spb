@@ -42,7 +42,7 @@ from stats import difficulty_percentile
 from models import VerifiedPoint
 from districts import (
     DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DistrictDataError, district_map,
-    district_name, is_valid_district_id, point_in_district,
+    district_name, is_valid_district_id, point_in_city, point_in_district,
 )
 
 # Загружаем переменные окружения из .env
@@ -174,6 +174,7 @@ def _aware_utc(dt):
 
 
 DISTRICT_MODE = 'district'
+CITY_MODE = 'hard'
 
 
 def _territory_payload(difficulty, district_id=None):
@@ -226,6 +227,21 @@ def _current_game():
     return db.session.get(GameSession, game_id)
 
 
+def _round_requires_spatial_validation(game, rnd):
+    """Нужен ли authoritative PIP preflight перед показом панорамы.
+
+    Новые hard-раунды всегда сгенерированы внутри exact city union. Проверка
+    исходной точки оставляет рабочими уже созданные до обновления раунды и
+    старые challenge с сохранённой панорамой вне новой boundary: при replay
+    challenge копирует actual point автора как новую gen point.
+    """
+    if game.difficulty == DISTRICT_MODE:
+        return True
+    if game.difficulty != CITY_MODE:
+        return False
+    return point_in_city(rnd.gen_latitude, rnd.gen_longitude)
+
+
 def _load_active_round():
     """Игра и строка её текущего раунда, либо (None, None, ответ-ошибка).
 
@@ -262,6 +278,7 @@ def _location_payload(game, rnd):
         # Версия кандидата внутри того же round_id. Нужна, чтобы безопасно
         # повторить skip после потерянного HTTP-ответа, не перескочив ещё раз.
         'location_version': rnd.skips or 0,
+        'requires_spatial_validation': _round_requires_spatial_validation(game, rnd),
     }
     if game.difficulty == DISTRICT_MODE:
         payload['district_id'] = game.district_id
@@ -336,6 +353,9 @@ def _panorama_rejection_reason(game, rnd, latitude, longitude):
             return 'district_unavailable', drift
         if not point_in_district(latitude, longitude, game.district_id):
             return 'outside_district', drift
+    elif (_round_requires_spatial_validation(game, rnd)
+          and not point_in_city(latitude, longitude)):
+        return 'outside_city', drift
     return None, drift
 
 
@@ -732,11 +752,12 @@ def round_ready():
     if error:
         return error
 
-    # В district mode Player можно открывать только после того, как
-    # /validate_panorama подтвердил и сохранил фактическую точку.
-    if game.difficulty == DISTRICT_MODE and not _stored_panorama_is_valid(game, rnd):
+    # В district и новом exact-city hard Player можно открывать только после
+    # того, как /validate_panorama подтвердил фактическую точку.
+    if (_round_requires_spatial_validation(game, rnd)
+            and not _stored_panorama_is_valid(game, rnd)):
         return jsonify({
-            'error': 'Панорама не подтверждена для выбранного района',
+            'error': 'Панорама не подтверждена для выбранной территории',
             'reason': 'panorama_not_validated',
         }), 409
 
@@ -875,9 +896,10 @@ def set_actual_point():
 def validate_panorama():
     """Подтвердить точную точку locate до показа Player.
 
-    Для district mode добавляется covers-проверка выбранного района. Ответ
-    на валидный запрос всегда 200: ``valid=false`` — продуктовый сигнал
-    для замены локации, а 4xx/5xx — ошибка запроса/сервера.
+    Для district mode проверяется выбранный район, для hard — exact union
+    административных районов. Ответ на валидный запрос всегда 200:
+    ``valid=false`` — продуктовый сигнал для замены локации, а 4xx/5xx —
+    ошибка запроса/сервера.
     """
     data = request.get_json(silent=True) or {}
     game, rnd, error = _round_from_payload(data)
@@ -997,15 +1019,16 @@ def submit_guess():
                     '(round=%s, game_id=%s)',
                     reason, drift, rnd.round_number, game.id,
                 )
-                if game.difficulty == DISTRICT_MODE:
+                if _round_requires_spatial_validation(game, rnd):
                     return jsonify({
-                        'error': 'Панорама не принадлежит выбранному району',
+                        'error': 'Панорама не принадлежит выбранной территории',
                         'reason': reason,
                     }), 409
 
-        if game.difficulty == DISTRICT_MODE and not _stored_panorama_is_valid(game, rnd):
+        if (_round_requires_spatial_validation(game, rnd)
+                and not _stored_panorama_is_valid(game, rnd)):
             return jsonify({
-                'error': 'Панорама не подтверждена для выбранного района',
+                'error': 'Панорама не подтверждена для выбранной территории',
                 'reason': 'panorama_not_validated',
             }), 409
 

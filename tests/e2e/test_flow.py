@@ -27,6 +27,33 @@ def _play_round(page):
     expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=10000)
 
 
+def _viewbox(page):
+    """Текущий SVG viewBox как четыре числа."""
+    value = page.locator('#district-map').get_attribute('viewBox')
+    assert value is not None
+    parts = tuple(float(part) for part in value.split())
+    assert len(parts) == 4
+    return parts
+
+
+def _assert_viewbox_inside(view, outer, tolerance=0.05):
+    """Pan оставляет zoomed viewport внутри исходного fit."""
+    x, y, width, height = view
+    outer_x, outer_y, outer_width, outer_height = outer
+    assert width <= outer_width + tolerance
+    assert height <= outer_height + tolerance
+    assert x >= outer_x - tolerance
+    assert y >= outer_y - tolerance
+    assert x + width <= outer_x + outer_width + tolerance
+    assert y + height <= outer_y + outer_height + tolerance
+
+
+def _color_alpha(value):
+    """Alpha из browser-normalized rgb()/rgba()."""
+    components = re.findall(r'[\d.]+', value)
+    return float(components[3]) if len(components) >= 4 else 1.0
+
+
 def test_start_settings_are_semantic_and_responsive(page, server):
     """Настройки работают как шкала, presets и switch, включая клавиатуру."""
     console_issues = []
@@ -145,6 +172,232 @@ def test_start_settings_are_semantic_and_responsive(page, server):
     assert console_issues == []
 
 
+def test_district_choice_polish_and_inactive_slider(page, server):
+    """Район — явная альтернатива, а приглушённая шкала остаётся рабочей."""
+    page.set_viewport_size({'width': 320, 'height': 780})
+    page.goto(server)
+
+    separator = page.locator('.district-choice-separator')
+    expect(separator).to_be_visible()
+    expect(separator).to_have_text('или')
+    assert separator.evaluate(
+        'element => element.getBoundingClientRect().height'
+    ) <= 24
+
+    icon = page.locator('.district-action-icon')
+    expect(icon).to_have_text('🗺️')
+    expect(icon).to_have_attribute('aria-hidden', 'true')
+    assert icon.evaluate('element => element.tagName') == 'SPAN'
+    icon_alignment = page.locator('#district-picker-btn').evaluate("""
+        button => {
+            const icon = button.querySelector('.district-action-icon').getBoundingClientRect();
+            const label = button.querySelector('#district-action-label').getBoundingClientRect();
+            return Math.abs((icon.top + icon.height / 2) - (label.top + label.height / 2));
+        }
+    """)
+    assert icon_alignment <= 2
+
+    # И custom track, и native range остаются внутри wrapper. У wrapper нет
+    # clipping, а крайние точки track имеют место для собственного stroke.
+    endpoint_geometry = page.locator('.territory-slider-wrap').evaluate("""
+        wrapper => {
+            const wrap = wrapper.getBoundingClientRect();
+            const slider = wrapper.querySelector('.territory-slider').getBoundingClientRect();
+            const track = wrapper.querySelector('.territory-track').getBoundingClientRect();
+            return {
+                overflow: getComputedStyle(wrapper).overflow,
+                sliderLeft: slider.left - wrap.left,
+                sliderRight: wrap.right - slider.right,
+                trackLeft: track.left - wrap.left,
+                trackRight: wrap.right - track.right,
+            };
+        }
+    """)
+    assert endpoint_geometry['overflow'] == 'visible'
+    assert endpoint_geometry['sliderLeft'] >= -0.01
+    assert endpoint_geometry['sliderRight'] >= -0.01
+    assert endpoint_geometry['trackLeft'] >= 8
+    assert endpoint_geometry['trackRight'] >= 8
+
+    def territory_styles():
+        return page.locator('#territory-control').evaluate("""
+            control => {
+                const style = getComputedStyle(control);
+                const track = control.querySelector('.territory-track');
+                const label = control.querySelector('.territory-label');
+                return {
+                    opacity: style.opacity,
+                    track: getComputedStyle(track).backgroundColor,
+                    fill: style.getPropertyValue('--territory-fill-color').trim(),
+                    tick: style.getPropertyValue('--territory-tick-color').trim(),
+                    label: getComputedStyle(label).color,
+                    thumb: style.getPropertyValue('--territory-thumb-color').trim(),
+                };
+            }
+        """)
+
+    active_styles = territory_styles()
+    territory = page.get_by_role('slider', name='Территория')
+    cases = [('Центр', '0'), ('Средняя', '1'), ('Весь город', '2')]
+    for label, value in cases:
+        # Сначала фиксируем стандартную позицию, затем включаем район поверх неё.
+        page.get_by_role('button', name=label, exact=True).click()
+        page.locator('#district-picker-btn').click()
+        page.locator('#district-list').select_option('krasnogvardeysky')
+        page.get_by_role('button', name='Выбрать район').click()
+
+        expect(territory).to_be_enabled()
+        expect(territory).to_have_value(value)
+        expect(territory).to_have_attribute(
+            'aria-valuetext', re.compile('Активен Красногвардейский район'))
+        expect(page.locator('#territory-control')).to_have_class(
+            re.compile('district-active'))
+        expect(page.get_by_role('button', name=label, exact=True)).to_have_attribute(
+            'aria-pressed', 'false')
+
+        inactive_styles = territory_styles()
+        # Приглушаются отдельные части, а не весь native control: это сохраняет
+        # hit area и не создаёт WebKit clipping layer вокруг крайнего thumb.
+        assert inactive_styles['opacity'] == '1'
+        assert _color_alpha(inactive_styles['track']) < _color_alpha(active_styles['track'])
+        assert _color_alpha(inactive_styles['fill']) < _color_alpha(active_styles['fill'])
+        assert _color_alpha(inactive_styles['tick']) < _color_alpha(active_styles['tick'])
+        assert _color_alpha(inactive_styles['label']) < _color_alpha(active_styles['label'])
+        assert inactive_styles['thumb'] != active_styles['thumb']
+
+        # Любая из трёх подписей остаётся полноценным способом выйти из района.
+        page.get_by_role('button', name=label, exact=True).click()
+        expect(page.locator('#territory-value')).to_have_text(label)
+        expect(page.locator('#territory-control')).not_to_have_class(
+            re.compile('district-active'))
+        expect(page.get_by_role('button', name=label, exact=True)).to_have_attribute(
+            'aria-pressed', 'true')
+        expect(page.locator('#district-action-label')).to_have_text(
+            'Выбрать конкретный район')
+
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
+def test_district_map_mobile_fit_zoom_pan_and_reset(page, server):
+    """Responsive fit, bounded camera и touch policy работают как единое целое."""
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+
+    svg = page.locator('#district-map')
+    reset = page.locator('#district-map-reset')
+    expect(svg).to_be_visible(timeout=10000)
+    expect(page.locator('#district-map .district-shape')).to_have_count(18)
+    expect(page.locator('#district-map-zoom')).to_have_count(0)
+    expect(page.get_by_role('button', name='Центр крупнее')).to_have_count(0)
+
+    # На узком viewport измеряем именно видимый union paths, а не только размер
+    # большого контейнера. Старый fixed 1000x680 fit давал около 68% x 63%.
+    for width, height in [(320, 780), (375, 812), (390, 844), (430, 860)]:
+        page.set_viewport_size({'width': width, 'height': height})
+        page.wait_for_timeout(50)  # один кадр ResizeObserver для responsive fit
+        coverage = svg.evaluate("""
+            element => {
+                const viewport = element.getBoundingClientRect();
+                const rects = Array.from(element.querySelectorAll('.district-shape'))
+                    .map(path => path.getBoundingClientRect());
+                const left = Math.min(...rects.map(rect => rect.left));
+                const right = Math.max(...rects.map(rect => rect.right));
+                const top = Math.min(...rects.map(rect => rect.top));
+                const bottom = Math.max(...rects.map(rect => rect.bottom));
+                return {
+                    widthShare: (right - left) / viewport.width,
+                    heightShare: (bottom - top) / viewport.height,
+                    contained: left >= viewport.left - 1 && right <= viewport.right + 1 &&
+                        top >= viewport.top - 1 && bottom <= viewport.bottom + 1,
+                };
+            }
+        """)
+        assert coverage['widthShare'] >= 0.88
+        assert coverage['heightShare'] >= 0.84
+        assert coverage['contained']
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.wait_for_timeout(50)
+    fit = _viewbox(page)
+    expect(reset).to_be_hidden()
+    assert svg.evaluate('element => getComputedStyle(element).touchAction') == 'pan-y'
+
+    # Wheel zoom привязан к cursor anchor, а не к условному центру canvas.
+    anchor = page.locator(
+        '#district-map [data-district-id="petrogradsky"]'
+    ).bounding_box()
+    page.mouse.move(anchor['x'] + anchor['width'] / 2,
+                    anchor['y'] + anchor['height'] / 2)
+    page.mouse.wheel(0, -500)
+    expect(svg).to_have_class(re.compile('is-zoomed'))
+    expect(reset).to_be_visible()
+    zoomed = _viewbox(page)
+    assert zoomed[2] < fit[2]
+    assert zoomed[3] < fit[3]
+    _assert_viewbox_inside(zoomed, fit)
+    assert svg.evaluate('element => getComputedStyle(element).touchAction') == 'none'
+    assert reset.evaluate('element => element.getBoundingClientRect().height') >= 44
+
+    # Даже заведомо чрезмерный drag не может унести карту за исходный fit.
+    map_box = svg.bounding_box()
+    center_x = map_box['x'] + map_box['width'] / 2
+    center_y = map_box['y'] + map_box['height'] / 2
+    for delta_x, delta_y in [
+            (map_box['width'] * 3, 0), (-map_box['width'] * 3, 0),
+            (0, map_box['height'] * 3), (0, -map_box['height'] * 3)]:
+        page.mouse.move(center_x, center_y)
+        page.mouse.down()
+        page.mouse.move(center_x + delta_x, center_y + delta_y, steps=4)
+        page.mouse.up()
+        _assert_viewbox_inside(_viewbox(page), fit)
+        expect(page.locator('#district-selected-name')).to_have_text('Район не выбран')
+
+    reset.click()
+    expect(svg).not_to_have_class(re.compile('is-zoomed'))
+    expect(reset).to_be_hidden()
+    assert _viewbox(page) == pytest.approx(fit, abs=0.05)
+    assert svg.evaluate('element => getComputedStyle(element).touchAction') == 'pan-y'
+
+    # Два touch PointerEvent проверяют pinch-ветку без привязки к CDP.
+    svg.evaluate("""
+        element => {
+            const rect = element.getBoundingClientRect();
+            const y = rect.top + rect.height / 2;
+            const center = rect.left + rect.width / 2;
+            const fire = (target, type, pointerId, x) => target.dispatchEvent(
+                new PointerEvent(type, {
+                    bubbles: true, cancelable: true, pointerId,
+                    pointerType: 'touch', isPrimary: pointerId === 41,
+                    clientX: x, clientY: y, button: 0,
+                })
+            );
+            fire(element, 'pointerdown', 41, center - 30);
+            fire(element, 'pointerdown', 42, center + 30);
+            fire(element, 'pointermove', 41, center - 60);
+            fire(element, 'pointermove', 42, center + 60);
+            fire(window, 'pointerup', 41, center - 60);
+            fire(window, 'pointerup', 42, center + 60);
+        }
+    """)
+    expect(svg).to_have_class(re.compile('is-zoomed'))
+    assert _viewbox(page)[2] < fit[2]
+    _assert_viewbox_inside(_viewbox(page), fit)
+    reset.click()
+
+    # Camera state не протекает через закрытие и повторное открытие picker.
+    page.mouse.move(center_x, center_y)
+    page.mouse.wheel(0, -400)
+    expect(svg).to_have_class(re.compile('is-zoomed'))
+    page.locator('#district-cancel-btn').click()
+    page.locator('#district-picker-btn').click()
+    expect(svg).to_be_visible()
+    expect(svg).not_to_have_class(re.compile('is-zoomed'))
+    expect(reset).to_be_hidden()
+    assert _viewbox(page) == pytest.approx(fit, abs=0.05)
+
+
 def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     """Район выбирается картой/клавиатурой и не блокирует прежнюю шкалу."""
     console_issues = []
@@ -167,22 +420,52 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     assert page.locator('#district-map .district-shape[tabindex="0"]').count() == 1
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
-    # Маленькие центральные районы доступны на SVG; отдельная кнопка даёт
-    # удобное увеличение без pinch/pan, конфликтующего со scroll iPhone.
-    original_viewbox = page.locator('#district-map').get_attribute('viewBox')
-    page.get_by_role('button', name='Центр крупнее').click()
-    assert page.locator('#district-map').get_attribute('viewBox') != original_viewbox
-    expect(page.get_by_role('button', name='Показать весь город')).to_have_attribute(
-        'aria-pressed', 'true')
-    assert page.get_by_role('button', name='Показать весь город').evaluate(
-        'element => element.getBoundingClientRect().height') >= 44
+    # Zoom остаётся лишь способом облегчить hit target: компактные районы всё
+    # равно имеют полноценные radio semantics и синхронизируются со списком.
+    compact_districts = [
+        ('petrogradsky', 'Петроградский район'),
+        ('tsentralny', 'Центральный район'),
+        ('admiralteysky', 'Адмиралтейский район'),
+        ('vasileostrovsky', 'Василеостровский район'),
+    ]
+    reset = page.locator('#district-map-reset')
+    for district_id, district_name in compact_districts:
+        if reset.is_visible():
+            reset.click()
+        path = page.locator(
+            f'#district-map [data-district-id="{district_id}"]'
+        )
+        path_box = path.bounding_box()
+        page.mouse.move(path_box['x'] + path_box['width'] / 2,
+                        path_box['y'] + path_box['height'] / 2)
+        page.mouse.wheel(0, -500)
+        expect(page.locator('#district-map')).to_have_class(re.compile('is-zoomed'))
+        path.click()
+        expect(page.locator('#district-selected-name')).to_have_text(district_name)
+        expect(path).to_have_attribute('aria-checked', 'true')
+        expect(path).to_have_attribute('tabindex', '0')
+        expect(page.locator('#district-list')).to_have_value(district_id)
+        assert page.locator('#district-map .district-shape[aria-checked="true"]').count() == 1
 
+    # Arrow navigation не конфликтует с camera handlers и сохраняет roving tab.
+    tsentralny = page.locator('#district-map [data-district-id="tsentralny"]')
+    tsentralny.focus()
+    page.keyboard.press('Space')
+    page.keyboard.press('ArrowRight')
+    admiralteysky = page.locator(
+        '#district-map [data-district-id="admiralteysky"]'
+    )
+    expect(admiralteysky).to_be_focused()
+    expect(admiralteysky).to_have_attribute('aria-checked', 'true')
+    expect(page.locator('#district-list')).to_have_value('admiralteysky')
+
+    # Возвращаем ожидаемый район для остального state/API scenario.
     petrogradsky = page.locator(
         '#district-map [data-district-id="petrogradsky"]'
     )
-    petrogradsky.click()
+    petrogradsky.focus()
+    page.keyboard.press('Space')
     expect(page.locator('#district-selected-name')).to_have_text('Петроградский район')
-    expect(petrogradsky).to_have_attribute('aria-checked', 'true')
     expect(page.locator('#district-list')).to_have_value('petrogradsky')
     page.get_by_role('button', name='Выбрать район').click()
 
@@ -515,6 +798,37 @@ def test_panorama_outside_district_is_replaced_before_player(page, server):
     assert validation_count == 2
     assert stats['locateCalls'] == 2
     assert skip_payloads[0]['reason'] == 'outside_district'
+    assert stats['panoramaPlayersCreated'] == 1
+
+
+def test_panorama_outside_city_is_replaced_before_player(page, server):
+    """«Весь город» валидирует точную границу до создания Player."""
+    validation_count = 0
+    skip_payloads = []
+
+    def validate_route(route):
+        nonlocal validation_count
+        validation_count += 1
+        valid = validation_count > 1
+        route.fulfill(
+            status=200,
+            content_type='application/json',
+            body=('{"valid":true}' if valid else
+                  '{"valid":false,"reason":"outside_city"}'),
+        )
+
+    page.route('**/api/game/validate_panorama', validate_route)
+    page.on('request', lambda request: skip_payloads.append(request.post_data_json)
+            if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.get_by_role('button', name='Весь город', exact=True).click()
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    stats = page.evaluate('window.__ymapsStats')
+    assert validation_count == 2
+    assert stats['locateCalls'] == 2
+    assert skip_payloads[0]['reason'] == 'outside_city'
     assert stats['panoramaPlayersCreated'] == 1
 
 

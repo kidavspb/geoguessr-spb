@@ -58,6 +58,11 @@ OSM relations и принятый в Петербурге `admin_level=5` так
 - SHA-256:
   `838e221d2ea18d7ab0ee2892b11dcc480a2493b12b96b373416a32f7381aa275`.
 
+Для режима «Весь город» приложение лениво собирает производный
+`MultiPolygon` через `coverage_union_all` всех 18 features и кэширует его на
+срок жизни worker-процесса. Отдельный city polygon не хранится: source of truth
+остаётся этот районный snapshot, а union не пересчитывается на каждый запрос.
+
 ## Лицензия и attribution
 
 Данные: © участники OpenStreetMap, лицензия

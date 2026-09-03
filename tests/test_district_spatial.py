@@ -1,16 +1,21 @@
 import random
 
 import pytest
+from shapely import coverage_union_all
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.prepared import prep
 
 import districts
 from districts import (
+    CityTerritory,
     DISTRICT_IDS,
     District,
+    city_territory,
     district_for_point,
     district_map,
+    generate_city_point,
     generate_district_point,
+    point_in_city,
     point_in_district,
 )
 
@@ -28,6 +33,41 @@ def test_public_spatial_helpers_are_boundary_inclusive_and_exclude_holes():
     assert point_in_district(outer_boundary.y, outer_boundary.x, district.id)
     assert point_in_district(hole_boundary.y, hole_boundary.x, district.id)
     assert not point_in_district(hole_interior.y, hole_interior.x, district.id)
+    assert point_in_city(outer_boundary.y, outer_boundary.x)
+    assert point_in_city(hole_boundary.y, hole_boundary.x)
+    assert not point_in_city(hole_interior.y, hole_interior.x)
+
+
+def test_city_territory_is_cached_union_with_disconnected_islands_and_hole():
+    territory = city_territory()
+    expected = coverage_union_all([
+        district.geometry for district in district_map().values()
+    ])
+
+    assert territory is city_territory()
+    assert territory.geometry.equals(expected)
+    assert territory.geometry.geom_type == 'MultiPolygon'
+    assert len(territory.components) == 17
+    assert sum(len(component.interiors) for component in territory.components) == 1
+
+    # Даже самые маленькие disconnected-компоненты derived union не теряются.
+    for component in territory.components:
+        representative = component.representative_point()
+        assert point_in_city(representative.y, representative.x)
+
+
+@pytest.mark.parametrize(('latitude', 'longitude', 'district_id'), (
+    (59.9398, 30.3146, 'tsentralny'),       # центр
+    (60.0980, 29.9638, 'kurortny'),         # север / Сестрорецк
+    (59.9911, 29.7770, 'kronshtadtsky'),    # Кронштадт
+    (59.8845, 29.9084, 'petrodvortsovy'),   # Петергоф
+    (59.7154, 30.3957, 'pushkinsky'),       # Пушкин
+    (59.7480, 30.5880, 'kolpinsky'),        # Колпино
+))
+def test_remote_city_control_points_are_inside_exact_union(
+        latitude, longitude, district_id):
+    assert district_for_point(latitude, longitude) == district_id
+    assert point_in_city(latitude, longitude)
 
 
 def test_classifier_has_stable_semantics_for_boundary_and_unassigned_points():
@@ -83,6 +123,15 @@ def test_generated_points_stay_in_requested_district_after_rounding(district_id)
         assert point_in_district(latitude, longitude, district_id)
 
 
+def test_generated_city_points_stay_inside_exact_union_after_rounding():
+    for _ in range(100):
+        latitude, longitude = generate_city_point()
+
+        assert latitude == round(latitude, 6)
+        assert longitude == round(longitude, 6)
+        assert point_in_city(latitude, longitude)
+
+
 def test_multipolygon_sampling_weights_components_by_polygon_area(monkeypatch):
     # Both components have area 1, but the triangle fills only half of its
     # bounding box. Re-selecting the component after every rejected proposal
@@ -105,6 +154,29 @@ def test_multipolygon_sampling_weights_components_by_polygon_area(monkeypatch):
     component_hits = [0, 0]
     for _ in range(3000):
         latitude, longitude = generate_district_point('synthetic')
+        point = Point(longitude, latitude)
+        component_hits[0 if square.covers(point) else 1] += 1
+
+    square_share = component_hits[0] / sum(component_hits)
+    assert 0.46 <= square_share <= 0.54
+
+
+def test_city_sampling_weights_components_by_polygon_area(monkeypatch):
+    square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    triangle = Polygon([(3, 0), (5, 0), (3, 1)])
+    geometry = MultiPolygon([square, triangle])
+    synthetic = CityTerritory(
+        geometry=geometry,
+        prepared=prep(geometry),
+        components=(square, triangle),
+        component_areas=(square.area, triangle.area),
+    )
+    monkeypatch.setattr(districts, 'city_territory', lambda: synthetic)
+    monkeypatch.setattr(districts, 'random', random.Random(20260903))
+
+    component_hits = [0, 0]
+    for _ in range(3000):
+        latitude, longitude = generate_city_point()
         point = Point(longitude, latitude)
         component_hits[0 if square.covers(point) else 1] += 1
 

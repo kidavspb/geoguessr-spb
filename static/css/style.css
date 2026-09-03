@@ -313,15 +313,24 @@ h1, h2 {
 }
 
 .setting-value {
-    flex: 0 0 auto;
+    min-width: 0;
+    flex: 0 1 auto;
     color: var(--cream);
     font-size: 0.9rem;
     font-weight: 600;
+    line-height: 1.25;
+    text-align: right;
 }
 
 /* Три дискретные позиции: нативный range отвечает за drag, snap и клавиатуру. */
 .territory-control {
     --territory-position: 50%;
+    --territory-track-color: rgba(253, 250, 228, 0.24);
+    --territory-fill-color: rgba(253, 250, 228, 0.78);
+    --territory-tick-color: rgba(253, 250, 228, 0.72);
+    --territory-label-color: rgba(253, 250, 228, 0.62);
+    --territory-label-active-color: rgba(253, 250, 228, 0.82);
+    --territory-thumb-color: var(--cream);
 }
 
 .territory-labels {
@@ -338,7 +347,7 @@ h1, h2 {
     padding: 0.05rem 0.15rem 0.25rem;
     border: 0;
     background: transparent;
-    color: rgba(253, 250, 228, 0.62);
+    color: var(--territory-label-color);
     font: inherit;
     font-size: 0.875rem;
     cursor: pointer;
@@ -355,7 +364,7 @@ h1, h2 {
 }
 
 .territory-label[aria-pressed="true"] {
-    color: rgba(253, 250, 228, 0.82);
+    color: var(--territory-label-active-color);
 }
 
 @media (hover: hover) {
@@ -377,17 +386,19 @@ h1, h2 {
 .territory-slider-wrap {
     position: relative;
     height: 44px;
+    overflow: visible;
 }
 
 .territory-track {
     position: absolute;
     top: 50%;
-    left: 9px;
-    right: 9px;
+    left: 10px;
+    right: 10px;
     height: 4px;
     transform: translateY(-50%);
     border-radius: 2px;
-    background: rgba(253, 250, 228, 0.24);
+    background: var(--territory-track-color);
+    transition: background 0.15s ease;
 }
 
 .territory-track::before {
@@ -396,8 +407,8 @@ h1, h2 {
     inset: 0 auto 0 0;
     width: var(--territory-position);
     border-radius: inherit;
-    background: rgba(253, 250, 228, 0.78);
-    transition: width 0.15s ease;
+    background: var(--territory-fill-color);
+    transition: width 0.15s ease, background 0.15s ease;
 }
 
 .territory-tick {
@@ -406,9 +417,10 @@ h1, h2 {
     width: 10px;
     height: 10px;
     transform: translate(-50%, -50%);
-    border: 2px solid rgba(253, 250, 228, 0.72);
+    border: 2px solid var(--territory-tick-color);
     border-radius: 50%;
     background: var(--navy);
+    transition: border-color 0.15s ease;
 }
 
 .territory-tick:nth-child(1) { left: 0; }
@@ -453,9 +465,9 @@ h1, h2 {
     -webkit-appearance: none;
     border: 3px solid var(--navy);
     border-radius: 50%;
-    background: var(--cream);
-    box-shadow: 0 0 0 1px var(--cream);
-    transition: transform 0.15s ease;
+    background: var(--territory-thumb-color);
+    box-shadow: none;
+    transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .territory-slider::-moz-range-thumb {
@@ -464,9 +476,9 @@ h1, h2 {
     height: 20px;
     border: 3px solid var(--navy);
     border-radius: 50%;
-    background: var(--cream);
-    box-shadow: 0 0 0 1px var(--cream);
-    transition: transform 0.15s ease;
+    background: var(--territory-thumb-color);
+    box-shadow: none;
+    transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .territory-slider:active::-webkit-slider-thumb {
@@ -486,6 +498,25 @@ h1, h2 {
 }
 
 /* Район — альтернативная территория, а не четвёртая позиция шкалы. */
+.district-choice-separator {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.55rem;
+    margin: 0.05rem 0 0.1rem;
+    color: rgba(253, 250, 228, 0.38);
+    font-size: 0.72rem;
+    font-weight: normal;
+    line-height: 1;
+}
+
+.district-choice-separator::before,
+.district-choice-separator::after {
+    content: '';
+    height: 1px;
+    background: rgba(253, 250, 228, 0.16);
+}
+
 .district-action {
     display: grid;
     grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -493,10 +524,9 @@ h1, h2 {
     min-height: 48px;
     align-items: center;
     gap: 0.65rem;
-    margin-top: 0.35rem;
+    margin-top: 0;
     padding: 0.55rem 0;
     border: 0;
-    border-top: 1px solid rgba(253, 250, 228, 0.2);
     background: transparent;
     color: rgba(253, 250, 228, 0.82);
     font: inherit;
@@ -517,13 +547,15 @@ h1, h2 {
 }
 
 .district-action-icon {
+    display: flex;
     width: 22px;
     height: 22px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.7;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+    font-size: 1.15rem;
+    font-weight: normal;
+    line-height: 1;
 }
 
 .district-action-chevron {
@@ -532,17 +564,23 @@ h1, h2 {
     line-height: 1;
 }
 
-.territory-control {
-    transition: opacity 0.15s ease;
-}
-
 .territory-control.district-active {
-    opacity: 0.42;
+    --territory-track-color: rgba(253, 250, 228, 0.09);
+    --territory-fill-color: rgba(253, 250, 228, 0.23);
+    --territory-tick-color: rgba(253, 250, 228, 0.28);
+    --territory-label-color: rgba(253, 250, 228, 0.36);
+    --territory-label-active-color: rgba(253, 250, 228, 0.42);
+    --territory-thumb-color: rgba(253, 250, 228, 0.48);
 }
 
 .territory-control.district-active:hover,
 .territory-control.district-active:focus-within {
-    opacity: 0.72;
+    --territory-track-color: rgba(253, 250, 228, 0.14);
+    --territory-fill-color: rgba(253, 250, 228, 0.4);
+    --territory-tick-color: rgba(253, 250, 228, 0.46);
+    --territory-label-color: rgba(253, 250, 228, 0.55);
+    --territory-label-active-color: rgba(253, 250, 228, 0.6);
+    --territory-thumb-color: rgba(253, 250, 228, 0.7);
 }
 
 /* ===== Выбор административного района ===== */
@@ -613,7 +651,7 @@ h1, h2 {
 }
 
 .district-back:focus-visible,
-.district-map-zoom:focus-visible {
+.district-map-reset:focus-visible {
     outline: 2px solid var(--green-light);
     outline-offset: 3px;
 }
@@ -673,6 +711,18 @@ h1, h2 {
     touch-action: pan-y;
 }
 
+.district-map.is-zoomed {
+    touch-action: none;
+}
+
+.district-map.is-panning {
+    cursor: grabbing;
+}
+
+.district-map.is-panning .district-shape {
+    cursor: grabbing;
+}
+
 .district-shape {
     fill: rgba(253, 250, 228, 0.16);
     stroke: rgba(253, 250, 228, 0.72);
@@ -703,19 +753,22 @@ h1, h2 {
     stroke-width: 4;
 }
 
-.district-map-zoom {
+.district-map-reset {
     position: absolute;
+    display: grid;
     right: 0.65rem;
     bottom: 0.65rem;
-    min-height: 44px;
-    padding: 0.45rem 0.8rem;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     border: 1px solid rgba(253, 250, 228, 0.45);
-    border-radius: 999px;
+    border-radius: 50%;
     background: var(--navy);
     color: var(--cream);
     font: inherit;
-    font-size: 0.82rem;
-    font-weight: 600;
+    font-size: 1.25rem;
+    line-height: 1;
+    place-items: center;
     cursor: pointer;
 }
 
@@ -790,7 +843,7 @@ h1, h2 {
     }
 
     .district-map {
-        height: 360px;
+        height: clamp(288px, calc(100vw - 1.5rem), 360px);
     }
 }
 

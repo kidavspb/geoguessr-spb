@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from shapely import coverage_union_all
 from shapely.geometry import MultiPolygon, Point, Polygon, shape
 from shapely.prepared import prep
 
@@ -55,6 +56,20 @@ class District:
     id: str
     name: str
     osm_relation_id: int
+    geometry: Polygon | MultiPolygon = field(repr=False)
+    prepared: Any = field(repr=False)
+    components: tuple[Polygon, ...] = field(repr=False)
+    component_areas: tuple[float, ...] = field(repr=False)
+
+    @property
+    def bounds(self):
+        return self.geometry.bounds
+
+
+@dataclass(frozen=True)
+class CityTerritory:
+    """Производная граница города, собранная из canonical районов."""
+
     geometry: Polygon | MultiPolygon = field(repr=False)
     prepared: Any = field(repr=False)
     components: tuple[Polygon, ...] = field(repr=False)
@@ -141,6 +156,32 @@ def district_map(path: str | Path = DISTRICTS_GEOJSON_PATH) -> dict[str, Distric
     return {district.id: district for district in load_districts(path)}
 
 
+@lru_cache(maxsize=4)
+def city_territory(path: str | Path = DISTRICTS_GEOJSON_PATH) -> CityTerritory:
+    """Собрать точную территорию СПб как union всех 18 районов.
+
+    Union вычисляется лениво один раз на процесс. ``coverage_union_all``
+    использует проверенный неперекрывающийся coverage и не попадает в горячий
+    путь каждого игрового запроса.
+    """
+    geometry = coverage_union_all([
+        district.geometry for district in load_districts(path)
+    ])
+    if not isinstance(geometry, (Polygon, MultiPolygon)):
+        raise DistrictDataError('Union районов не образует Polygon/MultiPolygon')
+    if geometry.is_empty or not geometry.is_valid or geometry.area <= 0:
+        raise DistrictDataError('Union районов пуст или невалиден')
+
+    components = ((geometry,) if isinstance(geometry, Polygon)
+                  else tuple(geometry.geoms))
+    return CityTerritory(
+        geometry=geometry,
+        prepared=prep(geometry),
+        components=components,
+        component_areas=tuple(component.area for component in components),
+    )
+
+
 def is_valid_district_id(district_id) -> bool:
     return isinstance(district_id, str) and district_id in DISTRICT_NAMES
 
@@ -167,6 +208,12 @@ def point_in_district(latitude, longitude, district_id: str) -> bool:
     district = district_map().get(district_id)
     point = _point(latitude, longitude)
     return bool(district is not None and point is not None and district.prepared.covers(point))
+
+
+def point_in_city(latitude, longitude) -> bool:
+    """Входит ли точка в union административных районов Санкт-Петербурга."""
+    point = _point(latitude, longitude)
+    return bool(point is not None and city_territory().prepared.covers(point))
 
 
 @lru_cache(maxsize=32768)
@@ -215,6 +262,27 @@ def generate_district_point(district_id: str, *, max_attempts: int = 10000):
     raise DistrictDataError(f'Не удалось сгенерировать точку в {district_id}')
 
 
+def generate_city_point(*, max_attempts: int = 10000):
+    """Равномерный по площади кандидат внутри территории Санкт-Петербурга.
+
+    Disconnected-компоненты union (включая острова Кронштадта) выбираются
+    пропорционально площади. Выбранный компонент не меняется после rejection,
+    иначе узкие polygons получили бы заниженный вес.
+    """
+    territory = city_territory()
+    component = random.choices(
+        territory.components, weights=territory.component_areas, k=1
+    )[0]
+    min_lon, min_lat, max_lon, max_lat = component.bounds
+    for _ in range(max_attempts):
+        latitude = round(random.uniform(min_lat, max_lat), 6)
+        longitude = round(random.uniform(min_lon, max_lon), 6)
+        point = Point(longitude, latitude)
+        if component.covers(point) and territory.prepared.covers(point):
+            return latitude, longitude
+    raise DistrictDataError('Не удалось сгенерировать точку в границах Санкт-Петербурга')
+
+
 def district_metadata() -> list[dict[str, str | int]]:
     """Лёгкий список для API без дублирования геометрии."""
     return [
@@ -234,5 +302,6 @@ def clear_district_caches():
     чтобы Docker gunicorn --preload не форкал уже созданные GEOS handles.
     """
     _district_for_rounded_point.cache_clear()
+    city_territory.cache_clear()
     district_map.cache_clear()
     load_districts.cache_clear()

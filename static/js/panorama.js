@@ -216,7 +216,10 @@ async function prepareRound(initialLocation, task = null) {
                 const districtId = location.district_id ||
                     (state.gameData.difficulty === 'district'
                         ? state.gameData.districtId : null);
-                if (districtId) {
+                const needsSpatialValidation = Boolean(
+                    districtId || location.requires_spatial_validation
+                );
+                if (needsSpatialValidation) {
                     const validation = await api.validatePanorama(
                         location.round_id,
                         position[0],
@@ -233,10 +236,13 @@ async function prepareRound(initialLocation, task = null) {
                         };
                     }
                     if (!validation.data.valid) {
-                        // Ближайшая съёмка может оказаться через улицу, но уже
-                        // в соседнем районе. Это не no-coverage и не портит пул.
-                        located = { status: 'outside_district', panorama: null };
-                        skipReason = 'outside_district';
+                        // Ближайшая съёмка может оказаться за выбранной
+                        // административной границей. Это не no-coverage и не
+                        // должно портить подтверждённую точку пула.
+                        const spatialReason = validation.data.reason === 'outside_city'
+                            ? 'outside_city' : 'outside_district';
+                        located = { status: spatialReason, panorama: null };
+                        skipReason = spatialReason;
                     } else {
                         return {
                             ok: true,
@@ -260,7 +266,7 @@ async function prepareRound(initialLocation, task = null) {
                     };
                 }
             }
-            if (located.status !== 'outside_district') {
+            if (located.status !== 'outside_district' && located.status !== 'outside_city') {
                 // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
                 // может оказаться слишком далеко от загаданного места. Такой Player
                 // дал бы визуально один адрес, а сервер считал бы по другому.

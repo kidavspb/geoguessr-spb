@@ -52,15 +52,24 @@ def test_parse_coords_invalid(app_module):
 
 def test_generate_random_point_within_bounds(app_module):
     bounds = app_module.SPB_BOUNDS
-    for difficulty in app_module.DIFFICULTY_SETTINGS:
+    for difficulty in ('center', 'medium'):
         for _ in range(200):
             lat, lon = app_module.generate_random_point(difficulty)
             assert bounds['lat_min'] <= lat <= bounds['lat_max']
             assert bounds['lon_min'] <= lon <= bounds['lon_max']
 
 
+def test_generate_hard_point_inside_exact_city(app_module):
+    from districts import point_in_city
+
+    for _ in range(200):
+        lat, lon = app_module.generate_random_point('hard')
+        assert point_in_city(lat, lon)
+
+
 def test_difficulty_name(app_module):
     assert app_module.difficulty_name('center') == 'Центр'
+    assert app_module.difficulty_name('hard') == 'Весь город'
     assert app_module.difficulty_name('unknown') == 'unknown'
 
 

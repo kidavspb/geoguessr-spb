@@ -97,10 +97,11 @@
                     {# Rollout guard: старый worker может перечитать новый template
                        до restart, но не должен показать UI, которого его API не знает. #}
                     {% if district_feature_enabled|default(false) %}
+                    <div class="district-choice-separator" aria-hidden="true">
+                        <span>или</span>
+                    </div>
                     <button type="button" class="district-action" id="district-picker-btn">
-                        <svg class="district-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M3.5 5.5 8.7 3l6.6 2.4 5.2-2.1v15.2L15.3 21l-6.6-2.4-5.2 2.1V5.5Zm5.2-2.1v15.2m6.6-13.2V21"/>
-                        </svg>
+                        <span class="district-action-icon" aria-hidden="true">🗺️</span>
                         <span id="district-action-label">Выбрать конкретный район</span>
                         <span class="district-action-chevron" aria-hidden="true">›</span>
                     </button>
@@ -173,8 +174,9 @@
                     <p class="district-map-error hidden" id="district-map-error" role="alert">
                         Карту районов открыть не удалось. Выберите район из списка ниже.
                     </p>
-                    <button type="button" class="district-map-zoom hidden"
-                            id="district-map-zoom" aria-pressed="false">Центр крупнее</button>
+                    <button type="button" class="district-map-reset hidden"
+                            id="district-map-reset" aria-label="Вернуть исходный масштаб"
+                            title="Вернуть исходный масштаб">↺</button>
                 </div>
 
                 <label class="district-list-label" for="district-list">

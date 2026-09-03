@@ -22,13 +22,10 @@ logger = logging.getLogger(__name__)
 # свежесгенерированных, чтобы пул продолжал расти.
 POOL_MIN_SIZE = 15
 POOL_USE_PROBABILITY = 0.7
-# Максимальное расстояние точки пула от центра для режима сложности (км);
-# None — без ограничения (весь город).
+# Максимальное расстояние точки пула от центра для прежних центральных режимов.
+# Hard отбирается отдельно по предвычисленному district_id.
 POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
-# До появления district mode пул физически не мог расти за этими
-# границами. Явный фильтр не даёт новым точкам Курортного,
-# Кронштадтского и других удалённых районов молча изменить старый
-# режим hard («Весь город»).
+# Исторический охват пула остаётся неизменным для center/medium.
 LEGACY_POOL_BOUNDS = {
     'lat_min': SPB_BOUNDS['lat_min'] - 0.01,
     'lat_max': SPB_BOUNDS['lat_max'] + 0.01,
@@ -94,8 +91,13 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         if not is_valid_district_id(district_id):
             raise ValueError(f'Неизвестный district id: {district_id!r}')
         query = query.filter(VerifiedPoint.district_id == district_id)
+    elif difficulty == 'hard':
+        # district_id уже вычисляется один раз при добавлении точки и был
+        # backfill-нут миграцией. Non-NULL эквивалентен membership в union 18
+        # canonical районов, поэтому GEOS не нужен на каждую строку/запрос.
+        query = query.filter(VerifiedPoint.district_id.isnot(None))
     else:
-        # Все три прежних режима сохраняют исторический охват пула.
+        # Center/medium сохраняют исторические bounds и радиус.
         query = query.filter(
             VerifiedPoint.latitude >= LEGACY_POOL_BOUNDS['lat_min'],
             VerifiedPoint.latitude <= LEGACY_POOL_BOUNDS['lat_max'],

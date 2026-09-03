@@ -25,8 +25,9 @@ TIME_LIMIT_GRACE_SECONDS = 20
 # Допустимые границы лимита времени на раунд (секунды).
 TIME_LIMIT_MIN, TIME_LIMIT_MAX = 30, 600
 
-# Границы Санкт-Петербурга для генерации случайных точек
-# (центральная часть города, где в основном есть панорамы)
+# Исторические bounds центральной части города. Они остаются неизменными для
+# режимов center/medium; hard («Весь город») использует canonical polygon
+# административных районов через districts.generate_city_point().
 SPB_BOUNDS = {
     'lat_min': 59.87,
     'lat_max': 60.02,
@@ -37,7 +38,8 @@ SPB_BOUNDS = {
 # Центр СПб (Дворцовая площадь) — вокруг него генерируются точки
 SPB_CENTER = (59.939, 30.315)
 
-# Режимы сложности: разброс гауссианы вокруг центра города
+# Режимы территории. Center/medium сохраняют прежний гауссов разброс вокруг
+# центра; hard выбирает точку по точной административной геометрии города.
 DIFFICULTY_SETTINGS = {
     'center': {
         'name': 'Центр',
@@ -50,9 +52,7 @@ DIFFICULTY_SETTINGS = {
         'std_lon': 0.05,
     },
     'hard': {
-        'name': 'Сложная',
-        'std_lat': 0.06,   # ~6 км разброс
-        'std_lon': 0.12,
+        'name': 'Весь город',
     }
 }
 
@@ -64,7 +64,13 @@ def difficulty_name(difficulty):
 
 
 def generate_random_point(difficulty='medium'):
-    """Случайная точка с нормальным распределением вокруг центра СПб."""
+    """Случайная точка для выбранной стандартной территории."""
+    if difficulty == 'hard':
+        # Локальный импорт сохраняет лёгкий импорт чистой арифметики модуля;
+        # сама geometry загружается и объединяется лениво один раз на процесс.
+        from districts import generate_city_point
+        return generate_city_point()
+
     settings = DIFFICULTY_SETTINGS.get(difficulty, DIFFICULTY_SETTINGS['medium'])
 
     while True:
