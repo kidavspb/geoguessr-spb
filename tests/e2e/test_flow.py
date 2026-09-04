@@ -197,6 +197,42 @@ def test_district_choice_polish_and_inactive_slider(page, server):
     """)
     assert icon_alignment <= 2
 
+    action_style = page.locator('#district-picker-btn').evaluate("""
+        button => {
+            const style = getComputedStyle(button);
+            return {
+                borderWidth: style.borderTopWidth,
+                borderStyle: style.borderTopStyle,
+                borderRadius: style.borderTopLeftRadius,
+            };
+        }
+    """)
+    assert action_style == {
+        'borderWidth': '1px',
+        'borderStyle': 'solid',
+        'borderRadius': '12px',
+    }
+
+    alternative_spacing = page.locator('#difficulty-group').evaluate("""
+        group => {
+            const textRect = element => {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                return range.getBoundingClientRect();
+            };
+            const labelBottom = Math.max(...[...group.querySelectorAll('.territory-label')]
+                .map(label => textRect(label).bottom));
+            const separatorText = textRect(
+                group.querySelector('.district-choice-separator span'));
+            const action = group.querySelector('#district-picker-btn').getBoundingClientRect();
+            return {
+                before: separatorText.top - labelBottom,
+                after: action.top - separatorText.bottom,
+            };
+        }
+    """)
+    assert abs(alternative_spacing['before'] - alternative_spacing['after']) <= 2
+
     # И custom track, и native range остаются внутри wrapper. У wrapper нет
     # clipping, а крайние точки track имеют место для собственного stroke.
     endpoint_geometry = page.locator('.territory-slider-wrap').evaluate("""
