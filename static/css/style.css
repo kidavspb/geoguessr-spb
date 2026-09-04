@@ -624,10 +624,9 @@ h1, h2 {
     line-height: 1.1;
 }
 
-.district-screen-header h1:focus-visible {
-    outline: 2px solid var(--green-light);
-    outline-offset: 4px;
-    border-radius: 4px;
+/* tabindex=-1 нужен только для объявления нового экрана screen reader'ом. */
+.district-screen-header h1:focus {
+    outline: none;
 }
 
 .district-screen-header p {

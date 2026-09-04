@@ -445,9 +445,12 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     page.goto(server)
 
     picker = page.get_by_role('button', name='Выбрать конкретный район')
-    picker.click()
+    picker.focus()
+    page.keyboard.press('Enter')
     expect(page.locator('#district-screen')).to_have_class(re.compile('active'))
-    expect(page.locator('#district-screen-title')).to_be_focused()
+    title = page.locator('#district-screen-title')
+    expect(title).to_be_focused()
+    assert title.evaluate('element => getComputedStyle(element).outlineStyle') == 'none'
     expect(page.locator('#district-map')).to_be_visible(timeout=10000)
     expect(page.locator('#district-map .district-shape')).to_have_count(18)
     expect(page.locator('#district-list')).to_be_visible()
