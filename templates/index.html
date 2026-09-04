@@ -101,7 +101,13 @@
                         <span>или</span>
                     </div>
                     <button type="button" class="district-action" id="district-picker-btn">
-                        <span class="district-action-icon" aria-hidden="true">🗺️</span>
+                        <span class="district-action-icon" id="district-action-icon"
+                              data-icon-template="{{ url_for('static', filename='img/district-icons/__district__.svg') }}?v={{ asset_version }}"
+                              aria-hidden="true">
+                            <span class="district-action-emoji">🗺️</span>
+                            <img class="district-action-emblem hidden" alt="" aria-hidden="true"
+                                 width="22" height="22" decoding="async">
+                        </span>
                         <span id="district-action-label">Выбрать конкретный район</span>
                         <span class="district-action-chevron" aria-hidden="true">›</span>
                     </button>

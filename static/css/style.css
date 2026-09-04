@@ -561,6 +561,23 @@ h1, h2 {
     line-height: 1;
 }
 
+.district-action-emoji {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.district-action-emblem {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
 .district-action-chevron {
     font-size: 1.65rem;
     font-weight: 300;

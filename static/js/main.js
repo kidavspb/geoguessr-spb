@@ -23,6 +23,7 @@ import {
 const { gameData } = state;
 const TERRITORIES = ['center', 'medium', 'hard'];
 const TERRITORY_NAMES = ['Центр', 'Средняя', 'Весь город'];
+let districtActionIconLoadId = 0;
 
 /** Атомарно обновить tagged-union территории.
  * `districtId` существует только для активного district mode; последняя
@@ -215,6 +216,46 @@ function syncSettingsControls() {
     syncMovementControl();
 }
 
+function syncDistrictActionIcon(districtId) {
+    const container = document.getElementById('district-action-icon');
+    const emoji = container?.querySelector('.district-action-emoji');
+    const emblem = container?.querySelector('.district-action-emblem');
+    if (!container || !emoji || !emblem) return;
+
+    const normalizedId = districtId && districtDisplayName(districtId)
+        ? districtId : '';
+    if (container.dataset.districtId === normalizedId) return;
+
+    container.dataset.districtId = normalizedId;
+    const loadId = ++districtActionIconLoadId;
+    emblem.onload = null;
+    emblem.onerror = null;
+    emblem.removeAttribute('src');
+    emblem.classList.add('hidden');
+    emoji.classList.remove('hidden');
+
+    const template = container.dataset.iconTemplate || '';
+    if (!normalizedId || !template.includes('__district__')) return;
+
+    const source = template.replace('__district__', encodeURIComponent(normalizedId));
+    emblem.onload = () => {
+        if (loadId !== districtActionIconLoadId ||
+                container.dataset.districtId !== normalizedId) return;
+        emoji.classList.add('hidden');
+        emblem.classList.remove('hidden');
+    };
+    emblem.onerror = () => {
+        if (loadId !== districtActionIconLoadId ||
+                container.dataset.districtId !== normalizedId) return;
+        emblem.onload = null;
+        emblem.onerror = null;
+        emblem.removeAttribute('src');
+        emblem.classList.add('hidden');
+        emoji.classList.remove('hidden');
+    };
+    emblem.src = source;
+}
+
 function syncTerritoryControl() {
     const territoryRange = document.getElementById('territory-range');
     const territoryControl = document.getElementById('territory-control');
@@ -252,6 +293,7 @@ function syncTerritoryControl() {
             ? `Изменить район. Сейчас выбран ${activeName}`
             : 'Выбрать конкретный район');
     }
+    syncDistrictActionIcon(districtActive ? gameData.districtId : null);
 }
 
 function syncTimeControl() {

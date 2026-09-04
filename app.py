@@ -451,12 +451,16 @@ def inject_asset_version():
     браузерами и без перезапуска сервиса.
     """
     version = 0
-    for rel in ('css/style.css', 'js/main.js', 'js/districts.js',
-                'js/panorama.js', 'js/maps.js',
-                'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
-                'manifest.json', 'manifest-dev.json',
-                'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
-                'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico'):
+    important_assets = (
+        'css/style.css', 'js/main.js', 'js/districts.js',
+        'js/panorama.js', 'js/maps.js',
+        'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
+        'manifest.json', 'manifest-dev.json',
+        'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
+        'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico',
+    ) + tuple(f'img/district-icons/{district_id}.svg'
+              for district_id in DISTRICT_IDS)
+    for rel in important_assets:
         path = os.path.join(app.static_folder, rel)
         try:
             version = max(version, os.stat(path).st_mtime_ns)

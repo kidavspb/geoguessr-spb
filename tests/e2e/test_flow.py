@@ -188,6 +188,12 @@ def test_district_choice_polish_and_inactive_slider(page, server):
     expect(icon).to_have_text('🗺️')
     expect(icon).to_have_attribute('aria-hidden', 'true')
     assert icon.evaluate('element => element.tagName') == 'SPAN'
+    emoji = icon.locator('.district-action-emoji')
+    emblem = icon.locator('.district-action-emblem')
+    expect(emoji).to_be_visible()
+    expect(emblem).to_be_hidden()
+    expect(emblem).to_have_attribute('alt', '')
+    expect(emblem).to_have_attribute('aria-hidden', 'true')
     icon_alignment = page.locator('#district-picker-btn').evaluate("""
         button => {
             const icon = button.querySelector('.district-action-icon').getBoundingClientRect();
@@ -290,6 +296,12 @@ def test_district_choice_polish_and_inactive_slider(page, server):
             re.compile('district-active'))
         expect(page.get_by_role('button', name=label, exact=True)).to_have_attribute(
             'aria-pressed', 'false')
+        expect(emblem).to_be_visible()
+        expect(emoji).to_be_hidden()
+        expect(emblem).to_have_attribute(
+            'src', re.compile(
+                r'/static/img/district-icons/krasnogvardeysky\.svg\?v=\d+$'))
+        assert emblem.evaluate('image => image.complete && image.naturalWidth > 0')
 
         inactive_styles = territory_styles()
         # Приглушаются отдельные части, а не весь native control: это сохраняет
@@ -310,8 +322,29 @@ def test_district_choice_polish_and_inactive_slider(page, server):
             'aria-pressed', 'true')
         expect(page.locator('#district-action-label')).to_have_text(
             'Выбрать конкретный район')
+        expect(emoji).to_be_visible()
+        expect(emblem).to_be_hidden()
+        assert emblem.get_attribute('src') is None
 
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
+def test_missing_district_emblem_keeps_map_emoji(page, server):
+    """Ошибка декоративного SVG не оставляет пустой или broken-image слот."""
+    page.route(
+        '**/static/img/district-icons/krasnogvardeysky.svg*',
+        lambda route: route.fulfill(status=404, content_type='image/svg+xml', body=''),
+    )
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('krasnogvardeysky')
+    page.get_by_role('button', name='Выбрать район').click()
+
+    expect(page.locator('#district-action-label')).to_have_text(
+        'Красногвардейский район')
+    expect(page.locator('.district-action-emoji')).to_be_visible()
+    expect(page.locator('.district-action-emblem')).to_be_hidden()
+    assert page.locator('.district-action-emblem').get_attribute('src') is None
 
 
 def test_district_map_mobile_fit_zoom_pan_and_reset(page, server):
@@ -513,6 +546,10 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     expect(page.locator('#territory-control')).to_have_class(
         re.compile('district-active'))
     expect(page.get_by_role('slider', name='Территория')).to_be_enabled()
+    emblem = page.locator('.district-action-emblem')
+    expect(emblem).to_be_visible()
+    expect(emblem).to_have_attribute(
+        'src', re.compile(r'/petrogradsky\.svg\?v=\d+$'))
 
     # Внутренняя навигация приложения сохраняет ту же настройку территории.
     page.locator('#show-leaderboard-btn').click()
@@ -533,6 +570,8 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     page.keyboard.press('Escape')
     expect(page.locator('#territory-value')).to_have_text('Петроградский район')
     expect(page.locator('#district-picker-btn')).to_be_focused()
+    expect(emblem).to_have_attribute(
+        'src', re.compile(r'/petrogradsky\.svg\?v=\d+$'))
 
     # Любой обычный preset атомарно снимает район; отдельный reset не нужен.
     page.get_by_role('button', name='Центр', exact=True).click()
@@ -541,6 +580,8 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
         re.compile('district-active'))
     expect(page.locator('#district-action-label')).to_have_text(
         'Выбрать конкретный район')
+    expect(page.locator('.district-action-emoji')).to_be_visible()
+    expect(emblem).to_be_hidden()
 
     # Native select — компактный accessibility/touch fallback. Выбранная пара
     # доходит до того же /start как единое district state.
@@ -548,6 +589,9 @@ def test_district_picker_map_state_keyboard_and_standard_mode(page, server):
     page.locator('#district-list').select_option('kolpinsky')
     expect(page.locator('#district-selected-name')).to_have_text('Колпинский район')
     page.get_by_role('button', name='Выбрать район').click()
+    expect(emblem).to_be_visible()
+    expect(emblem).to_have_attribute(
+        'src', re.compile(r'/kolpinsky\.svg\?v=\d+$'))
     with page.expect_request(
             lambda request: request.url.endswith('/api/game/start')) as request_info:
         page.locator('#start-btn').click()
@@ -587,6 +631,8 @@ def test_settings_have_styled_initial_render_without_javascript(browser, server)
         expect(page.locator('#territory-range')).to_be_visible()
         expect(page.locator('.segmented-control')).to_be_visible()
         expect(page.locator('.switch-control')).to_be_visible()
+        expect(page.locator('.district-action-emoji')).to_be_visible()
+        expect(page.locator('.district-action-emblem')).to_be_hidden()
         expect(page.locator('.difficulty-btn, .timer-btn, .move-btn')).to_have_count(0)
 
         styles = page.locator('#territory-range').evaluate(
