@@ -15,6 +15,23 @@ except ImportError:
 from playwright.sync_api import expect
 
 
+def test_feedback_link_is_only_on_start_and_fits_mobile(page, server):
+    page.goto(server)
+    link = page.get_by_role('link', name='Напиши нам в Telegram')
+    expect(link).to_have_count(1)
+    expect(page.locator('#start-screen .start-feedback a')).to_have_count(1)
+    expect(link).to_have_attribute('href', 'https://t.me/geoguessr_spb_ru')
+    expect(link).to_have_attribute('rel', 'noopener noreferrer')
+    for width in [320, 375, 390, 430, 1280]:
+        page.set_viewport_size({'width': width, 'height': 844})
+        link.scroll_into_view_if_needed()
+        expect(link).to_be_visible()
+        assert link.bounding_box()['height'] >= 44
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    link.focus()
+    expect(link).to_be_focused()
+
+
 def _play_round(page):
     """Дождаться панорамы, кликнуть по карте, ответить."""
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
