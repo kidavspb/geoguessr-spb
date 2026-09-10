@@ -29,6 +29,7 @@ let districtActionIconLoadId = 0;
  * `districtId` существует только для активного district mode; последняя
  * стандартная позиция хранится отдельно лишь для визуально приглушённой шкалы. */
 function setTerritoryState(difficulty, districtId = null, districtName = null) {
+    gameData.districtBounds = null;
     if (difficulty === 'district' && districtId) {
         gameData.difficulty = 'district';
         gameData.districtId = districtId;
@@ -457,6 +458,8 @@ async function startGame(opts = {}) {
             data.district_name || null,
         );
         gameData.timeLimit = data.time_limit || 0;   // серверные значения — истина
+        gameData.districtBounds = gameData.difficulty === 'district'
+            ? data.district_bounds || null : null;
         gameData.noMove = !!data.no_move;
         gameData.daily = !!data.daily;
         syncSettingsControls();

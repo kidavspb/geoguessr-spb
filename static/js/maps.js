@@ -49,9 +49,35 @@ export function ymapsV3Ready() {
     return v3ReadyPromise;
 }
 
-/**
- * Инициализация карты выбора
- */
+/** Центр района с привычным игровым масштабом, без привязки к ответу раунда. */
+function initialGuessMapLocation(container) {
+    const bounds = state.gameData.districtBounds;
+    if (state.gameData.difficulty !== 'district' || !Array.isArray(bounds) ||
+            bounds.length !== 4 || !bounds.every(Number.isFinite)) {
+        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
+    }
+    const [west, south, east, north] = bounds;
+    if (west >= east || south >= north || south <= -85 || north >= 85) {
+        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
+    }
+    const southY = mercatorY(south);
+    const northY = mercatorY(north);
+    // clientWidth/Height не зависят от transform свёрнутого мобильного листа.
+    const width = Math.max(120, (container.clientWidth || 320) - 48);
+    const height = Math.max(120, (container.clientHeight || 220) - 48);
+    // Размер района влияет на приближение максимум на один шаг. Большие
+    // районы не отдаляем ради fit: важнее сразу удобно ставить точку.
+    const zoom = Math.floor(Math.max(DEFAULT_ZOOM, Math.min(DEFAULT_ZOOM + 1, Math.min(
+        Math.log2(width / TILE_SIZE / ((east - west) / 360)),
+        Math.log2(height / TILE_SIZE / Math.abs(northY - southY))
+    ))));
+    return {
+        center: [(west + east) / 2, mercatorYInv((southY + northY) / 2)],
+        zoom,
+    };
+}
+
+/** Инициализация карты выбора. */
 export async function initMap() {
     const loadId = ++state.mainMapLoadId;
     await ymapsV3Ready();
@@ -64,10 +90,7 @@ export async function initMap() {
     mapContainer.innerHTML = '';
 
     state.map = new YMap(mapContainer, {
-        location: {
-            center: [SPB_CENTER[1], SPB_CENTER[0]], // [lon, lat]
-            zoom: DEFAULT_ZOOM
-        }
+        location: initialGuessMapLocation(mapContainer)
     });
 
     state.map.addChild(new YMapDefaultSchemeLayer());
@@ -216,10 +239,7 @@ export function resetMapForNewRound() {
 
     // Центрируем карту
     if (state.map) {
-        state.map.setLocation({
-            center: [SPB_CENTER[1], SPB_CENTER[0]],
-            zoom: DEFAULT_ZOOM
-        });
+        state.map.setLocation(initialGuessMapLocation(document.getElementById('map')));
     }
 }
 

@@ -186,6 +186,7 @@ def _territory_payload(difficulty, district_id=None):
         'difficulty_name': selected_name or difficulty_name(difficulty),
         'district_id': district_id if difficulty == DISTRICT_MODE else None,
         'district_name': selected_name,
+        'district_bounds': list(district_map()[district_id].bounds) if selected_name else None,
     }
 
 

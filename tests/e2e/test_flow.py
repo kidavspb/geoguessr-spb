@@ -27,6 +27,50 @@ def _play_round(page):
     expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=10000)
 
 
+@pytest.mark.parametrize('district_id', ['kronshtadtsky', 'pushkinsky', 'tsentralny'])
+@pytest.mark.parametrize('width', [390, 1280])
+def test_guess_map_starts_at_district_and_resets_each_round(page, server, district_id, width):
+    from districts import district_map
+    page.set_viewport_size({'width': width, 'height': 844})
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option(district_id)
+    page.locator('#district-confirm-btn').click()
+    page.locator('#start-btn').click()
+    expect(page.locator('#map')).to_have_attribute('data-map-location', re.compile('center'))
+    location = page.locator('#map').evaluate('el => JSON.parse(el.dataset.mapLocation)')
+    west, south, east, north = district_map()[district_id].bounds
+    assert location['center'][0] == pytest.approx((west + east) / 2)
+    assert south < location['center'][1] < north
+    default_zoom = page.evaluate("async () => (await import('/static/js/state.js')).DEFAULT_ZOOM")
+    assert default_zoom <= location['zoom'] <= default_zoom + 1
+    if district_id in ('kronshtadtsky', 'pushkinsky'):
+        assert location['zoom'] == default_zoom
+    page.evaluate("""async () => {
+        const { state } = await import('/static/js/state.js');
+        state.map.setLocation({center: [0, 0], zoom: 3});
+    }""")
+    if width <= 720:
+        page.locator('#map-handle').click()
+    _play_round(page)
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible()
+    reset = page.locator('#map').evaluate('el => JSON.parse(el.dataset.mapLocation)')
+    assert reset['center'] == pytest.approx(location['center'])
+    assert default_zoom <= reset['zoom'] <= default_zoom + 1
+    standard = page.evaluate("""async () => {
+        const { state, SPB_CENTER, DEFAULT_ZOOM } = await import('/static/js/state.js');
+        const { resetMapForNewRound } = await import('/static/js/maps.js');
+        state.gameData.difficulty = 'medium';
+        resetMapForNewRound();
+        return {
+            actual: JSON.parse(document.getElementById('map').dataset.mapLocation),
+            expected: {center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM}
+        };
+    }""")
+    assert standard['actual'] == standard['expected']
+
+
 def _viewbox(page):
     """Текущий SVG viewBox как четыре числа."""
     value = page.locator('#district-map').get_attribute('viewBox')

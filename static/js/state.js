@@ -57,6 +57,7 @@ export const state = {
         difficulty: 'medium', // center, medium, hard, district
         standardDifficulty: 'medium', // позиция приглушённой шкалы при district
         districtId: null,
+        districtBounds: null, // [west, south, east, north] из ответа /start
         districtName: null,
         timeLimit: 0,         // секунд на раунд, 0 — без лимита
         noMove: false,        // режим «без перемещения»

@@ -58,6 +58,8 @@ def test_start_accepts_valid_district_and_generates_all_rounds_inside(client, ap
     assert body['difficulty'] == 'district'
     assert body['district_id'] == 'petrogradsky'
     assert body['district_name'] == 'Петроградский район'
+    from districts import district_map
+    assert body['district_bounds'] == list(district_map()['petrogradsky'].bounds)
     assert body['difficulty_name'] == 'Петроградский район'
     assert body['location']['district_id'] == 'petrogradsky'
 
