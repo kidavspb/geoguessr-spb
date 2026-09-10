@@ -9,6 +9,15 @@ import { reloadFailedScript } from './sdk.js';
 const API_READY_TIMEOUT_MS = 12000;
 let v3ReadyPromise = null;
 
+// Смена экранов сама вызывает :hover под неподвижным курсором. Разрешаем
+// раскрытие нового раунда только после реального движения вне панели.
+document.addEventListener('pointermove', event => {
+    const panel = document.getElementById('map-panel');
+    if (panel?.classList.contains('hover-paused') && !panel.contains(event.target)) {
+        panel.classList.remove('hover-paused');
+    }
+});
+
 /** Дождаться async-скрипта API v3, не блокируя первый экран приложения. */
 export function ymapsV3Ready() {
     if (v3ReadyPromise) return v3ReadyPromise;
@@ -218,9 +227,13 @@ export function destroyFinalMap() {
  * Сброс карты для нового раунда
  */
 export function resetMapForNewRound() {
+    const panel = document.getElementById('map-panel');
+    panel.classList.add('hover-paused');
+    // Не переносим focus-within от карты предыдущего раунда.
+    if (panel.contains(document.activeElement)) document.activeElement.blur();
     // На телефоне раунд начинается со свёрнутой картой: первым делом игрок
     // всё равно осматривается, а карта закрывала бы пол-экрана.
-    // На десктопе панель маленькая и разворачивается наведением — оставляем.
+    // На десктопе оставляем компактную панель; раскрытие — новым наведением.
     setMapPanelCollapsed(window.innerWidth <= 720);
     if (state.currentMarker && state.map) {
         state.map.removeChild(state.currentMarker);

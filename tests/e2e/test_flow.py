@@ -71,6 +71,44 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     assert standard['actual'] == standard['expected']
 
 
+def test_next_round_does_not_expand_map_under_stationary_pointer(page, server):
+    page.set_viewport_size({'width': 1280, 'height': 844})
+    page.goto(server)
+    page.locator('#start-btn').click()
+    _play_round(page)
+    # Воспроизводим совпадение кнопки результата с областью маленькой карты.
+    page.locator('#next-round-btn').evaluate("""el => {
+        Object.assign(el.style, {
+            position: 'fixed', right: '40px', bottom: '120px',
+            width: '200px', zIndex: '1000'
+        });
+    }""")
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible()
+    expect(page.locator('#photo-overlay')).to_be_hidden()
+    panel = page.locator('#map-panel')
+    expect(panel).to_have_css('width', '340px')
+    expect(page.locator('.map-wrap')).to_have_css('height', '220px')
+    assert panel.evaluate("el => el.matches(':hover')")
+    # Движение внутри карты ещё не означает новое наведение.
+    page.mouse.move(1150, 690)
+    expect(panel).to_have_css('width', '340px')
+    page.mouse.move(0, 0)
+    page.locator('#map').hover()
+    expect(panel).to_have_css('width', '560px')
+    page.mouse.move(0, 0)
+    expect(panel).to_have_css('width', '340px')
+    # Клавиатурный доступ остаётся рабочим даже при заблокированном hover.
+    page.evaluate("""async () => {
+        const {resetMapForNewRound} = await import('/static/js/maps.js');
+        resetMapForNewRound();
+        const map = document.getElementById('map');
+        map.tabIndex = 0;
+        map.focus();
+    }""")
+    expect(panel).to_have_css('width', '560px')
+
+
 def _viewbox(page):
     """Текущий SVG viewBox как четыре числа."""
     value = page.locator('#district-map').get_attribute('viewBox')
