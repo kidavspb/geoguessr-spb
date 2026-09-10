@@ -109,6 +109,77 @@ def test_next_round_does_not_expand_map_under_stationary_pointer(page, server):
     expect(panel).to_have_css('width', '560px')
 
 
+def test_native_touch_pinch_keeps_page_still_and_single_finger_scrolls(page, server):
+    page.set_viewport_size({'width': 390, 'height': 560})
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    svg = page.locator('#district-map')
+    expect(svg).to_be_visible()
+    svg.scroll_into_view_if_needed()
+    session = page.context.new_cdp_session(page)
+    session.send('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
+    rect = svg.bounding_box()
+    x, y = rect['x'] + rect['width'] / 2, rect['y'] + rect['height'] / 2
+    before = _viewbox(page)
+    scroll = page.evaluate('scrollY')
+
+    def send(kind, points):
+        session.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': [
+            {'id': i, 'x': px, 'y': py} for i, (px, py) in enumerate(points)
+        ]})
+        page.wait_for_timeout(30)
+
+    send('touchStart', [(x - 25, y)])
+    send('touchStart', [(x - 25, y), (x + 25, y)])
+    for step in range(1, 7):
+        send('touchMove', [(x - 25 - step * 8, y - step * 3),
+                           (x + 25 + step * 8, y - step * 3)])
+    send('touchEnd', [])
+    assert _viewbox(page)[2] < before[2] / 2
+    assert page.evaluate('scrollY') == pytest.approx(scroll, abs=1)
+    page.locator('#district-map-reset').click()
+    svg.scroll_into_view_if_needed()
+    rect = svg.bounding_box()
+    x, y = rect['x'] + rect['width'] / 2, rect['y'] + rect['height'] / 2
+    scroll = page.evaluate('scrollY')
+    send('touchStart', [(x, y)])
+    for step in range(1, 7):
+        send('touchMove', [(x, y - step * 12)])
+    send('touchEnd', [])
+    assert page.evaluate('scrollY') > scroll + 10
+    expect(svg).not_to_have_class(re.compile('is-zoomed'))
+    session.detach()
+
+
+def test_district_reset_focus_depends_on_input_method(page, server):
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    svg = page.locator('#district-map')
+    expect(svg).to_be_visible()
+    district = page.locator('#district-map .district-shape[tabindex="0"]')
+    reset = page.locator('#district-map-reset')
+
+    def zoom():
+        svg.dispatch_event('wheel', {'deltaY': -400, 'clientX': 200, 'clientY': 200})
+        expect(reset).to_be_visible()
+
+    zoom()
+    reset.click()
+    assert not svg.evaluate('el => el.contains(document.activeElement)')
+    expect(page.locator('#district-selected-name')).to_have_text('Район не выбран')
+    zoom()
+    reset.focus()
+    reset.press('Enter')
+    expect(district).to_be_focused()
+    expect(reset).to_be_hidden()
+    # iOS может оставить старый фокус на polygon после касания кнопки.
+    zoom()
+    district.focus()
+    reset.dispatch_event('click', {'detail': 1})
+    expect(district).not_to_be_focused()
+    expect(page.locator('#district-selected-name')).to_have_text('Район не выбран')
+
+
 def _viewbox(page):
     """Текущий SVG viewBox как четыре числа."""
     value = page.locator('#district-map').get_attribute('viewBox')
@@ -511,27 +582,36 @@ def test_district_map_mobile_fit_zoom_pan_and_reset(page, server):
     assert _viewbox(page) == pytest.approx(fit, abs=0.05)
     assert svg.evaluate('element => getComputedStyle(element).touchAction') == 'pan-y'
 
-    # Два touch PointerEvent проверяют pinch-ветку без привязки к CDP.
-    svg.evaluate("""
+    # Safari отменяет Pointer Events посреди pinch, но Touch Events продолжаются.
+    outcome = svg.evaluate("""
         element => {
             const rect = element.getBoundingClientRect();
             const y = rect.top + rect.height / 2;
             const center = rect.left + rect.width / 2;
-            const fire = (target, type, pointerId, x) => target.dispatchEvent(
-                new PointerEvent(type, {
-                    bubbles: true, cancelable: true, pointerId,
-                    pointerType: 'touch', isPrimary: pointerId === 41,
-                    clientX: x, clientY: y, button: 0,
-                })
-            );
-            fire(element, 'pointerdown', 41, center - 30);
-            fire(element, 'pointerdown', 42, center + 30);
-            fire(element, 'pointermove', 41, center - 60);
-            fire(element, 'pointermove', 42, center + 60);
-            fire(window, 'pointerup', 41, center - 60);
-            fire(window, 'pointerup', 42, center + 60);
+            const paths = element.querySelectorAll('path');
+            const touch = (identifier, x) => new Touch({identifier,
+                target: paths[identifier - 41], clientX: x, clientY: y});
+            const fire = (type, touches, changedTouches = touches) => {
+                const event = new TouchEvent(type, {bubbles: true, cancelable: true,
+                    touches, targetTouches: touches.slice(0, 1), changedTouches});
+                paths[0].dispatchEvent(event);
+                return event.defaultPrevented;
+            };
+            const one = fire('touchstart', [touch(41, center - 30)]);
+            const two = fire('touchstart', [touch(41, center - 30), touch(42, center + 30)]);
+            fire('touchmove', [touch(41, center - 60), touch(42, center + 60)]);
+            const before = element.viewBox.baseVal.width;
+            for (const pointerId of [41, 42]) element.dispatchEvent(new PointerEvent(
+                'pointercancel', {bubbles: true, pointerType: 'touch', pointerId}));
+            const move = fire('touchmove', [touch(41, center - 90), touch(42, center + 90)]);
+            const after = element.viewBox.baseVal.width;
+            fire('touchend', [], [touch(41, center - 90), touch(42, center + 90)]);
+            return {one, two, move, before, after};
         }
     """)
+    assert not outcome['one']
+    assert outcome['two'] and outcome['move']
+    assert outcome['after'] < outcome['before']
     expect(svg).to_have_class(re.compile('is-zoomed'))
     assert _viewbox(page)[2] < fit[2]
     _assert_viewbox_inside(_viewbox(page), fit)

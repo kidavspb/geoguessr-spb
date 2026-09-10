@@ -32,6 +32,7 @@ let resizeObserver = null;
 const activePointers = new Map();
 let panGesture = null;
 let pinchGesture = null;
+let touchMapOwned = false;
 let suppressMapClicksUntil = 0;
 
 function districtOptions() {
@@ -323,7 +324,7 @@ function capturePointer(svg, pointerId) {
     }
 }
 
-function beginPinch(svg) {
+function beginPinch(svg, capture = true) {
     const pointers = Array.from(activePointers.values()).slice(0, 2);
     if (pointers.length < 2) return;
     const distance = pointerDistance(pointers[0], pointers[1]);
@@ -338,7 +339,7 @@ function beginPinch(svg) {
         moved: false,
     };
     panGesture = null;
-    pinchGesture.pointerIds.forEach(pointerId => capturePointer(svg, pointerId));
+    if (capture) pinchGesture.pointerIds.forEach(pointerId => capturePointer(svg, pointerId));
 }
 
 function beginPan(pointer) {
@@ -362,7 +363,7 @@ function handleMapPointerDown(event) {
     });
     if (activePointers.size >= 2) {
         event.preventDefault();
-        beginPinch(svg);
+        beginPinch(svg, !event.touchDriven);
     } else {
         // В fit это только tap-vs-scroll detector: движение страницы не
         // перехватываем, но и click после свайпа не считаем выбором района.
@@ -420,7 +421,7 @@ function handleMapPointerMove(event) {
     }
     if (!panGesture.moved && totalDistance >= PAN_THRESHOLD_PX) {
         panGesture.moved = true;
-        capturePointer(event.currentTarget, event.pointerId);
+        if (!event.touchDriven) capturePointer(event.currentTarget, event.pointerId);
         event.currentTarget.classList.add('is-panning');
     }
     if (panGesture.moved) {
@@ -480,17 +481,79 @@ function handleMapWheel(event) {
     zoomAt(event.clientX, event.clientY, nextZoom);
 }
 
+/** Touch Events сохраняются в Safari даже после pointercancel при scroll.
+ * Перехватываем pinch на втором touchstart, а не сменой touch-action посреди
+ * жеста. Один палец в fit остаётся нативной прокруткой страницы.
+ */
+function handleMapTouch(event) {
+    if (!camera) return;
+    const svg = event.currentTarget;
+    // Пальцы могут лежать на разных SVG path: targetTouches тогда содержит
+    // только один из них. Учитываем все касания, начавшиеся внутри карты.
+    const touches = Array.from(event.touches).filter(touch => svg.contains(touch.target));
+    const adapter = touch => ({
+        pointerId: touch.identifier, clientX: touch.clientX, clientY: touch.clientY,
+        currentTarget: svg, touchDriven: true,
+        preventDefault: () => { if (event.cancelable) event.preventDefault(); },
+    });
+    if (event.type === 'touchstart') {
+        if (touches.length >= 2 || mapIsZoomed()) touchMapOwned = true;
+        // Не отменяем одиночный touchstart: обычный tap должен дать click.
+        if (touches.length >= 2 && event.cancelable) event.preventDefault();
+        for (const touch of touches) {
+            if (!activePointers.has(touch.identifier)) handleMapPointerDown(adapter(touch));
+        }
+    } else if (event.type === 'touchmove') {
+        if (touchMapOwned && event.cancelable) event.preventDefault();
+        // Обе позиции обновляем атомарно: один touchmove — один шаг камеры.
+        for (const touch of touches) {
+            if (activePointers.has(touch.identifier)) {
+                activePointers.set(touch.identifier, {
+                    id: touch.identifier, x: touch.clientX, y: touch.clientY,
+                });
+            }
+        }
+        const tracked = touches.find(touch => activePointers.has(touch.identifier));
+        if (tracked) handleMapPointerMove(adapter(tracked));
+    } else {
+        if (touchMapOwned && (pinchGesture || panGesture?.moved)) suppressSyntheticMapClick();
+        for (const touch of Array.from(event.changedTouches)) {
+            handleMapPointerEnd(adapter(touch));
+        }
+        if (event.type === 'touchcancel' || touches.length === 0) {
+            activePointers.clear();
+            pinchGesture = null;
+            panGesture = null;
+            touchMapOwned = false;
+        }
+    }
+}
+
 function initMapInteractions(svg, reset) {
-    svg.addEventListener('pointerdown', handleMapPointerDown);
-    svg.addEventListener('pointermove', handleMapPointerMove);
+    // Touch не дублируем через Pointer Events: Safari может отменить только
+    // pointer-поток, пока пальцы всё ещё касаются экрана.
+    const nonTouch = handler => event => {
+        if (event.pointerType !== 'touch') handler(event);
+    };
+    svg.addEventListener('pointerdown', nonTouch(handleMapPointerDown));
+    svg.addEventListener('pointermove', nonTouch(handleMapPointerMove));
+    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+        svg.addEventListener(type, handleMapTouch, { passive: false });
+    }
     svg.addEventListener('click', handleMapClickCapture, true);
     svg.addEventListener('wheel', handleMapWheel, { passive: false });
-    window.addEventListener('pointerup', handleMapPointerEnd);
-    window.addEventListener('pointercancel', handleMapPointerEnd);
-    reset.addEventListener('click', () => {
+    window.addEventListener('pointerup', nonTouch(handleMapPointerEnd));
+    window.addEventListener('pointercancel', nonTouch(handleMapPointerEnd));
+    reset.addEventListener('click', event => {
         const focusTarget = svg.querySelector('.district-shape[tabindex="0"]');
         resetMapView();
-        focusTarget?.focus({ preventScroll: true });
+        // Кнопка исчезает после reset: клавиатуре возвращаем точку входа в
+        // карту, но tap/click не должен подсвечивать случайный район.
+        if (event.detail === 0) {
+            focusTarget?.focus({ preventScroll: true });
+        } else if (svg.contains(document.activeElement)) {
+            document.activeElement.blur();
+        }
     });
 
     if ('ResizeObserver' in window) {
@@ -653,6 +716,7 @@ export function closeDistrictPicker({ restoreFocus = true } = {}) {
     activePointers.clear();
     panGesture = null;
     pinchGesture = null;
+    touchMapOwned = false;
     suppressMapClicksUntil = 0;
     document.getElementById('district-map')?.classList.remove('is-panning');
     showScreen('start-screen');
