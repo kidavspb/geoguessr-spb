@@ -551,6 +551,8 @@ async function loadCurrentLocation(locationOverride = null) {
         // preload-задаче. Не делаем второй GET и не запускаем второй locate.
         if (!data && preload && preload.location) data = preload.location;
         if (!data) {
+            state.currentLocation = null;
+            state.currentRoundId = null;
             const response = await api.getLocation();
             data = response.data;
 
@@ -607,7 +609,8 @@ async function loadCurrentLocation(locationOverride = null) {
             loaded.readyPromise.then(ready => {
                 const serverDeadline = ready && ready.ok && ready.data
                     ? ready.data.deadline_ms : null;
-                if (serverDeadline && loaded.loadId === state.roundLoadId &&
+                if (serverDeadline && state.roundInteractive && !state.guessSubmitting &&
+                        loaded.loadId === state.roundLoadId &&
                         state.currentRoundId === loaded.location.round_id &&
                         document.getElementById('game-screen').classList.contains('active')) {
                     startRoundTimer(serverDeadline);
@@ -623,7 +626,7 @@ async function loadCurrentLocation(locationOverride = null) {
 }
 
 function retryPanorama() {
-    if (!state.currentLocation || state.roundLoading) return;
+    if (state.roundLoading) return;
     loadCurrentLocation(state.currentLocation);
 }
 
@@ -705,8 +708,9 @@ function startRoundTimer(serverDeadlineMs = null) {
     state.roundDeadline = serverDeadlineMs || (Date.now() + gameData.timeLimit * 1000);
     state.lastTimerSecond = null;
     chip.classList.remove('hidden', 'timer-low');
-    updateTimerDisplay();
     state.roundTimerInterval = setInterval(updateTimerDisplay, 250);
+    // Уже истёкший серверный deadline может синхронно остановить интервал.
+    updateTimerDisplay();
 }
 
 function updateTimerDisplay() {
@@ -771,8 +775,13 @@ async function sendGuess(payload) {
     stopRoundTimer();
 
     let retryTimedOut = false;
+    const roundId = state.currentRoundId;
+    const loadId = state.roundLoadId;
     try {
-        const requestPayload = { ...payload, round_id: state.currentRoundId };
+        const requestPayload = {
+            ...payload, round_id: roundId,
+            location_version: state.currentLocation?.location_version
+        };
         // Проверяемый actual point попадает в ту же транзакцию /guess: счёт
         // всегда считается по той съёмке, которую видел игрок.
         if (state.actualPoint) {
@@ -800,7 +809,10 @@ async function sendGuess(payload) {
     } finally {
         state.guessSubmitting = false;
         if (retryTimedOut) {
-            setTimeout(() => sendGuess(payload), 1200);
+            setTimeout(() => {
+                if (roundId === state.currentRoundId && loadId === state.roundLoadId &&
+                        state.roundInteractive) sendGuess(payload);
+            }, 1200);
         }
     }
 }
@@ -820,8 +832,7 @@ function showRoundResult(data) {
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
 
-    // Адрес точки («Это было: …»): серверный, а если сервер без ключа
-    // геокодера — клиентский, через JS API v2 с обычным ключом карт.
+    // Сохранённый адрес или новый запрос через клиентский JS API v2.
     // Сам адрес — ссылка на панораму этого места в Яндекс Картах.
     const locationBlock = document.getElementById('result-location');
     const addressLink = document.getElementById('correct-location-name');
@@ -944,24 +955,21 @@ async function showFinalResults() {
     state.finalLoading = true;
     const nextButton = document.getElementById('next-round-btn');
     nextButton.disabled = true;
-    destroyResultPano();
-    destroyResultMap();
-    destroyPanoramaPlayer();
-    state.lastPanorama = null;
-    state.panoStartPoint = null;
-    state.actualPoint = null;
-    closePanoModal();
-    destroyMainMap();
-    state.resultRoundId = null;
-    discardPreloaded(state.preloaded);
-    state.preloaded = null;
     try {
         const { ok, data } = await api.results();
+        if (!ok || !data) throw new Error(data?.error || 'Не удалось загрузить результаты');
 
-        if (!ok) {
-            showScreen('final-screen');
-            return;
-        }
+        destroyResultPano();
+        destroyResultMap();
+        destroyPanoramaPlayer();
+        state.lastPanorama = null;
+        state.panoStartPoint = null;
+        state.actualPoint = null;
+        closePanoModal();
+        destroyMainMap();
+        state.resultRoundId = null;
+        discardPreloaded(state.preloaded);
+        state.preloaded = null;
 
         document.getElementById('final-score').textContent = data.total_score;
 
@@ -1000,9 +1008,13 @@ async function showFinalResults() {
         showDailyTop(data.daily);
     } catch (error) {
         console.error('Ошибка получения результатов:', error);
-        showScreen('final-screen');
+        showToast(error.message);
+        if (document.getElementById('game-screen').classList.contains('active')) {
+            showLoadingOverlay(error.message, { retry: true });
+        }
     } finally {
         state.finalLoading = false;
+        nextButton.disabled = false;
     }
 }
 

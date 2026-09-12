@@ -1,45 +1,32 @@
-"""GeoGuessr СПб («Петербургский следопыт») — Flask-приложение и API.
-
-Структура проекта:
-  game_logic.py — чистая игровая логика (константы, расчёты, валидация)
-  pool.py       — пул проверенных точек с панорамами
-  geocoder.py   — обратное геокодирование (адрес точки ответа)
-  models.py     — модели БД
-  app.py        — конфигурация, миграции, rate limiting, HTTP-роуты
-"""
+"""GeoGuessr СПб: конфигурация Flask, миграции и HTTP API."""
 import hmac
 import os
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 from flask import (Flask, g, render_template, jsonify, request, session,
                    send_file, send_from_directory)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import BadRequest
 from dotenv import load_dotenv
 from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembic_stamp
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import event
 
-from models import db, GameSession, GameRound, utcnow
-# Ре-экспорт логики в неймспейс app: роуты используют её напрямую,
-# а тесты обращаются к функциям и константам через модуль app.
+from models import db, GameSession, GameRound, VerifiedPoint, utcnow
 from game_logic import (
-    ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND, MAX_DISTANCE_KM,
+    ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
     MAX_SKIPS_PER_ROUND, MAX_ACTUAL_POINT_DRIFT_KM,
-    TIME_LIMIT_GRACE_SECONDS, TIME_LIMIT_MIN, TIME_LIMIT_MAX,
-    SPB_BOUNDS, SPB_CENTER, DIFFICULTY_SETTINGS,
-    difficulty_name, generate_random_point, haversine_distance,
+    TIME_LIMIT_GRACE_SECONDS, DIFFICULTY_SETTINGS,
+    difficulty_name, haversine_distance,
     calculate_score, parse_coords, parse_time_limit,
 )
-from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
-    choose_round_points, choose_round_candidates, add_verified_point, mark_point_failed
-from geocoder import reverse_geocode
+from pool import choose_round_candidates, add_verified_point, mark_point_failed
 from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
-from models import VerifiedPoint
 from districts import (
     DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DistrictDataError, district_map,
     district_name, is_valid_district_id, point_in_city, point_in_district,
@@ -90,7 +77,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
 )
 
-# Приложение работает за обратным прокси (nginx) — доверяем одному прокси,
+# Приложение работает за обратным прокси (Apache) — доверяем одному прокси,
 # чтобы корректно видеть схему (https) и реальный IP клиента.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -197,6 +184,8 @@ def _parse_requested_territory(data):
     но district mode никогда не получает молчаливый fallback в другой режим.
     """
     difficulty = data.get('difficulty', 'medium')
+    if not isinstance(difficulty, str):
+        raise BadRequest('difficulty должен быть строкой')
     district_id = data.get('district_id')
     if district_id not in (None, ''):
         district_id = str(district_id).strip()
@@ -220,11 +209,21 @@ def _parse_requested_territory(data):
     return difficulty, None, None
 
 
-def _current_game():
+def _current_game(*, lock=False):
     """Игровая сессия текущего игрока (по game_id из подписанной cookie)."""
     game_id = session.get('game_id')
     if not game_id:
         return None
+    if lock:
+        # Блокируем запись ДО чтения состояния раунда. SELECT FOR UPDATE
+        # игнорируется SQLite; no-op UPDATE берёт writer lock там и row lock
+        # в PostgreSQL. Lock живёт до commit/rollback текущего запроса, поэтому
+        # guess/skip/ready разных workers не работают с одним старым снимком.
+        db.session.execute(
+            db.update(GameSession).where(GameSession.id == game_id)
+            .values(current_round=GameSession.current_round)
+            .execution_options(synchronize_session=False)
+        )
     return db.session.get(GameSession, game_id)
 
 
@@ -293,17 +292,13 @@ def _round_from_payload(data, *, allow_answered=False, require_active=True):
     активный раунд. Новый фронтенд всегда передаёт id, поэтому повтор запроса
     никогда не сможет случайно изменить следующий раунд.
     """
-    game = _current_game()
+    game = _current_game(lock=True)
     if game is None:
         return None, None, (jsonify({'error': 'Игра не начата'}), 400)
 
-    round_id = data.get('round_id') if isinstance(data, dict) else None
-    if round_id in (None, ''):
+    round_id = _integer_field(data, 'round_id', minimum=1)
+    if round_id is None:
         return _load_active_round()
-    try:
-        round_id = int(round_id)
-    except (TypeError, ValueError):
-        return None, None, (jsonify({'error': 'Некорректный идентификатор раунда'}), 400)
 
     rnd = db.session.get(GameRound, round_id)
     if rnd is None or rnd.session_id != game.id:
@@ -330,16 +325,36 @@ def _scoring_point(rnd):
 
 def _location_version_error(data, rnd):
     """Защита от запоздавшего locate предыдущей версии того же раунда."""
-    expected = data.get('location_version') if isinstance(data, dict) else None
-    if expected in (None, ''):
+    expected = _integer_field(data, 'location_version')
+    if expected is None:
         return None
-    try:
-        expected = int(expected)
-    except (TypeError, ValueError):
-        return jsonify({'error': 'Некорректная версия точки'}), 400
     if expected != (rnd.skips or 0):
         return jsonify({'error': 'Версия точки устарела'}), 409
     return None
+
+
+def _integer_field(data, name, *, minimum=0):
+    value = data.get(name)
+    if value in (None, ''):
+        return None  # старые клиенты ещё могут не передавать id/версию
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise BadRequest(f'Некорректное поле {name}') from None
+    if (isinstance(value, bool) or (isinstance(value, float) and value != parsed)
+            or not minimum <= parsed <= 2**63 - 1):
+        raise BadRequest(f'Некорректное поле {name}')
+    return parsed
+
+
+def _json_object():
+    # Пустое тело сохраняет контракт start/skip старых клиентов.
+    if not request.get_data():
+        return {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise BadRequest('Ожидается JSON-объект')
+    return data
 
 
 def _panorama_rejection_reason(game, rnd, latitude, longitude):
@@ -406,6 +421,11 @@ def _round_result_payload(game, rnd, *, replayed=False, percentile=None):
 @app.errorhandler(429)
 def ratelimit_handler(e):
     return jsonify({'error': 'Слишком много запросов. Попробуйте чуть позже.'}), 429
+
+
+@app.errorhandler(BadRequest)
+def bad_request_handler(error):
+    return jsonify({'error': error.description}), 400
 
 
 @app.errorhandler(DistrictDataError)
@@ -568,8 +588,8 @@ def start_game():
     клиента остаётся только id игры. При переданном challenge_token игра
     стартует с теми же точками, что у автора челленджа.
     """
+    data = _json_object()
     try:
-        data = request.get_json(silent=True) or {}
         player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
 
         source = None
@@ -726,6 +746,9 @@ def start_game():
                 'opponent_score': source.total_score,
             }
         return jsonify(response)
+    except BadRequest:
+        db.session.rollback()
+        raise
     except DistrictDataError:
         app.logger.exception('Не удалось загрузить границы районов')
         db.session.rollback()
@@ -752,10 +775,13 @@ def get_current_location():
 @app.route('/api/game/ready', methods=['POST'])
 def round_ready():
     """Зафиксировать момент, когда панорама действительно появилась на экране."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     # В district и новом exact-city hard Player можно открывать только после
     # того, как /validate_panorama подтвердил фактическую точку.
@@ -792,17 +818,13 @@ def skip_location():
     перегенераций ограничено и на сервере: иначе точку можно рероллить,
     пока не выпадет знакомое место.
     """
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
 
-    expected_version = data.get('location_version')
-    if expected_version not in (None, ''):
-        try:
-            expected_version = int(expected_version)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'Некорректная версия точки'}), 400
+    expected_version = _integer_field(data, 'location_version')
+    if expected_version is not None:
         current_version = rnd.skips or 0
         if expected_version < current_version:
             # Первый POST уже сработал, но ответ потерялся: возвращаем тот же
@@ -864,7 +886,7 @@ def set_actual_point():
     Endpoint оставлен для старых клиентов; новый frontend делает тот же
     authoritative preflight через /validate_panorama до создания Player.
     """
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
@@ -906,7 +928,7 @@ def validate_panorama():
     ``valid=false`` — продуктовый сигнал для замены локации, а 4xx/5xx —
     ошибка запроса/сервера.
     """
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
@@ -939,7 +961,7 @@ def validate_panorama():
 @app.route('/api/game/set_address', methods=['POST'])
 def set_round_address():
     """Best-effort сохранение адреса, найденного клиентом после показа результата."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(
         data, allow_answered=True, require_active=False
     )
@@ -957,17 +979,20 @@ def set_round_address():
 @limiter.limit('120 per minute')
 def panorama_metric():
     """Принять безопасные агрегируемые метрики загрузки конкретного раунда."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(
         data, allow_answered=True, require_active=False
     )
     if error:
         return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     def bounded_int(name, maximum):
         try:
             return max(0, min(int(data.get(name)), maximum))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     status = str(data.get('status') or '')[:24]
@@ -984,7 +1009,7 @@ def panorama_metric():
 @app.route('/api/game/guess', methods=['POST'])
 def submit_guess():
     """Отправить угаданные координаты (или таймаут раунда без догадки)."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data, allow_answered=True)
     if error:
         return error
@@ -995,6 +1020,9 @@ def submit_guess():
         return jsonify(_round_result_payload(
             game, rnd, replayed=True, percentile=percentile
         ))
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     coords = parse_coords(data)
     # Клиент может завершить раунд без догадки, когда время вышло
@@ -1322,7 +1350,7 @@ def _check_admin():
     if not ADMIN_KEY:
         return jsonify({'error': 'Не найдено'}), 404
     provided = request.headers.get('X-Admin-Key', '')
-    if not hmac.compare_digest(provided, ADMIN_KEY):
+    if not hmac.compare_digest(provided.encode('utf-8'), ADMIN_KEY.encode('utf-8')):
         return jsonify({'error': 'Неверный ключ'}), 403
     return None
 
@@ -1375,6 +1403,12 @@ def admin_stats():
                     .filter(GameSession.completed_at.isnot(None),
                             GameSession.completed_at >= week_ago)
                     .count())
+    # Доигрываемость — доля завершённых среди начатых за этот период.
+    # Игры прошлой недели, завершённые сегодня, не входят в эту когорту.
+    cohort_completed = (GameSession.query
+                        .filter(GameSession.created_at >= week_ago,
+                                GameSession.completed_at.isnot(None))
+                        .count())
     daily_today = (GameSession.query
                    .filter(GameSession.daily_date == today_msk(),
                            GameSession.completed_at.isnot(None))
@@ -1418,7 +1452,7 @@ def admin_stats():
         'games_completed_total': completed_total,
         'games_started_7d': started_7d,
         'games_completed_7d': completed_7d,
-        'completion_rate_7d': round(completed_7d / started_7d, 2) if started_7d else None,
+        'completion_rate_7d': round(cohort_completed / started_7d, 2) if started_7d else None,
         'daily_players_today': daily_today,
         'pool_points': VerifiedPoint.query.count(),
         'pool_points_by_district': {

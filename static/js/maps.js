@@ -4,7 +4,7 @@
  */
 import { state, SPB_CENTER, DEFAULT_ZOOM, PIN_RED, PIN_NAVY } from './state.js';
 import { createPinElement, TILE_SIZE, mercatorY, mercatorYInv } from './utils.js';
-import { reloadFailedScript } from './sdk.js';
+import { reloadFailedScript, withTimeout } from './sdk.js';
 
 const API_READY_TIMEOUT_MS = 12000;
 let v3ReadyPromise = null;
@@ -37,11 +37,9 @@ export function ymapsV3Ready() {
                 return;
             }
             if (typeof ymaps3 !== 'undefined' && ymaps3.ready) {
-                Promise.resolve(ymaps3.ready).then(resolve, error => {
-                    window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
-                    window.yandexMapsLoadErrors.v3 = true;
-                    reject(error);
-                });
+                withTimeout(
+                    ymaps3.ready, API_READY_TIMEOUT_MS, 'Таймаут готовности API карты'
+                ).then(resolve, reject);
                 return;
             }
             if (performance.now() - started >= API_READY_TIMEOUT_MS) {
@@ -53,6 +51,8 @@ export function ymapsV3Ready() {
         check();
     }).catch(error => {
         v3ReadyPromise = null;
+        window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
+        window.yandexMapsLoadErrors.v3 = true;
         throw error;
     });
     return v3ReadyPromise;

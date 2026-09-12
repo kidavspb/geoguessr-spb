@@ -8,10 +8,10 @@ import random
 # Константы игры
 ROUNDS_PER_GAME = 5
 MAX_SCORE_PER_ROUND = 5000
-# Максимальное расстояние для СПб (примерно 30 км диаметр города)
+# Расстояние, начиная с которого раунд даёт ноль очков.
 MAX_DISTANCE_KM = 30
 
-# Серверный предел перегенераций точки на раунд (клиент сдаётся после 8):
+# Серверный предел перегенераций точки на раунд:
 # без него можно бесконечно рероллить точку, пока не выпадет знакомое место.
 MAX_SKIPS_PER_ROUND = 10
 
@@ -94,6 +94,8 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
     a = math.sin(delta_lat / 2) ** 2 + \
         math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    # У противоположных точек погрешность float может дать a > 1.
+    a = min(1.0, max(0.0, a))
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     return R * c
@@ -115,10 +117,12 @@ def parse_coords(data):
     """
     if not isinstance(data, dict):
         return None
+    if isinstance(data.get('latitude'), bool) or isinstance(data.get('longitude'), bool):
+        return None
     try:
         lat = float(data['latitude'])
         lon = float(data['longitude'])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(lat) or not math.isfinite(lon):
         return None
@@ -133,7 +137,7 @@ def parse_time_limit(value):
         return None
     try:
         seconds = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if TIME_LIMIT_MIN <= seconds <= TIME_LIMIT_MAX:
         return seconds

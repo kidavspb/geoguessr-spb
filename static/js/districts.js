@@ -774,6 +774,4 @@ export function initDistrictPicker({ onConfirm }) {
     return true;
 }
 
-export function districtDisplayName(districtId) {
-    return districtName(districtId);
-}
+export { districtName as districtDisplayName };

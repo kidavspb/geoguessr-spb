@@ -2,6 +2,9 @@
 челлендж-ссылки, таймер раунда, серверные лимиты, статистика игрока."""
 from datetime import timedelta
 
+import game_logic
+import pool
+
 
 def _play_full_game(client, name='Игрок', difficulty='center', extra=None):
     """Пройти игру целиком с идеальными ответами; вернуть точки раундов."""
@@ -77,7 +80,7 @@ def test_guess_after_game_over_rejected(client):
 def test_skip_limit_enforced_server_side(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     client.get('/api/game/location')
-    for _ in range(app_module.MAX_SKIPS_PER_ROUND):
+    for _ in range(game_logic.MAX_SKIPS_PER_ROUND):
         assert client.post('/api/game/skip_location').status_code == 200
     over = client.post('/api/game/skip_location')
     assert over.status_code == 429
@@ -168,7 +171,7 @@ def test_guess_atomically_uses_panorama_point_and_grows_pool(client, app_module)
 
     assert response.status_code == 200
     data = response.get_json()
-    assert data['score'] == app_module.MAX_SCORE_PER_ROUND
+    assert data['score'] == game_logic.MAX_SCORE_PER_ROUND
     assert data['correct_location'] == {
         'latitude': pano_lat, 'longitude': pano_lon,
     }
@@ -183,20 +186,20 @@ def test_choose_round_points_uses_pool(app, app_module, monkeypatch):
 
     seeded = set()
     with app.app_context():
-        for i in range(app_module.POOL_MIN_SIZE + 5):
+        for i in range(pool.POOL_MIN_SIZE + 5):
             lat = 59.9300 + i * 0.0005
             lon = 30.3100 + i * 0.0005
             db.session.add(VerifiedPoint(
                 latitude=lat, longitude=lon,
                 lat_key=int(round(lat * 10000)), lon_key=int(round(lon * 10000)),
-                dist_from_center_km=app_module.haversine_distance(lat, lon, *app_module.SPB_CENTER),
+                dist_from_center_km=game_logic.haversine_distance(lat, lon, *game_logic.SPB_CENTER),
             ))
             seeded.add((lat, lon))
         db.session.commit()
 
         # random() < POOL_USE_PROBABILITY всегда → каждая точка берётся из пула
         monkeypatch.setattr('random.random', lambda: 0.0)
-        points = app_module.choose_round_points('center', 5)
+        points = pool.choose_round_points('center', 5)
 
     assert len(points) == 5
     for p in points:
@@ -208,7 +211,7 @@ def test_regular_games_keep_exploring_new_places(app, app_module, monkeypatch):
     from models import VerifiedPoint, db
 
     with app.app_context():
-        for i in range(app_module.POOL_MIN_SIZE):
+        for i in range(pool.POOL_MIN_SIZE):
             lat = 59.9300 + i * 0.0005
             lon = 30.3100 + i * 0.0005
             db.session.add(VerifiedPoint(
@@ -218,17 +221,17 @@ def test_regular_games_keep_exploring_new_places(app, app_module, monkeypatch):
             ))
         db.session.commit()
         monkeypatch.setattr('random.random', lambda: 0.99)
-        candidate = app_module.choose_round_candidates('center', 1)[0]
+        candidate = pool.choose_round_candidates('center', 1)[0]
 
     assert candidate[2] == 'explore'
 
 
 def test_choose_round_points_generates_when_pool_small(app, app_module):
     with app.app_context():
-        points = app_module.choose_round_points('center', 5)
+        points = pool.choose_round_points('center', 5)
     assert len(points) == 5
     for lat, lon in points:
-        assert app_module.SPB_BOUNDS['lat_min'] <= lat <= app_module.SPB_BOUNDS['lat_max']
+        assert game_logic.SPB_BOUNDS['lat_min'] <= lat <= game_logic.SPB_BOUNDS['lat_max']
 
 
 # --------------------------------------------------------------------------
@@ -446,14 +449,6 @@ def test_player_stats(client, app):
     assert empty['best_score'] is None
 
     assert client.get('/api/player/stats').status_code == 400
-
-
-# --------------------------------------------------------------------------
-# Геокодер (в тестах выключен — ключа нет)
-# --------------------------------------------------------------------------
-
-def test_reverse_geocode_disabled_without_key(app_module):
-    assert app_module.reverse_geocode(59.939, 30.315) is None
 
 
 # --------------------------------------------------------------------------

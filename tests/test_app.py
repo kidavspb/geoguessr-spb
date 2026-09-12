@@ -5,72 +5,74 @@
 """
 import math
 
+import game_logic
+
 
 # --------------------------------------------------------------------------
 # Чистые функции
 # --------------------------------------------------------------------------
 
-def test_haversine_same_point_is_zero(app_module):
-    assert app_module.haversine_distance(59.94, 30.31, 59.94, 30.31) == 0
+def test_haversine_same_point_is_zero():
+    assert game_logic.haversine_distance(59.94, 30.31, 59.94, 30.31) == 0
 
 
-def test_haversine_one_degree_latitude(app_module):
+def test_haversine_one_degree_latitude():
     # 1° широты ≈ 111.2 км по меридиану.
-    dist = app_module.haversine_distance(59.0, 30.0, 60.0, 30.0)
+    dist = game_logic.haversine_distance(59.0, 30.0, 60.0, 30.0)
     assert math.isclose(dist, 111.19, rel_tol=0.01)
 
 
-def test_calculate_score_bounds(app_module):
-    max_score = app_module.MAX_SCORE_PER_ROUND
-    assert app_module.calculate_score(0) == max_score          # точно в цель
-    assert app_module.calculate_score(0.04) == max_score       # в пределах 50 м
-    assert app_module.calculate_score(app_module.MAX_DISTANCE_KM) == 0
-    assert app_module.calculate_score(1000) == 0               # очень далеко
-    mid = app_module.calculate_score(3)
+def test_calculate_score_bounds():
+    max_score = game_logic.MAX_SCORE_PER_ROUND
+    assert game_logic.calculate_score(0) == max_score          # точно в цель
+    assert game_logic.calculate_score(0.04) == max_score       # в пределах 50 м
+    assert game_logic.calculate_score(game_logic.MAX_DISTANCE_KM) == 0
+    assert game_logic.calculate_score(1000) == 0               # очень далеко
+    mid = game_logic.calculate_score(3)
     assert 0 < mid < max_score
 
 
-def test_calculate_score_is_monotonic(app_module):
-    scores = [app_module.calculate_score(d) for d in (0.1, 1, 3, 5, 10, 20)]
+def test_calculate_score_is_monotonic():
+    scores = [game_logic.calculate_score(d) for d in (0.1, 1, 3, 5, 10, 20)]
     assert scores == sorted(scores, reverse=True)
 
 
-def test_parse_coords_valid(app_module):
-    assert app_module.parse_coords({'latitude': 59.9, 'longitude': 30.3}) == (59.9, 30.3)
+def test_parse_coords_valid():
+    assert game_logic.parse_coords({'latitude': 59.9, 'longitude': 30.3}) == (59.9, 30.3)
     # Строки, приводимые к float, тоже принимаются.
-    assert app_module.parse_coords({'latitude': '59.9', 'longitude': '30.3'}) == (59.9, 30.3)
+    assert game_logic.parse_coords({'latitude': '59.9', 'longitude': '30.3'}) == (59.9, 30.3)
 
 
-def test_parse_coords_invalid(app_module):
-    assert app_module.parse_coords(None) is None
-    assert app_module.parse_coords('not a dict') is None
-    assert app_module.parse_coords({'latitude': 59.9}) is None            # нет долготы
-    assert app_module.parse_coords({'latitude': 'x', 'longitude': 1}) is None
-    assert app_module.parse_coords({'latitude': 200, 'longitude': 30}) is None  # вне диапазона
-    assert app_module.parse_coords({'latitude': float('nan'), 'longitude': 30}) is None
+def test_parse_coords_invalid():
+    assert game_logic.parse_coords(None) is None
+    assert game_logic.parse_coords('not a dict') is None
+    assert game_logic.parse_coords({'latitude': 59.9}) is None            # нет долготы
+    assert game_logic.parse_coords({'latitude': 'x', 'longitude': 1}) is None
+    assert game_logic.parse_coords({'latitude': 200, 'longitude': 30}) is None  # вне диапазона
+    assert game_logic.parse_coords({'latitude': float('nan'), 'longitude': 30}) is None
 
 
-def test_generate_random_point_within_bounds(app_module):
-    bounds = app_module.SPB_BOUNDS
+def test_generate_random_point_within_bounds():
+    bounds = game_logic.SPB_BOUNDS
     for difficulty in ('center', 'medium'):
         for _ in range(200):
-            lat, lon = app_module.generate_random_point(difficulty)
+            lat, lon = game_logic.generate_random_point(difficulty)
             assert bounds['lat_min'] <= lat <= bounds['lat_max']
             assert bounds['lon_min'] <= lon <= bounds['lon_max']
 
 
-def test_generate_hard_point_inside_exact_city(app_module):
+def test_generate_hard_point_inside_exact_city():
     from districts import point_in_city
 
     for _ in range(200):
-        lat, lon = app_module.generate_random_point('hard')
+        lat, lon = game_logic.generate_random_point('hard')
         assert point_in_city(lat, lon)
 
 
-def test_difficulty_name(app_module):
-    assert app_module.difficulty_name('center') == 'Центр'
-    assert app_module.difficulty_name('hard') == 'Весь город'
-    assert app_module.difficulty_name('unknown') == 'unknown'
+def test_difficulty_name():
+    assert game_logic.difficulty_name('center') == 'Центр'
+    assert game_logic.difficulty_name('hard') == 'Весь город'
+    assert game_logic.difficulty_name('unknown') == 'unknown'
 
 
 # --------------------------------------------------------------------------

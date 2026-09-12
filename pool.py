@@ -1,13 +1,14 @@
 """Пул проверенных точек — мест, где панорама Яндекса точно существует.
 
-Пополняется автоматически из честных игр (см. set_actual_point): каждая
-панорама, прошедшая антифрод, попадает в пул. Новые игры берут точки отсюда —
-раунд стартует сразу, без перебора случайных точек в поисках панорамы.
+Пополняется из validate_panorama и guess (set_actual_point — старый API).
+Клиентские координаты ограничены серверной точкой и выбранной территорией;
+это базовая проверка, а не подтверждение панорамы независимым источником.
 """
 import logging
 import random
 
 from sqlalchemy import or_
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import db, VerifiedPoint
 from game_logic import SPB_BOUNDS, SPB_CENTER, generate_random_point, haversine_distance
@@ -61,9 +62,13 @@ def mark_point_failed(lat, lon, *, commit=True):
                         POOL_MAX_FAILS, lat, lon)
         if commit:
             db.session.commit()
-    except Exception:
+    except SQLAlchemyError:
+        if not commit:
+            # Внешняя транзакция владеет также сменой точки и lock игры.
+            # Нельзя молча откатить её и продолжить skip без защиты от гонок.
+            raise
         db.session.rollback()
-        logger.debug('Не удалось обновить статус точки пула', exc_info=True)
+        logger.warning('Не удалось обновить статус точки пула', exc_info=True)
 
 
 def choose_round_candidates(difficulty, count, *, district_id=None,
@@ -137,7 +142,7 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
 
 
 def choose_round_points(difficulty, count, **kwargs):
-    """Совместимая обёртка, возвращающая только пары координат."""
+    """Координаты для общего набора daily, без диагностического source."""
     return [(lat, lon) for lat, lon, _source in
             choose_round_candidates(difficulty, count, **kwargs)]
 
@@ -159,7 +164,7 @@ def add_verified_point(lat, lon):
         return
     try:
         lat_key, lon_key = int(round(lat * 10000)), int(round(lon * 10000))
-        existing = VerifiedPoint.query.filter_by(lat_key=lat_key, lon_key=lon_key).first()
+        existing = _point_by_coords(lat, lon)
         if existing is not None:
             # Панорама подтверждена живой — прощаем прошлые неудачи
             changed = False
@@ -181,8 +186,8 @@ def add_verified_point(lat, lon):
             district_id=point_district_id,
         ))
         db.session.commit()
-    except Exception:
+    except SQLAlchemyError:
         # Гонка на unique-ключе или временная блокировка SQLite — точка пула
         # не критична, просто пропускаем.
         db.session.rollback()
-        logger.debug('Точка пула не добавлена (гонка/блокировка)', exc_info=True)
+        logger.warning('Точка пула не добавлена (гонка/блокировка)', exc_info=True)
