@@ -66,11 +66,7 @@ function post(url, body, config = {}) {
 export const api = {
     startGame: body => post('/api/game/start', body, { timeoutMs: 15000 }),
 
-    getLocation: (peek = false) => request(
-        peek ? '/api/game/location?peek=1' : '/api/game/location',
-        {},
-        { retries: 1 }
-    ),
+    getLocation: () => request('/api/game/location', {}, { retries: 1 }),
 
     skipLocation: (roundId, reason = 'no_coverage', locationVersion = null) =>
         post('/api/game/skip_location', {
@@ -79,8 +75,10 @@ export const api = {
             location_version: locationVersion
         }, { retries: locationVersion == null ? 0 : 1 }),
 
-    roundReady: roundId =>
-        post('/api/game/ready', { round_id: roundId }, { retries: 1 }),
+    roundReady: (roundId, locationVersion) =>
+        post('/api/game/ready', {
+            round_id: roundId, location_version: locationVersion
+        }, { retries: 1 }),
 
     validatePanorama: (roundId, latitude, longitude, locationVersion = null) =>
         post('/api/game/validate_panorama', {

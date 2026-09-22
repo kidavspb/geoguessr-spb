@@ -5,7 +5,7 @@
 import { state, MAX_PANORAMA_RETRIES } from './state.js';
 import { showToast } from './utils.js';
 import { api } from './api.js';
-import { reloadFailedScript } from './sdk.js';
+import { reloadFailedScript, withTimeout } from './sdk.js';
 
 const PLAYER_OPTIONS = {
     controls: ['zoomControl'],
@@ -34,22 +34,6 @@ function distanceKm(lat1, lon1, lat2, lon2) {
         Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
     const clamped = Math.min(1, Math.max(0, a));
     return 6371 * 2 * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
-}
-
-function withTimeout(value, timeoutMs, message) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-        Promise.resolve(value).then(
-            result => {
-                clearTimeout(timer);
-                resolve(result);
-            },
-            error => {
-                clearTimeout(timer);
-                reject(error);
-            }
-        );
-    });
 }
 
 function setOverlayActions({ retry = false, skip = false, back = false } = {}) {
@@ -107,7 +91,11 @@ export function ymapsV2Ready() {
             }
             if (typeof ymaps !== 'undefined' && ymaps.ready) {
                 try {
-                    ymaps.ready(resolve);
+                    withTimeout(
+                        new Promise(ready => ymaps.ready(ready)),
+                        API_READY_TIMEOUT_MS,
+                        'Таймаут готовности API панорам'
+                    ).then(resolve, reject);
                 } catch (error) {
                     reject(error);
                 }
@@ -124,6 +112,8 @@ export function ymapsV2Ready() {
         // Следующая ручная попытка после сетевого восстановления должна иметь
         // возможность снова дождаться API.
         v2ReadyPromise = null;
+        window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
+        window.yandexMapsLoadErrors.v2 = true;
         throw error;
     });
     return v2ReadyPromise;
@@ -153,6 +143,7 @@ function metricFor(prepared, status, readyMs = null) {
     if (!prepared || !prepared.location || !prepared.location.round_id) return;
     api.panoramaMetric({
         round_id: prepared.location.round_id,
+        location_version: prepared.location.location_version,
         status,
         lookup_ms: prepared.lookupMs,
         ready_ms: readyMs,
@@ -511,7 +502,9 @@ export async function loadPanorama(location, preloadTask = null) {
         startNoMoveWatchdog();
         // Запускаем фиксацию дедлайна параллельно первому paint: сеть не должна
         // задерживать появление уже открытого Player.
-        const readyPromise = api.roundReady(prepared.location.round_id);
+        const readyPromise = api.roundReady(
+            prepared.location.round_id, prepared.location.location_version
+        );
         await nextPaint();
         if (loadId !== state.roundLoadId) {
             return { ok: false, status: 'cancelled' };

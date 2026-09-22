@@ -211,7 +211,8 @@ geoguessr-spb/
 ├── game_logic.py       # Чистая игровая логика: константы, расчёты, валидация
 ├── districts.py        # Загрузка районов, point-in-polygon и генерация точек
 ├── pool.py             # Пул проверенных точек с панорамами
-├── geocoder.py         # Обратное геокодирование (адрес точки ответа)
+├── daily.py            # Общий набор точек дня по МСК
+├── stats.py            # Сложность мест по накопленным ответам
 ├── models.py           # Модели БД (SQLAlchemy)
 ├── migrations/         # Alembic-миграции схемы БД (Flask-Migrate)
 ├── requirements.txt    # Прод-зависимости
@@ -224,7 +225,7 @@ geoguessr-spb/
 ├── pytest.ini          # Конфиг pytest
 ├── Dockerfile          # Прод-образ (gunicorn)
 ├── docker-compose.yml  # Локальный/прод запуск в Docker
-├── .github/workflows/  # CI: pytest на каждый push
+├── .github/workflows/  # CI: push dev и PR в main
 ├── static/
 │   ├── css/style.css   # Стили интерфейса
 │   ├── js/main.js      # Экраны и жизненный цикл игры
@@ -237,7 +238,7 @@ geoguessr-spb/
 │   └── favicons/       # Иконки приложения: отдельные наборы dev/ и prod/
 ├── templates/
 │   └── index.html      # Главная страница
-└── tests/              # Тесты бэкенда (pytest)
+└── tests/              # Backend, миграции и браузерные E2E
 ```
 
 ## ⚙️ Технологии
@@ -271,6 +272,7 @@ geoguessr-spb/
 | GET | `/api/daily` | Инфо о вызове дня (сыграл ли, сколько игроков сегодня) |
 | GET | `/api/daily/leaderboard` | Топ сегодняшнего вызова дня |
 | GET | `/api/leaderboard` | Таблица лидеров (`?difficulty=…`, `?period=week\|month\|all`) |
+| GET | `/api/admin/stats` | Сводка игр, пула и загрузки панорам (`X-Admin-Key`) |
 | GET/DELETE | `/api/admin/points[/<id>]` | Модерация пула точек (заголовок `X-Admin-Key`) |
 
 ## 🛡️ Защита от накрутки

@@ -42,3 +42,19 @@ export function reloadFailedScript(scriptId, errorKey, timeoutMs = 10000) {
     previous.replaceWith(replacement);
     return loaded;
 }
+
+export function withTimeout(value, timeoutMs, message) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        Promise.resolve(value).then(
+            result => {
+                clearTimeout(timer);
+                resolve(result);
+            },
+            error => {
+                clearTimeout(timer);
+                reject(error);
+            }
+        );
+    });
+}

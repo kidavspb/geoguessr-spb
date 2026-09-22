@@ -78,7 +78,7 @@ class GameRound(db.Model):
     address = db.Column(db.String(300))
     # Сколько раз точка раунда перегенерировалась (серверный лимит против абьюза)
     skips = db.Column(db.Integer, default=0)
-    # Когда точка выдана клиенту — от этого момента считается лимит времени
+    # Первый /ready после появления панорамы — начало лимита времени.
     started_at = db.Column(db.DateTime)
     # Когда игрок ответил; NULL — раунд ещё не сыгран
     answered_at = db.Column(db.DateTime)
@@ -114,8 +114,7 @@ class VerifiedPoint(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     latitude = db.Column(db.Float, nullable=False)
     longitude = db.Column(db.Float, nullable=False)
-    # Ключи дедупликации: координаты, округлённые до ~10 м (int(coord * 10000)).
-    # Две панорамы ближе ~10 м считаются одной точкой пула.
+    # Ключи ячейки: int(round(coord * 10000)), а не поиск по радиусу.
     lat_key = db.Column(db.Integer, nullable=False)
     lon_key = db.Column(db.Integer, nullable=False)
     # Расстояние до центра города — для отбора точек под режим сложности

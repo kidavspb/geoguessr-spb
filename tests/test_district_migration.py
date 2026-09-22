@@ -22,15 +22,14 @@ MIGRATION_MODULE = (
 )
 
 
-def _upgrade(database_path, revision):
+def _upgrade(database_path, revision, *, auto_migrate=False):
     env = os.environ.copy()
     env.update({
         'DATABASE_URL': f'sqlite:///{database_path}',
-        'AUTO_MIGRATE': 'false',
+        'AUTO_MIGRATE': 'true' if auto_migrate else 'false',
         'RATELIMIT_ENABLED': 'false',
         'SESSION_COOKIE_SECURE': 'false',
         'SECRET_KEY': 'district-migration-test',
-        'YANDEX_GEOCODER_API_KEY': '',
         'YANDEX_MAPS_API_KEY': '',
     })
     subprocess.run(
@@ -158,3 +157,19 @@ def test_dataset_is_validated_before_any_ddl(tmp_path, monkeypatch):
             sa.text('SELECT version_num FROM alembic_version')
         ).scalar_one() == PRIOR_REVISION
     engine.dispose()
+
+
+def test_legacy_database_without_alembic_is_stamped_and_upgraded(tmp_path):
+    database_path = tmp_path / 'legacy.db'
+    _upgrade(database_path, '5f7875fb0c81')
+    with sqlite3.connect(database_path) as connection:
+        connection.execute('DROP TABLE alembic_version')
+        connection.execute("INSERT INTO game_sessions (id, player_name) VALUES (1, 'Legacy')")
+
+    _upgrade(database_path, 'head', auto_migrate=True)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
+            DISTRICT_REVISION,
+        )
+        assert connection.execute('SELECT player_name FROM game_sessions').fetchone() == ('Legacy',)
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []

@@ -32,7 +32,7 @@ try:
     import shapely
     from shapely.geometry import MultiPolygon, Point, mapping, shape
     from shapely.geometry.polygon import orient
-except ImportError as exc:  # pragma: no cover - depends on the maintainer setup
+except ImportError:  # pragma: no cover - depends on the maintainer setup
     sys.exit(
         "update_spb_districts: нужен Shapely >= 2.1 "
         "(python -m pip install 'Shapely==2.1.1')"

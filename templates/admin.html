@@ -182,16 +182,17 @@
 
         async function deleteSelected() {
             if (selectedId === null) return;
-            if (!confirm('Удалить точку #' + selectedId + ' из пула?')) return;
-            const response = await fetch('/api/admin/points/' + selectedId, {
+            const pointId = selectedId;
+            if (!confirm('Удалить точку #' + pointId + ' из пула?')) return;
+            const response = await fetch('/api/admin/points/' + pointId, {
                 method: 'DELETE',
                 headers: { 'X-Admin-Key': keyInput.value.trim() }
             });
             if (response.ok) {
-                const { marker } = markers.get(selectedId);
-                map.removeChild(marker);
-                markers.delete(selectedId);
-                selectPoint(null);
+                const entry = markers.get(pointId);
+                if (entry) map.removeChild(entry.marker);
+                markers.delete(pointId);
+                if (selectedId === pointId) selectPoint(null);
                 document.getElementById('pool-stats').textContent = `Точек в пуле: ${markers.size}`;
             } else {
                 alert('Не удалось удалить точку.');

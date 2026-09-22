@@ -283,18 +283,6 @@ def generate_city_point(*, max_attempts: int = 10000):
     raise DistrictDataError('Не удалось сгенерировать точку в границах Санкт-Петербурга')
 
 
-def district_metadata() -> list[dict[str, str | int]]:
-    """Лёгкий список для API без дублирования геометрии."""
-    return [
-        {
-            'id': district.id,
-            'name': district.name,
-            'osm_relation_id': district.osm_relation_id,
-        }
-        for district in load_districts()
-    ]
-
-
 def clear_district_caches():
     """Освободить prepared GEOS objects после one-shot операции.
 
