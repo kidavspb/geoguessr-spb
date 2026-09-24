@@ -161,6 +161,11 @@ async function prepareRound(initialLocation, task = null) {
     let location = initialLocation;
     let attempts = 0;
     let skips = 0;
+    let sawDuplicate = false;
+    const remainingSkips = Math.max(0,
+        (Number(initialLocation.max_location_skips) || 10) -
+        (Number(initialLocation.location_version) || 0)
+    );
 
     try {
         await ymapsV2Ready();
@@ -179,7 +184,7 @@ async function prepareRound(initialLocation, task = null) {
         };
     }
 
-    while (skips <= MAX_PANORAMA_RETRIES) {
+    while (true) {
         if (task && task.cancelled) {
             return {
                 ok: false, status: 'cancelled', location,
@@ -233,6 +238,7 @@ async function prepareRound(initialLocation, task = null) {
                         skipReason = ['outside_city', 'outside_district',
                             'duplicate_panorama'].includes(rejectedReason)
                             ? rejectedReason : 'no_coverage';
+                        if (skipReason === 'duplicate_panorama') sawDuplicate = true;
                         located = { status: skipReason, panorama: null };
                     } else {
                         return {
@@ -273,9 +279,17 @@ async function prepareRound(initialLocation, task = null) {
             };
         }
 
-        if (skips >= MAX_PANORAMA_RETRIES) {
+        // Для обычного отсутствия покрытия сохраняем короткий поиск. Если
+        // встречен повтор уже сыгранной съёмки, используем весь оставшийся
+        // серверный бюджет без серии ручных нажатий «Другое место».
+        const autoSkipLimit = sawDuplicate
+            ? remainingSkips : Math.min(MAX_PANORAMA_RETRIES, remainingSkips);
+        if (skips >= autoSkipLimit) {
+            const exhausted = skips >= remainingSkips;
             return {
-                ok: false, status: 'no_coverage', location, attempts,
+                ok: false,
+                status: exhausted ? 'search_exhausted' : 'no_coverage',
+                location, attempts, exhausted,
                 lookupMs: Math.round(performance.now() - started)
             };
         }
@@ -287,7 +301,7 @@ async function prepareRound(initialLocation, task = null) {
             if (skipped.status === 429) {
                 return {
                     ok: false,
-                    status: 'no_coverage',
+                    status: 'search_exhausted',
                     exhausted: true,
                     error: skipped.data && skipped.data.error,
                     location,
@@ -457,18 +471,17 @@ export async function loadPanorama(location, preloadTask = null) {
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
             showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
-        } else if (status === 'no_coverage') {
-            const districtMode = state.gameData.difficulty === 'district';
+        } else if (status === 'no_coverage' || status === 'search_exhausted') {
             if (prepared && prepared.exhausted) {
                 showLoadingOverlay(
-                    'В этом районе не удалось найти доступную панораму. Выберите другой район или режим.',
-                    { back: districtMode }
+                    'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.',
+                    { back: true }
                 );
             } else {
                 showLoadingOverlay('Не удалось найти съёмку рядом.', {
                     retry: true,
                     skip: true,
-                    back: districtMode,
+                    back: state.gameData.difficulty === 'district',
                 });
             }
         } else {

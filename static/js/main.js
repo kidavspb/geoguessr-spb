@@ -85,7 +85,7 @@ function initEventListeners() {
     document.getElementById('retry-panorama-btn').addEventListener('click', retryPanorama);
     document.getElementById('skip-panorama-btn').addEventListener('click', skipPanorama);
     document.getElementById('back-to-district-btn').addEventListener(
-        'click', returnToDistrictSettings
+        'click', returnToSettings
     );
 
     // Экран результата. ВАЖНО: обработчик кнопки «Продолжить» назначается
@@ -630,13 +630,8 @@ function retryPanorama() {
     loadCurrentLocation(state.currentLocation);
 }
 
-/**
- * В редком районе покрытие панорам может закончиться раньше серверного лимита.
- * Возвращаем игрока к тем же настройкам и освобождаем тяжёлые объекты Яндекса;
- * выбранный район остаётся в gameData, поэтому его можно повторить или сменить.
- */
-function returnToDistrictSettings() {
-    if (gameData.difficulty !== 'district') return;
+/** Возврат к прежним настройкам из неудачного поиска панорамы. */
+function returnToSettings() {
     stopRoundTimer();
     state.roundInteractive = false;
     state.roundLoading = false;
@@ -675,15 +670,14 @@ async function skipPanorama() {
     }
     if (!skipped || !skipped.ok || !skipped.data) {
         const limitReached = skipped && skipped.status === 429;
-        const districtMode = gameData.difficulty === 'district';
-        const message = limitReached && districtMode
-            ? 'В этом районе не удалось найти доступную панораму. Выберите другой район или режим.'
+        const message = limitReached
+            ? 'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.'
             : skipped && skipped.data && skipped.data.error
                 ? skipped.data.error : 'Не получилось сменить место.';
         showLoadingOverlay(message, {
             retry: !limitReached,
             skip: !limitReached,
-            back: districtMode,
+            back: true,
         });
         return;
     }

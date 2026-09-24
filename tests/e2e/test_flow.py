@@ -1091,13 +1091,30 @@ def test_district_skip_limit_has_honest_recovery_message(page, server):
     page.locator('#start-btn').click()
 
     expect(page.locator('#photo-overlay > span')).to_have_text(
-        'В этом районе не удалось найти доступную панораму. '
-        'Выберите другой район или режим.',
+        'Поиск новой съёмки пока не удался. '
+        'Попробуйте позже или измените настройки.',
         timeout=10000,
     )
     expect(page.get_by_role('button', name='Повторить')).to_be_hidden()
     expect(page.get_by_role('button', name='Другое место')).to_be_hidden()
     expect(page.get_by_role('button', name='К настройкам')).to_be_visible()
+
+
+def test_standard_skip_limit_still_has_settings_action(page, server):
+    """После предела поиска обычная игра тоже не остаётся без действий."""
+    page.add_init_script('window.__ymapsEmptyLocateCount = 100')
+    page.route('**/api/game/skip_location', lambda route: route.fulfill(
+        status=429,
+        content_type='application/json',
+        body='{"error":"Лимит перегенераций точки для этого раунда исчерпан"}',
+    ))
+    page.goto(server)
+    page.locator('#start-btn').click()
+
+    back = page.get_by_role('button', name='К настройкам')
+    expect(back).to_be_visible(timeout=10000)
+    back.click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
 
 
 def test_too_distant_nearest_panorama_is_not_used_as_the_answer(page, server):
@@ -1193,6 +1210,48 @@ def test_duplicate_panorama_in_next_round_is_replaced_before_player(page, server
     }""")
     assert location['round'] == 2
     assert location['location_version'] == 1
+
+
+def test_district_keeps_searching_after_five_duplicate_panoramas(page, server):
+    """Несколько повторов подряд не запирают игрока перед вторым раундом."""
+    first_round_id = None
+    duplicate_count = 0
+    skip_reasons = []
+
+    def validate_route(route):
+        nonlocal first_round_id, duplicate_count
+        round_id = route.request.post_data_json['round_id']
+        if first_round_id is None:
+            first_round_id = round_id
+        if round_id != first_round_id and duplicate_count < 5:
+            duplicate_count += 1
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body='{"valid":false,"reason":"duplicate_panorama"}',
+            )
+        else:
+            route.continue_()
+
+    page.route('**/api/game/validate_panorama', validate_route)
+    page.on('request', lambda request: skip_reasons.append(
+        request.post_data_json['reason'])
+        if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('petrogradsky')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.locator('#start-btn').click()
+
+    _play_round(page)
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+
+    assert duplicate_count == 5
+    assert skip_reasons == ['duplicate_panorama'] * 5
+    assert page.evaluate('window.__ymapsStats.locateCalls') == 7
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
 
 
 def test_standard_mode_replaces_repeat_before_second_player(page, server):

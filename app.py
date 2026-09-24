@@ -279,6 +279,7 @@ def _location_payload(game, rnd):
         # Версия кандидата внутри того же round_id. Нужна, чтобы безопасно
         # повторить skip после потерянного HTTP-ответа, не перескочив ещё раз.
         'location_version': rnd.skips or 0,
+        'max_location_skips': MAX_SKIPS_PER_ROUND,
         'requires_spatial_validation': _round_requires_spatial_validation(game, rnd),
     }
     if game.difficulty == DISTRICT_MODE:
@@ -856,10 +857,11 @@ def skip_location():
         for other in game.rounds
         if other.gen_latitude is not None and other.gen_longitude is not None
     ]
-    excluded_coords.extend(
+    played_coords = [
         _scoring_point(other) for other in game.rounds
         if other.answered_at is not None
-    )
+    ]
+    excluded_coords.extend(played_coords)
     # Пустой успешный ответ locate означает, что покрытие действительно
     # исчезло. Сетевой сбой не должен отравлять и постепенно удалять весь пул.
     if reason == 'no_coverage':
@@ -871,11 +873,44 @@ def skip_location():
     # восстанавливаем раунд из пула, чтобы не заставлять игрока ждать цепочку
     # новых случайных кандидатов. При маленьком пуле генерация остаётся фолбэком.
     previous_source = rnd.location_source or 'legacy'
-    lat, lon, _ = choose_round_candidates(
+    lat, lon, replacement_source = choose_round_candidates(
         game.difficulty or 'medium', 1, district_id=game.district_id,
         prefer_pool=True,
         exclude=excluded_coords,
+        avoid=played_coords if reason == 'duplicate_panorama' else None,
     )[0]
+    if (game.difficulty == DISTRICT_MODE and game.daily_date is None
+            and game.challenged_from_id is None):
+        # Малый пул может целиком быть зарезервирован за будущими раундами.
+        # Не теряем эти проверенные места: переносим лучшее вперёд, а новый
+        # кандидат ставим в освободившийся будущий раунд той же партии.
+        future_pool = [
+            other for other in game.rounds
+            if other.round_number > rnd.round_number
+            and other.answered_at is None
+            and (other.location_source or '').startswith('pool')
+            and all(haversine_distance(
+                other.gen_latitude, other.gen_longitude, *point
+            ) >= MIN_ROUND_LOCATION_DISTANCE_KM for point in played_coords)
+        ]
+        if future_pool:
+            def distance_from_played(candidate_lat, candidate_lon):
+                return min((haversine_distance(
+                    candidate_lat, candidate_lon, *point
+                ) for point in played_coords), default=float('inf'))
+
+            future = max(future_pool, key=lambda other: distance_from_played(
+                other.gen_latitude, other.gen_longitude
+            ))
+            future_distance = distance_from_played(
+                future.gen_latitude, future.gen_longitude
+            )
+            if (future_distance > distance_from_played(lat, lon)
+                    or (replacement_source == 'explore' and future_distance
+                        > MAX_ACTUAL_POINT_DRIFT_KM + MIN_ROUND_LOCATION_DISTANCE_KM)):
+                future.gen_latitude, lat = lat, future.gen_latitude
+                future.gen_longitude, lon = lon, future.gen_longitude
+                future.location_source = replacement_source
     rnd.gen_latitude = lat
     rnd.gen_longitude = lon
     rnd.actual_latitude = None
@@ -1012,8 +1047,8 @@ def panorama_metric():
             return None
 
     status = str(data.get('status') or '')[:24]
-    allowed_statuses = {'ready', 'no_coverage', 'network_error', 'unsupported',
-                        'api_error', 'cancelled'}
+    allowed_statuses = {'ready', 'no_coverage', 'search_exhausted',
+                        'network_error', 'unsupported', 'api_error', 'cancelled'}
     rnd.panorama_lookup_ms = bounded_int('lookup_ms', 120_000)
     rnd.panorama_ready_ms = bounded_int('ready_ms', 180_000)
     rnd.panorama_attempts = bounded_int('attempts', 20)

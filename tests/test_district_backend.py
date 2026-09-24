@@ -172,6 +172,139 @@ def test_duplicate_panorama_is_replaced_without_poisoning_pool(
         assert app_module.db.session.get(GameRound, second['round_id']).actual_latitude is None
 
 
+def test_duplicate_recovery_prefers_distant_verified_point_in_same_district(
+        client, app_module, monkeypatch):
+    """После повтора выбираем доступную съёмку подальше от сыгранной."""
+    from districts import point_in_district
+    from models import GameRound, VerifiedPoint
+
+    started = _start_district(client).get_json()
+    played = (59.9475, 30.3159)
+    nearby = (59.949, 30.3159)
+    distant = (59.965, 30.3159)
+    assert all(point_in_district(*point, 'petrogradsky')
+               for point in (played, nearby, distant))
+
+    with app_module.app.app_context():
+        rounds = GameRound.query.order_by(GameRound.round_number).all()
+        for rnd, lat in zip(rounds, (59.9475, 59.948, 59.952, 59.956, 59.960)):
+            rnd.gen_latitude, rnd.gen_longitude = lat, 30.3159
+        app_module.db.session.commit()
+
+    first = client.get('/api/game/location').get_json()
+    assert first['round_id'] == started['location']['round_id']
+    assert client.post('/api/game/validate_panorama', json={
+        'round_id': first['round_id'],
+        'location_version': first['location_version'],
+        'latitude': played[0], 'longitude': played[1],
+    }).get_json() == {'valid': True}
+    assert client.post('/api/game/guess', json={
+        'round_id': first['round_id'],
+        'latitude': played[0], 'longitude': played[1],
+        'panorama_latitude': played[0], 'panorama_longitude': played[1],
+    }).status_code == 200
+
+    with app_module.app.app_context():
+        for latitude, longitude in (nearby, distant):
+            app_module.db.session.add(VerifiedPoint(
+                latitude=latitude, longitude=longitude,
+                lat_key=int(round(latitude * 10000)),
+                lon_key=int(round(longitude * 10000)),
+                dist_from_center_km=1.0,
+                district_id='petrogradsky',
+            ))
+        app_module.db.session.commit()
+
+    second = client.get('/api/game/location').get_json()
+    assert client.post('/api/game/validate_panorama', json={
+        'round_id': second['round_id'],
+        'location_version': second['location_version'],
+        'latitude': played[0], 'longitude': played[1],
+    }).get_json() == {'valid': False, 'reason': 'duplicate_panorama'}
+    skipped = client.post('/api/game/skip_location', json={
+        'round_id': second['round_id'],
+        'location_version': second['location_version'],
+        'reason': 'duplicate_panorama',
+    })
+
+    assert skipped.status_code == 200
+    assert (skipped.get_json()['latitude'], skipped.get_json()['longitude']) == distant
+    assert point_in_district(*distant, 'petrogradsky')
+    with app_module.app.app_context():
+        assert all(point.fail_count == 0 for point in VerifiedPoint.query.all())
+
+        # Если все известные точки уже заняты, исследовательская замена тоже
+        # должна отдаляться от сыгранной съёмки, когда район это позволяет.
+        from pool import choose_round_candidates
+        generated = [
+            (latitude, 30.3159) for latitude in
+            (59.9485, 59.9495, 59.9500, 59.9505, 59.9510, 59.9515,
+             59.9525, 59.9530, 59.9535, 59.9540, 59.9545, 59.9700)
+        ]
+        assert all(point_in_district(*point, 'petrogradsky')
+                   for point in generated)
+        generated_iter = iter(generated)
+        monkeypatch.setattr(
+            'pool.generate_district_point', lambda _district: next(generated_iter)
+        )
+        candidate = choose_round_candidates(
+            'district', 1, district_id='petrogradsky', prefer_pool=True,
+            exclude=[played, nearby, distant], avoid=[played],
+        )[0]
+        assert candidate == (*generated[-1], 'explore')
+
+
+def test_district_recovery_can_use_verified_point_reserved_for_future_round(
+        client, app_module, monkeypatch):
+    """Текущий раунд не теряет известную съёмку из будущего раунда."""
+    from models import GameRound, VerifiedPoint
+
+    _start_district(client)
+    played = (59.947, 30.3159)
+    future_point = (59.960, 30.3159)
+    new_future_point = (59.953, 30.3159)
+    with app_module.app.app_context():
+        rounds = GameRound.query.order_by(GameRound.round_number).all()
+        for rnd, lat in zip(rounds, (59.947, 59.948, 59.960, 59.951, 59.955)):
+            rnd.gen_latitude, rnd.gen_longitude = lat, 30.3159
+        rounds[2].location_source = 'pool'
+        app_module.db.session.commit()
+
+    first = client.get('/api/game/location').get_json()
+    assert client.post('/api/game/validate_panorama', json={
+        'round_id': first['round_id'],
+        'latitude': played[0], 'longitude': played[1],
+    }).get_json() == {'valid': True}
+    assert client.post('/api/game/guess', json={
+        'round_id': first['round_id'],
+        'latitude': played[0], 'longitude': played[1],
+        'panorama_latitude': played[0], 'panorama_longitude': played[1],
+    }).status_code == 200
+
+    with app_module.app.app_context():
+        app_module.db.session.add(VerifiedPoint(
+            latitude=future_point[0], longitude=future_point[1],
+            lat_key=int(round(future_point[0] * 10000)),
+            lon_key=int(round(future_point[1] * 10000)),
+            dist_from_center_km=1.0, district_id='petrogradsky',
+        ))
+        app_module.db.session.commit()
+
+    monkeypatch.setattr('pool.generate_district_point', lambda _district: new_future_point)
+    second = client.get('/api/game/location').get_json()
+    skipped = client.post('/api/game/skip_location', json={
+        'round_id': second['round_id'],
+        'location_version': second['location_version'],
+        'reason': 'duplicate_panorama',
+    })
+    assert skipped.status_code == 200
+    assert (skipped.get_json()['latitude'], skipped.get_json()['longitude']) == future_point
+    with app_module.app.app_context():
+        future = GameRound.query.filter_by(round_number=3).one()
+        assert (future.gen_latitude, future.gen_longitude) == new_future_point
+        assert future.location_source == 'explore'
+
+
 def test_hard_start_generates_all_rounds_inside_exact_city(client, app_module):
     from districts import point_in_city
     from models import GameRound, GameSession

@@ -75,7 +75,8 @@ def mark_point_failed(lat, lon, *, commit=True):
 
 
 def choose_round_candidates(difficulty, count, *, district_id=None,
-                            pool_only=False, prefer_pool=False, exclude=None):
+                            pool_only=False, prefer_pool=False, exclude=None,
+                            avoid=None):
     """Кандидаты раундов вместе с источником точки.
 
     Обычная игра сохраняет прежнюю долю исследовательских точек — молодой
@@ -84,6 +85,8 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
     состоялась, и дальше важнее быстро восстановить раунд. ``pool_only`` нужен
     для честных общих наборов (вызов дня), если в пуле хватает точек.
     ``exclude`` не даёт восстановлению повторить место из той же партии.
+    ``avoid`` при замене повторной панорамы направляет поиск подальше от
+    уже сыгранных съёмок, не запрещая тесные районы целиком.
 
     Возвращает ``[(latitude, longitude, source), ...]``.
     """
@@ -117,6 +120,7 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
             query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
 
     excluded_coords = list(exclude or ())
+    avoided_coords = list(avoid or ())
     pool = []
     pool_count = query.count()
     # Районный пул на старте может быть мал: берём любые известные
@@ -131,6 +135,11 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         pool = query.order_by(db.func.random()).limit(
             min(pool_count, max(count * 10, 30))
         ).all()
+        if prefer_pool and avoided_coords:
+            pool.sort(key=lambda point: min(
+                haversine_distance(point.latitude, point.longitude, lat, lon)
+                for lat, lon in avoided_coords
+            ), reverse=True)
 
     points = []
     pool_iter = iter(pool)
@@ -156,15 +165,23 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         else:
             # Генератор обычно выдаёт новое место сразу. Повторные попытки
             # нужны для небольших районов и пересечения с точками пула.
+            generated = []
+            target_count = 12 if prefer_pool and avoided_coords else 1
             for _attempt in range(100):
                 if difficulty == 'district':
                     lat, lon = generate_district_point(district_id)
                 else:
                     lat, lon = generate_random_point(difficulty)
                 if not is_repeated(lat, lon):
-                    break
-            else:
+                    generated.append((lat, lon))
+                    if len(generated) == target_count:
+                        break
+            if not generated:
                 raise ValueError('Не удалось подобрать неповторяющуюся точку раунда')
+            lat, lon = max(generated, key=lambda point: min(
+                haversine_distance(*point, other_lat, other_lon)
+                for other_lat, other_lon in avoided_coords
+            )) if avoided_coords else generated[0]
             source = 'explore'
         points.append((lat, lon, source))
         excluded_coords.append((lat, lon))
