@@ -1146,6 +1146,91 @@ def test_panorama_outside_district_is_replaced_before_player(page, server):
     assert stats['panoramaPlayersCreated'] == 1
 
 
+def test_duplicate_panorama_in_next_round_is_replaced_before_player(page, server):
+    """Повтор уже сыгранной панорамы не показывается во втором раунде."""
+    round_ids = []
+    rejected_duplicate = False
+    skip_payloads = []
+
+    def validate_route(route):
+        nonlocal rejected_duplicate
+        round_id = route.request.post_data_json['round_id']
+        if round_id not in round_ids:
+            round_ids.append(round_id)
+        if len(round_ids) == 2 and not rejected_duplicate:
+            rejected_duplicate = True
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body='{"valid":false,"reason":"duplicate_panorama"}',
+            )
+        else:
+            route.continue_()
+
+    page.route('**/api/game/validate_panorama', validate_route)
+    page.on('request', lambda request: skip_payloads.append(request.post_data_json)
+            if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('petrogradsky')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.locator('#start-btn').click()
+
+    _play_round(page)
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+
+    assert rejected_duplicate
+    assert len(round_ids) == 2
+    assert [payload['reason'] for payload in skip_payloads] == ['duplicate_panorama']
+    assert page.evaluate('window.__ymapsStats.locateCalls') == 3
+    # Игроку создали Player только для первого и заменённого второго раундов.
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
+    location = page.evaluate("""async () => {
+        const { state } = await import('/static/js/state.js');
+        return state.currentLocation;
+    }""")
+    assert location['round'] == 2
+    assert location['location_version'] == 1
+
+
+def test_standard_mode_replaces_repeat_before_second_player(page, server):
+    """Обычный режим тоже сверяет съёмку с уже сыгранным раундом."""
+    validation_count = 0
+    skip_reasons = []
+
+    def validate_route(route):
+        nonlocal validation_count
+        validation_count += 1
+        if validation_count == 1:
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body='{"valid":false,"reason":"duplicate_panorama"}',
+            )
+        else:
+            route.continue_()
+
+    page.route('**/api/game/validate_panorama', validate_route)
+    page.on('request', lambda request: skip_reasons.append(
+        request.post_data_json['reason'])
+        if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.locator('#start-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    assert validation_count == 0  # в первом раунде сравнивать ещё не с чем
+
+    _play_round(page)
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+
+    assert validation_count == 2
+    assert skip_reasons == ['duplicate_panorama']
+    assert page.evaluate('window.__ymapsStats.locateCalls') == 3
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
+
+
 def test_panorama_outside_city_is_replaced_before_player(page, server):
     """«Весь город» валидирует точную границу до создания Player."""
     validation_count = 0

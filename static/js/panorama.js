@@ -207,10 +207,10 @@ async function prepareRound(initialLocation, task = null) {
                 const districtId = location.district_id ||
                     (state.gameData.difficulty === 'district'
                         ? state.gameData.districtId : null);
-                const needsSpatialValidation = Boolean(
-                    districtId || location.requires_spatial_validation
+                const needsPreflight = Boolean(
+                    districtId || location.requires_spatial_validation || location.round > 1
                 );
-                if (needsSpatialValidation) {
+                if (needsPreflight) {
                     const validation = await api.validatePanorama(
                         location.round_id,
                         position[0],
@@ -227,13 +227,13 @@ async function prepareRound(initialLocation, task = null) {
                         };
                     }
                     if (!validation.data.valid) {
-                        // Ближайшая съёмка может оказаться за выбранной
-                        // административной границей. Это не no-coverage и не
-                        // должно портить подтверждённую точку пула.
-                        const spatialReason = validation.data.reason === 'outside_city'
-                            ? 'outside_city' : 'outside_district';
-                        located = { status: spatialReason, panorama: null };
-                        skipReason = spatialReason;
+                        // Повтор съёмки или выход за границу не означает, что
+                        // панорама исчезла: точку пула нельзя помечать плохой.
+                        const rejectedReason = validation.data.reason;
+                        skipReason = ['outside_city', 'outside_district',
+                            'duplicate_panorama'].includes(rejectedReason)
+                            ? rejectedReason : 'no_coverage';
+                        located = { status: skipReason, panorama: null };
                     } else {
                         return {
                             ok: true,
@@ -257,7 +257,7 @@ async function prepareRound(initialLocation, task = null) {
                     };
                 }
             }
-            if (located.status !== 'outside_district' && located.status !== 'outside_city') {
+            if (located.status === 'ready') {
                 // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
                 // может оказаться слишком далеко от загаданного места. Такой Player
                 // дал бы визуально один адрес, а сервер считал бы по другому.

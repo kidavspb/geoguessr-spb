@@ -11,7 +11,10 @@ from sqlalchemy import or_
 from sqlalchemy.exc import SQLAlchemyError
 
 from models import db, VerifiedPoint
-from game_logic import SPB_BOUNDS, SPB_CENTER, generate_random_point, haversine_distance
+from game_logic import (
+    MIN_ROUND_LOCATION_DISTANCE_KM, SPB_BOUNDS, SPB_CENTER,
+    generate_random_point, haversine_distance,
+)
 from districts import (
     DistrictDataError, district_for_point, generate_district_point,
     is_valid_district_id,
@@ -113,6 +116,7 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         if radius is not None:
             query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
 
+    excluded_coords = list(exclude or ())
     pool = []
     pool_count = query.count()
     # Районный пул на старте может быть мал: берём любые известные
@@ -122,22 +126,48 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
                           else pool_count >= POOL_MIN_SIZE)
     enough_for_pool_only = pool_count >= count
     if enough_for_regular or (pool_only and enough_for_pool_only) or (prefer_pool and pool_count):
-        pool = query.order_by(db.func.random()).limit(count).all()
+        # Несколько записей пула могут лежать рядом с уже сыгранной съёмкой.
+        # Берём запас кандидатов, чтобы найти другую точку до fallback-генерации.
+        pool = query.order_by(db.func.random()).limit(
+            min(pool_count, max(count * 10, 30))
+        ).all()
 
     points = []
     pool_iter = iter(pool)
+
+    def is_repeated(lat, lon):
+        return any(
+            haversine_distance(lat, lon, other_lat, other_lon)
+            < MIN_ROUND_LOCATION_DISTANCE_KM
+            for other_lat, other_lon in excluded_coords
+        )
+
     for _ in range(count):
         should_use_pool = pool_only or prefer_pool or random.random() < POOL_USE_PROBABILITY
-        picked = next(pool_iter, None) if should_use_pool else None
+        picked = None
+        if should_use_pool:
+            for candidate in pool_iter:
+                if not is_repeated(candidate.latitude, candidate.longitude):
+                    picked = candidate
+                    break
         if picked is not None:
             source = 'pool_recovery' if prefer_pool else 'pool'
-            points.append((picked.latitude, picked.longitude, source))
+            lat, lon = picked.latitude, picked.longitude
         else:
-            if difficulty == 'district':
-                lat, lon = generate_district_point(district_id)
+            # Генератор обычно выдаёт новое место сразу. Повторные попытки
+            # нужны для небольших районов и пересечения с точками пула.
+            for _attempt in range(100):
+                if difficulty == 'district':
+                    lat, lon = generate_district_point(district_id)
+                else:
+                    lat, lon = generate_random_point(difficulty)
+                if not is_repeated(lat, lon):
+                    break
             else:
-                lat, lon = generate_random_point(difficulty)
-            points.append((lat, lon, 'explore'))
+                raise ValueError('Не удалось подобрать неповторяющуюся точку раунда')
+            source = 'explore'
+        points.append((lat, lon, source))
+        excluded_coords.append((lat, lon))
     return points
 
 

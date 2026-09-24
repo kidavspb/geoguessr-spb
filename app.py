@@ -20,6 +20,7 @@ from models import db, GameSession, GameRound, VerifiedPoint, utcnow
 from game_logic import (
     ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
     MAX_SKIPS_PER_ROUND, MAX_ACTUAL_POINT_DRIFT_KM,
+    MIN_ROUND_LOCATION_DISTANCE_KM,
     TIME_LIMIT_GRACE_SECONDS, DIFFICULTY_SETTINGS,
     difficulty_name, haversine_distance,
     calculate_score, parse_coords, parse_time_limit,
@@ -372,6 +373,17 @@ def _panorama_rejection_reason(game, rnd, latitude, longitude):
     elif (_round_requires_spatial_validation(game, rnd)
           and not point_in_city(latitude, longitude)):
         return 'outside_city', drift
+    # Разные исходные координаты, особенно в небольшом районе, могут привести
+    # locate к одной и той же панораме. Сравниваем фактические места съёмки
+    # уже сыгранных раундов, а не только сгенерированные точки.
+    if any(
+        other.round_number < rnd.round_number
+        and other.answered_at is not None
+        and haversine_distance(latitude, longitude, *_scoring_point(other))
+        < MIN_ROUND_LOCATION_DISTANCE_KM
+        for other in game.rounds
+    ):
+        return 'duplicate_panorama', drift
     return None, drift
 
 
@@ -844,6 +856,10 @@ def skip_location():
         for other in game.rounds
         if other.gen_latitude is not None and other.gen_longitude is not None
     ]
+    excluded_coords.extend(
+        _scoring_point(other) for other in game.rounds
+        if other.answered_at is not None
+    )
     # Пустой успешный ответ locate означает, что покрытие действительно
     # исчезло. Сетевой сбой не должен отравлять и постепенно удалять весь пул.
     if reason == 'no_coverage':
@@ -1052,9 +1068,12 @@ def submit_guess():
                     '(round=%s, game_id=%s)',
                     reason, drift, rnd.round_number, game.id,
                 )
-                if _round_requires_spatial_validation(game, rnd):
+                if (_round_requires_spatial_validation(game, rnd)
+                        or reason == 'duplicate_panorama'):
                     return jsonify({
-                        'error': 'Панорама не принадлежит выбранной территории',
+                        'error': ('Эта панорама уже была в текущей игре'
+                                  if reason == 'duplicate_panorama' else
+                                  'Панорама не принадлежит выбранной территории'),
                         'reason': reason,
                     }), 409
 
