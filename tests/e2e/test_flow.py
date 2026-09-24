@@ -936,7 +936,7 @@ def test_no_move_round_and_map_toggle(page, server):
 
 
 def test_mobile_result_map_meets_panel_at_dynamic_viewport_heights(page, server):
-    """Карта и панель стыкуются; обычный экран показывает кнопку без прокрутки."""
+    """За скруглением видна карта; обычный экран показывает кнопку без прокрутки."""
     page.set_viewport_size({'width': 390, 'height': 844})
     page.goto(server)
     page.locator('#start-btn').click()
@@ -954,10 +954,11 @@ def test_mobile_result_map_meets_panel_at_dynamic_viewport_heights(page, server)
             const style = element => getComputedStyle(element).backgroundColor;
             return {
                 gap: panel.top - map.bottom,
-                mapHeight: map.height,
+                visibleMapHeight: panel.top - map.top,
                 stageColor: style(document.querySelector('.result-stage')),
                 panelColor: style(panelElement),
                 radius: getComputedStyle(panelElement).borderTopLeftRadius,
+                mapBehindCorner: !!document.elementFromPoint(1, panel.top + 1)?.closest('#result-map'),
                 panelClientHeight: panelElement.clientHeight,
                 panelScrollHeight: panelElement.scrollHeight,
                 buttonBottom: button.bottom,
@@ -967,11 +968,11 @@ def test_mobile_result_map_meets_panel_at_dynamic_viewport_heights(page, server)
                 overflowX: document.documentElement.scrollWidth > innerWidth,
             };
         }""")
-        assert abs(layout['gap']) <= 1, layout
-        assert layout['mapHeight'] >= 159, layout
-        assert layout['radius'] == '20px', layout
-        assert layout['stageColor'] == 'rgb(58, 51, 138)', layout
-        assert layout['panelColor'] == layout['htmlColor'] == layout['bodyColor'] == 'rgb(35, 28, 98)'
+        assert abs(layout['gap'] + 8) <= 1, layout
+        assert layout['visibleMapHeight'] >= 159, layout
+        assert layout['radius'] == '8px', layout
+        assert layout['mapBehindCorner'], layout
+        assert layout['stageColor'] == layout['panelColor'] == layout['htmlColor'] == layout['bodyColor'] == 'rgb(35, 28, 98)'
         assert not layout['overflowX'], layout
         if height >= 700:
             assert layout['panelScrollHeight'] <= layout['panelClientHeight'] + 1, layout

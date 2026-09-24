@@ -294,8 +294,8 @@ export async function showResultMap(data) {
     const guessLat = data.guess.latitude;
 
     // Сами вписываем обе точки в кадр — по фактическому размеру контейнера.
-    // На мобильных контейнер карты уже обрезан по высоте панели (CSS),
-    // на десктопе панель закрывает правую часть — учитываем её ширину.
+    // На мобильных панель закрывает только нижнюю полоску карты под скруглением;
+    // на десктопе она закрывает правую часть — учитываем обе области.
     const rect = mapContainer.getBoundingClientRect();
     const isMobile = window.innerWidth <= 720;
     // Страховка: если контейнер ещё не получил размер, берём оценку от окна
@@ -303,7 +303,9 @@ export async function showResultMap(data) {
     const stageH = rect.height > 50 ? rect.height
         : (isMobile ? window.innerHeight * 0.44 : window.innerHeight);
     const panelRight = isMobile ? 0 : Math.min(380, stageW);
-    const panelBottom = 0;
+    const panelBottom = isMobile
+        ? Math.max(0, rect.bottom - document.querySelector('.result-panel').getBoundingClientRect().top)
+        : 0;
     // Вертикальный запас больше горизонтального: пины рисуются НАД точкой
     // (~45px вверх) и на маленькой мобильной карте иначе срезаются краем
     const padX = isMobile ? 32 : 70;
