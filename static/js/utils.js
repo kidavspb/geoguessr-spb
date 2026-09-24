@@ -52,6 +52,12 @@ export function showScreen(screenId) {
         screen.classList.remove('active');
     });
     document.getElementById(screenId).classList.add('active');
+
+    const lightScreen = screenId === 'final-screen' || screenId === 'leaderboard-screen';
+    document.documentElement.classList.toggle('theme-light', lightScreen);
+    const color = getComputedStyle(document.documentElement)
+        .getPropertyValue(lightScreen ? '--bg-color' : '--navy').trim();
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
 }
 
 /**

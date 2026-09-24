@@ -887,6 +887,10 @@ def test_full_game_flow(page, server):
     expect(page.locator('#final-score')).not_to_have_text('0')
     expect(page.locator('#rounds-summary .round-item')).to_have_count(5)
     expect(page.locator('#challenge-btn')).to_be_visible()
+    assert page.evaluate("""() => ({
+        canvas: getComputedStyle(document.documentElement).backgroundColor,
+        theme: document.querySelector('meta[name="theme-color"]').content,
+    })""") == {'canvas': 'rgb(246, 243, 228)', 'theme': '#f6f3e4'}
     page.wait_for_function('window.__ymapsStats.mapsActive === 1')
     resource_stats = page.evaluate('window.__ymapsStats')
     assert resource_stats['panoramaPlayersActive'] == 0
@@ -932,34 +936,79 @@ def test_no_move_round_and_map_toggle(page, server):
 
 
 def test_mobile_result_map_meets_panel_at_dynamic_viewport_heights(page, server):
-    """Карта стыкуется с панелью по её реальной высоте, включая короткий экран."""
+    """Карта и панель стыкуются; обычный экран показывает кнопку без прокрутки."""
     page.set_viewport_size({'width': 390, 'height': 844})
     page.goto(server)
     page.locator('#start-btn').click()
     page.locator('#map-handle').click()
     _play_round(page)
 
-    for height in (560, 700, 844, 900):
+    for height in (700, 844, 900, 560):
         page.set_viewport_size({'width': 390, 'height': height})
         layout = page.evaluate("""() => {
             const map = document.querySelector('.result-map-container').getBoundingClientRect();
-            const panel = document.querySelector('.result-panel').getBoundingClientRect();
+            const panelElement = document.querySelector('.result-panel');
+            panelElement.scrollTop = 0;
+            const panel = panelElement.getBoundingClientRect();
+            const button = document.querySelector('#next-round-btn').getBoundingClientRect();
             const style = element => getComputedStyle(element).backgroundColor;
             return {
                 gap: panel.top - map.bottom,
                 mapHeight: map.height,
                 stageColor: style(document.querySelector('.result-stage')),
+                panelColor: style(panelElement),
+                radius: getComputedStyle(panelElement).borderTopLeftRadius,
+                panelClientHeight: panelElement.clientHeight,
+                panelScrollHeight: panelElement.scrollHeight,
+                buttonBottom: button.bottom,
+                panelBottom: panel.bottom,
                 htmlColor: style(document.documentElement),
                 bodyColor: style(document.body),
                 overflowX: document.documentElement.scrollWidth > innerWidth,
             };
         }""")
         assert abs(layout['gap']) <= 1, layout
-        assert layout['mapHeight'] > 0, layout
-        assert layout['stageColor'] == layout['htmlColor'] == layout['bodyColor'] == 'rgb(35, 28, 98)'
+        assert layout['mapHeight'] >= 159, layout
+        assert layout['radius'] == '20px', layout
+        assert layout['stageColor'] == 'rgb(58, 51, 138)', layout
+        assert layout['panelColor'] == layout['htmlColor'] == layout['bodyColor'] == 'rgb(35, 28, 98)'
         assert not layout['overflowX'], layout
+        if height >= 700:
+            assert layout['panelScrollHeight'] <= layout['panelClientHeight'] + 1, layout
+            assert layout['buttonBottom'] <= layout['panelBottom'] + 1, layout
         page.locator('#next-round-btn').scroll_into_view_if_needed()
         expect(page.locator('#next-round-btn')).to_be_in_viewport()
+
+
+def test_document_canvas_follows_screen_theme(page, server):
+    """Overscroll и тема браузера используют фон текущего экрана."""
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(server)
+
+    def colors():
+        return page.evaluate("""() => ({
+            html: getComputedStyle(document.documentElement).backgroundColor,
+            body: getComputedStyle(document.body).backgroundColor,
+            theme: document.querySelector('meta[name="theme-color"]').content,
+            overflowX: document.documentElement.scrollWidth > innerWidth,
+        })""")
+
+    assert colors() == {
+        'html': 'rgb(35, 28, 98)', 'body': 'rgb(35, 28, 98)',
+        'theme': '#231c62', 'overflowX': False,
+    }
+    page.locator('#show-leaderboard-btn').click()
+    expect(page.locator('#leaderboard-screen')).to_have_class(re.compile('active'))
+    assert colors() == {
+        'html': 'rgb(246, 243, 228)', 'body': 'rgb(246, 243, 228)',
+        'theme': '#f6f3e4', 'overflowX': False,
+    }
+    page.locator('#back-btn').click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    assert colors() == {
+        'html': 'rgb(35, 28, 98)', 'body': 'rgb(35, 28, 98)',
+        'theme': '#231c62', 'overflowX': False,
+    }
 
 
 def test_fast_continue_reuses_inflight_prefetch(page, server):
