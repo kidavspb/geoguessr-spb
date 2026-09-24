@@ -931,6 +931,37 @@ def test_no_move_round_and_map_toggle(page, server):
         'href', re.compile(r'yandex\.ru/maps/\?panorama'))
 
 
+def test_mobile_result_map_meets_panel_at_dynamic_viewport_heights(page, server):
+    """Карта стыкуется с панелью по её реальной высоте, включая короткий экран."""
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(server)
+    page.locator('#start-btn').click()
+    page.locator('#map-handle').click()
+    _play_round(page)
+
+    for height in (560, 700, 844, 900):
+        page.set_viewport_size({'width': 390, 'height': height})
+        layout = page.evaluate("""() => {
+            const map = document.querySelector('.result-map-container').getBoundingClientRect();
+            const panel = document.querySelector('.result-panel').getBoundingClientRect();
+            const style = element => getComputedStyle(element).backgroundColor;
+            return {
+                gap: panel.top - map.bottom,
+                mapHeight: map.height,
+                stageColor: style(document.querySelector('.result-stage')),
+                htmlColor: style(document.documentElement),
+                bodyColor: style(document.body),
+                overflowX: document.documentElement.scrollWidth > innerWidth,
+            };
+        }""")
+        assert abs(layout['gap']) <= 1, layout
+        assert layout['mapHeight'] > 0, layout
+        assert layout['stageColor'] == layout['htmlColor'] == layout['bodyColor'] == 'rgb(35, 28, 98)'
+        assert not layout['overflowX'], layout
+        page.locator('#next-round-btn').scroll_into_view_if_needed()
+        expect(page.locator('#next-round-btn')).to_be_in_viewport()
+
+
 def test_fast_continue_reuses_inflight_prefetch(page, server):
     """Быстрый переход не запускает второй locate и скрытый Player."""
     page.add_init_script('window.__ymapsLocateDelay = 350')

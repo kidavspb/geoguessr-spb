@@ -58,9 +58,10 @@ html {
 
 body {
     font-family: var(--font-body);
-    background: var(--bg-color);
+    background: var(--navy);
     color: var(--text-color);
     min-height: 100vh;
+    min-height: 100dvh;
 }
 
 h1, h2 {
@@ -149,10 +150,18 @@ h1, h2 {
 .start-layout,
 .page-layout {
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 2rem 1rem;
+}
+
+/* Сохраняем светлое окружение карточек на этих двух экранах.
+   Фон документа остаётся фирменным синим для safe area и overscroll. */
+#final-screen,
+#leaderboard-screen {
+    background: var(--bg-color);
 }
 
 .start-card,
@@ -636,12 +645,14 @@ h1, h2 {
 /* ===== Выбор административного района ===== */
 #district-screen {
     min-height: 100vh;
+    min-height: 100dvh;
     background: var(--navy);
 }
 
 .district-layout {
     display: flex;
     min-height: 100vh;
+    min-height: 100dvh;
     align-items: center;
     justify-content: center;
     padding: 1.5rem 1rem;
@@ -1309,7 +1320,7 @@ h1, h2 {
 .result-stage {
     position: fixed;
     inset: 0;
-    background: var(--bg-color);
+    background: var(--navy);
 }
 
 .result-map-container {
@@ -1712,22 +1723,31 @@ h1, h2 {
     .map-panel:not(.hover-paused):hover .map-wrap,
     .map-panel:focus-within .map-wrap {
         height: 36vh;
+        height: 36dvh;
     }
 
-    /* Результат: карта сверху, панель — нижний лист. Контейнер карты
-       обрезан по высоте панели, чтобы контролы Яндекса («Открыть в
-       Яндекс Картах», копирайт) не залезали под панель и кнопки. */
+    /* Карта занимает место над фактической высотой панели. Её контролы
+       остаются в области карты, а между блоками не возникает пустоты. */
+    .result-stage {
+        display: flex;
+        flex-direction: column;
+    }
+
     .result-map-container {
-        bottom: 56vh;
+        position: relative;
+        inset: auto;
+        flex: 1 1 0;
+        min-height: 0;
     }
 
     .result-panel {
-        top: auto;
-        left: 0;
-        right: 0;
+        position: relative;
+        inset: auto;
+        flex: 0 0 auto;
         width: 100%;
         max-height: 56vh;
-        overflow: hidden;
+        max-height: 56dvh;
+        overflow-y: auto;
         border-radius: 20px 20px 0 0;
         padding: 1rem 1.25rem 0.9rem;
         gap: 0.55rem;
@@ -2049,26 +2069,6 @@ h1, h2 {
     .pano-home {
         bottom: auto;
         top: 76px;
-    }
-}
-
-/* ===== iOS Safari: динамическая высота вьюпорта ===== */
-/* 100vh на iOS больше видимой области (панели браузера не учитываются) —
-   из-за этого кнопка «Продолжить» уезжала под тулбар, а страница получала
-   фантомную прокрутку. dvh меряет реально видимую высоту. */
-@supports (height: 100dvh) {
-    body {
-        min-height: 100dvh;
-    }
-
-    @media (max-width: 720px) {
-        .result-map-container {
-            bottom: 56dvh;
-        }
-
-        .result-panel {
-            max-height: 56dvh;
-        }
     }
 }
 
