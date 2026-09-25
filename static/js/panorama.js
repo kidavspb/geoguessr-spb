@@ -2,7 +2,7 @@
  * Панорамы Яндекса: один поиск ближайшей съёмки, отменяемая подготовка
  * следующего раунда и дешёвый прогрев низкодетализированных тайлов.
  */
-import { state, MAX_PANORAMA_RETRIES } from './state.js';
+import { state } from './state.js';
 import { showToast } from './utils.js';
 import { api } from './api.js';
 import { reloadFailedScript, withTimeout } from './sdk.js';
@@ -161,7 +161,6 @@ async function prepareRound(initialLocation, task = null) {
     let location = initialLocation;
     let attempts = 0;
     let skips = 0;
-    let sawDuplicate = false;
     const remainingSkips = Math.max(0,
         (Number(initialLocation.max_location_skips) || 10) -
         (Number(initialLocation.location_version) || 0)
@@ -238,7 +237,6 @@ async function prepareRound(initialLocation, task = null) {
                         skipReason = ['outside_city', 'outside_district',
                             'duplicate_panorama'].includes(rejectedReason)
                             ? rejectedReason : 'no_coverage';
-                        if (skipReason === 'duplicate_panorama') sawDuplicate = true;
                         located = { status: skipReason, panorama: null };
                     } else {
                         return {
@@ -279,17 +277,12 @@ async function prepareRound(initialLocation, task = null) {
             };
         }
 
-        // Для обычного отсутствия покрытия сохраняем короткий поиск. Если
-        // встречен повтор уже сыгранной съёмки, используем весь оставшийся
-        // серверный бюджет без серии ручных нажатий «Другое место».
-        const autoSkipLimit = sawDuplicate
-            ? remainingSkips : Math.min(MAX_PANORAMA_RETRIES, remainingSkips);
-        if (skips >= autoSkipLimit) {
-            const exhausted = skips >= remainingSkips;
+        // Пустой locate тоже не доказывает отсутствия съёмок во всём районе.
+        // Ищем автоматически до следующей рабочей точки или серверного лимита.
+        if (skips >= remainingSkips) {
             return {
-                ok: false,
-                status: exhausted ? 'search_exhausted' : 'no_coverage',
-                location, attempts, exhausted,
+                ok: false, status: 'search_exhausted',
+                location, attempts, exhausted: true,
                 lookupMs: Math.round(performance.now() - started)
             };
         }

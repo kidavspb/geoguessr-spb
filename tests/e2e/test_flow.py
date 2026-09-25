@@ -1044,8 +1044,42 @@ def test_missing_new_place_falls_back_without_reload(page, server):
     assert stats['panoramaPlayersActive'] == 1
 
 
+def test_district_search_continues_after_four_empty_locations(page, server):
+    """Несколько пустых locate подряд не прерывают поиск доступной съёмки."""
+    page.add_init_script('window.__ymapsEmptyLocateCount = 4')
+    skip_requests = []
+    page.on('request', lambda request: skip_requests.append(request)
+            if request.url.endswith('/api/game/skip_location') else None)
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('kurortny')
+    page.get_by_role('button', name='Выбрать район').click()
+    page.evaluate("""() => {
+        const overlay = document.getElementById('photo-overlay');
+        const buttons = ['retry-panorama-btn', 'skip-panorama-btn',
+            'back-to-district-btn'].map(id => document.getElementById(id));
+        window.__threeButtonOverlaySeen = false;
+        new MutationObserver(() => {
+            if (!overlay.classList.contains('hidden') &&
+                    buttons.every(button => !button.classList.contains('hidden'))) {
+                window.__threeButtonOverlaySeen = true;
+            }
+        }).observe(overlay, {attributes: true, subtree: true, attributeFilter: ['class']});
+    }""")
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    assert not page.evaluate('window.__threeButtonOverlaySeen')
+    assert len(skip_requests) == 4
+    stats = page.evaluate('window.__ymapsStats')
+    assert stats['locateCalls'] == 5
+    assert stats['panoramaPlayersCreated'] == 1
+    assert stats['panoramaPlayersActive'] == 1
+
+
 def test_district_without_coverage_can_return_to_preserved_settings(page, server):
-    """Редкий район без съёмки не запирает игрока на игровом экране."""
+    """После полного поиска игрок может вернуться к прежним настройкам."""
     page.set_viewport_size({'width': 390, 'height': 844})
     page.add_init_script('window.__ymapsEmptyLocateCount = 100')
     page.goto(server)
@@ -1056,10 +1090,10 @@ def test_district_without_coverage_can_return_to_preserved_settings(page, server
 
     expect(page.locator('#photo-overlay')).to_be_visible(timeout=10000)
     expect(page.locator('#photo-overlay > span')).to_have_text(
-        'Не удалось найти съёмку рядом.'
+        'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.'
     )
-    expect(page.get_by_role('button', name='Повторить')).to_be_visible()
-    expect(page.get_by_role('button', name='Другое место')).to_be_visible()
+    expect(page.get_by_role('button', name='Повторить')).to_be_hidden()
+    expect(page.get_by_role('button', name='Другое место')).to_be_hidden()
     back = page.get_by_role('button', name='К настройкам')
     expect(back).to_be_visible()
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')

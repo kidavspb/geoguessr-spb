@@ -11,10 +11,6 @@ export const DEFAULT_ZOOM = 11;
 export const PIN_RED = '/static/img/pin.svg';
 export const PIN_NAVY = '/static/img/pin-navy.svg';
 
-// Короткий поиск при отсутствии покрытия. После повтора уже сыгранной съёмки
-// используем весь оставшийся лимит, который сообщает сервер.
-export const MAX_PANORAMA_RETRIES = 3;
-
 // Мутабельное состояние. Модули меняют поля напрямую — приложение маленькое,
 // и это проще, чем шина событий.
 export const state = {
