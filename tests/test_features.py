@@ -80,7 +80,7 @@ def test_guess_after_game_over_rejected(client):
 def test_skip_limit_enforced_server_side(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     client.get('/api/game/location')
-    for _ in range(game_logic.MAX_SKIPS_PER_ROUND):
+    for _ in range(game_logic.MAX_SKIPS_PER_SEARCH_BATCH):
         assert client.post('/api/game/skip_location').status_code == 200
     over = client.post('/api/game/skip_location')
     assert over.status_code == 429

@@ -8,7 +8,7 @@ from models import GameSession, db
 
 
 @pytest.mark.parametrize('endpoint', [
-    'start', 'ready', 'skip_location', 'set_actual_point', 'validate_panorama',
+    'start', 'ready', 'skip_location', 'continue_search', 'set_actual_point', 'validate_panorama',
     'set_address', 'panorama_metric', 'guess',
 ])
 @pytest.mark.parametrize('body', ['[1]', 'true', '42', '"text"', 'null', '{broken'])
@@ -32,7 +32,7 @@ def test_invalid_round_id_is_rejected(client, value):
 
 
 @pytest.mark.parametrize('value', [[], {}, True, -1, 0.5, float('inf'), 10**100])
-@pytest.mark.parametrize('endpoint', ['skip_location', 'validate_panorama', 'ready', 'guess'])
+@pytest.mark.parametrize('endpoint', ['skip_location', 'continue_search', 'validate_panorama', 'ready', 'guess'])
 def test_invalid_location_version_is_rejected(client, endpoint, value):
     location = client.post('/api/game/start', json={}).get_json()['location']
     response = client.post(f'/api/game/{endpoint}', json={

@@ -1056,13 +1056,12 @@ def test_district_search_continues_after_four_empty_locations(page, server):
     page.get_by_role('button', name='Выбрать район').click()
     page.evaluate("""() => {
         const overlay = document.getElementById('photo-overlay');
-        const buttons = ['retry-panorama-btn', 'skip-panorama-btn',
-            'back-to-district-btn'].map(id => document.getElementById(id));
-        window.__threeButtonOverlaySeen = false;
+        const button = document.getElementById('continue-search-btn');
+        window.__searchPaused = false;
         new MutationObserver(() => {
             if (!overlay.classList.contains('hidden') &&
-                    buttons.every(button => !button.classList.contains('hidden'))) {
-                window.__threeButtonOverlaySeen = true;
+                    !button.classList.contains('hidden')) {
+                window.__searchPaused = true;
             }
         }).observe(overlay, {attributes: true, subtree: true, attributeFilter: ['class']});
     }""")
@@ -1070,7 +1069,7 @@ def test_district_search_continues_after_four_empty_locations(page, server):
 
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
     expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
-    assert not page.evaluate('window.__threeButtonOverlaySeen')
+    assert not page.evaluate('window.__searchPaused')
     assert len(skip_requests) == 4
     stats = page.evaluate('window.__ymapsStats')
     assert stats['locateCalls'] == 5
@@ -1090,10 +1089,10 @@ def test_district_without_coverage_can_return_to_preserved_settings(page, server
 
     expect(page.locator('#photo-overlay')).to_be_visible(timeout=10000)
     expect(page.locator('#photo-overlay > span')).to_have_text(
-        'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.'
+        'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.'
     )
     expect(page.get_by_role('button', name='Повторить')).to_be_hidden()
-    expect(page.get_by_role('button', name='Другое место')).to_be_hidden()
+    expect(page.get_by_role('button', name='Продолжить поиск')).to_be_visible()
     back = page.get_by_role('button', name='К настройкам')
     expect(back).to_be_visible()
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
@@ -1116,7 +1115,7 @@ def test_district_skip_limit_has_honest_recovery_message(page, server):
     page.route('**/api/game/skip_location', lambda route: route.fulfill(
         status=429,
         content_type='application/json',
-        body='{"error":"Лимит перегенераций точки для этого раунда исчерпан"}',
+        body='{"error":"Серия поиска завершена","reason":"search_batch_exhausted"}',
     ))
     page.goto(server)
     page.locator('#district-picker-btn').click()
@@ -1125,12 +1124,11 @@ def test_district_skip_limit_has_honest_recovery_message(page, server):
     page.locator('#start-btn').click()
 
     expect(page.locator('#photo-overlay > span')).to_have_text(
-        'Поиск новой съёмки пока не удался. '
-        'Попробуйте позже или измените настройки.',
+        'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',
         timeout=10000,
     )
     expect(page.get_by_role('button', name='Повторить')).to_be_hidden()
-    expect(page.get_by_role('button', name='Другое место')).to_be_hidden()
+    expect(page.get_by_role('button', name='Продолжить поиск')).to_be_visible()
     expect(page.get_by_role('button', name='К настройкам')).to_be_visible()
 
 
@@ -1140,7 +1138,7 @@ def test_standard_skip_limit_still_has_settings_action(page, server):
     page.route('**/api/game/skip_location', lambda route: route.fulfill(
         status=429,
         content_type='application/json',
-        body='{"error":"Лимит перегенераций точки для этого раунда исчерпан"}',
+        body='{"error":"Серия поиска завершена","reason":"search_batch_exhausted"}',
     ))
     page.goto(server)
     page.locator('#start-btn').click()
@@ -1149,6 +1147,126 @@ def test_standard_skip_limit_still_has_settings_action(page, server):
     expect(back).to_be_visible(timeout=10000)
     back.click()
     expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+
+def test_continue_search_preserves_round_after_lost_response_and_double_click(page, server):
+    """Две конечные серии, потерянный ответ и повтор кнопки сохраняют игру."""
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.add_init_script("""
+        const originalFetch = window.fetch.bind(window);
+        window.__continueRequests = 0;
+        window.__loseSearchResponses = 2;
+        window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            if (String(args[0]).includes('/api/game/continue_search')) {
+                window.__continueRequests++;
+                if (window.__loseSearchResponses-- > 0) {
+                    throw new TypeError('test: lost continuation response');
+                }
+            }
+            return response;
+        };
+    """)
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option('kurortny')
+    page.locator('#district-confirm-btn').click()
+    page.locator('label[for="timer-60"]').click()
+    page.locator('#start-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    page.evaluate('window.__ymapsEmptyLocateCount = 100')
+    _play_round(page)
+    score = page.locator('#total-score').inner_text()
+    page.locator('#next-round-btn').click()
+    button = page.get_by_role('button', name='Продолжить поиск')
+    expect(button).to_be_visible(timeout=15000)
+    get_location = "async () => (await import('/static/js/state.js')).state.currentLocation"
+    original = page.evaluate(get_location)
+    assert original['location_version'] == 10
+    assert original['round'] == 2
+    expect(page.locator('#guess-btn')).to_be_disabled()
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 1
+
+    # Оба ответа разрешения потерялись. На сервере открыта только вторая серия.
+    button.click()
+    expect(page.locator('#photo-overlay > span')).to_have_text('Нет соединения с сервером')
+    assert page.evaluate('window.__continueRequests') == 2
+    assert page.evaluate(get_location)['search_batch'] == 1
+    page.evaluate('''() => {
+        window.__ymapsEmptyLocateCount = 11;
+        const button = document.getElementById('continue-search-btn');
+        button.click(); button.click();
+    }''')
+    expect(button).to_be_visible(timeout=15000)
+    second = page.evaluate(get_location)
+    assert second['search_batch'] == 2
+    assert second['location_version'] == 20
+    assert page.evaluate('window.__continueRequests') == 3
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 1
+    assert page.evaluate("async () => (await import('/static/js/state.js')).state.roundTimerInterval") is None
+    expect(page.locator('#total-score')).to_have_text(score)
+
+    # Следующая серия находит панораму после одной замены.
+    page.evaluate('window.__ymapsEmptyLocateCount = 1')
+    button.click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=15000)
+    expect(page.locator('#photo-overlay')).to_be_hidden()
+    location = page.evaluate(get_location)
+    assert location['round_id'] == original['round_id']
+    assert location['district_id'] == 'kurortny'
+    assert location['search_batch'] == 3
+    assert location['location_version'] == 21
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersActive') == 1
+    expect(page.locator('#total-score')).to_have_text(score)
+    expect(page.locator('#timer-chip')).to_be_visible()
+    _play_round(page)
+    assert not errors
+
+
+def test_late_search_permission_does_not_reopen_game_after_leaving(page, server):
+    page.add_init_script("""
+        window.__ymapsEmptyLocateCount = 100;
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            if (String(args[0]).includes('/api/game/continue_search')) {
+                await new Promise(resolve => { window.__releaseSearch = resolve; });
+            }
+            return response;
+        };
+    """)
+    page.goto(server)
+    page.locator('#start-btn').click()
+    button = page.get_by_role('button', name='Продолжить поиск')
+    expect(button).to_be_visible(timeout=15000)
+    button.click()
+    page.wait_for_function('typeof window.__releaseSearch === "function"')
+    # Навигация пока ответ в пути: обработчик не должен оживить старый экран.
+    page.locator('#back-to-district-btn').evaluate('button => button.click()')
+    page.evaluate('window.__releaseSearch()')
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    page.wait_for_timeout(300)
+    state = page.evaluate("""async () => {
+        const { state } = await import('/static/js/state.js');
+        return {location: state.currentLocation, loading: state.roundLoading};
+    }""")
+    assert state == {'location': None, 'loading': False}
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 0
+
+
+def test_skip_rate_limit_keeps_retry_without_granting_a_search_batch(page, server):
+    page.add_init_script('window.__ymapsEmptyLocateCount = 1')
+    page.route('**/api/game/skip_location', lambda route: route.fulfill(status=429))
+    page.goto(server)
+    page.locator('#start-btn').click()
+    expect(page.locator('#photo-overlay > span')).to_have_text(
+        'Поиск временно ограничен. Подождите минуту и повторите загрузку.', timeout=10000)
+    expect(page.get_by_role('button', name='Продолжить поиск')).to_be_hidden()
+    expect(page.get_by_role('button', name='К настройкам')).to_be_visible()
+    page.get_by_role('button', name='Повторить загрузку').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
 
 
 def test_too_distant_nearest_panorama_is_not_used_as_the_answer(page, server):

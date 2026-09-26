@@ -95,3 +95,24 @@ def test_skip_cannot_replace_an_answered_round(client, app, overlapping_posts):
         rnd = db.session.get(GameRound, location['round_id'])
         assert rnd.skips == 0
         assert rnd.gen_latitude == location['latitude']
+
+
+@pytest.mark.parametrize('first_endpoint', ['continue_search', 'ready'])
+def test_concurrent_search_continuations_are_serialized(client, app, overlapping_posts,
+                                                       first_endpoint):
+    location = client.post('/api/game/start', json={}).get_json()['location']
+    for _ in range(10):
+        location = client.post('/api/game/skip_location', json=location).get_json()
+    first, second = overlapping_posts((f'/api/game/{first_endpoint}', location),
+                                      ('/api/game/continue_search', location))
+    assert first.status_code == 200
+    if first_endpoint == 'ready':
+        assert second.status_code == 409
+    else:
+        assert second.status_code == 200
+        assert second.get_json()['replayed']
+        assert second.get_json()['max_location_skips'] == 20
+    with app.app_context():
+        rnd = db.session.get(GameRound, location['round_id'])
+        assert rnd.skips == 10
+        assert rnd.search_batch == (1 if first_endpoint == 'ready' else 2)

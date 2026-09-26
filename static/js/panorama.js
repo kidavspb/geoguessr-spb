@@ -36,13 +36,13 @@ function distanceKm(lat1, lon1, lat2, lon2) {
     return 6371 * 2 * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
 }
 
-function setOverlayActions({ retry = false, skip = false, back = false } = {}) {
+function setOverlayActions({ retry = false, continueSearch = false, back = false } = {}) {
     const actions = document.getElementById('photo-overlay-actions');
     if (!actions) return;
     document.getElementById('retry-panorama-btn').classList.toggle('hidden', !retry);
-    document.getElementById('skip-panorama-btn').classList.toggle('hidden', !skip);
+    document.getElementById('continue-search-btn').classList.toggle('hidden', !continueSearch);
     document.getElementById('back-to-district-btn').classList.toggle('hidden', !back);
-    actions.classList.toggle('hidden', !retry && !skip && !back);
+    actions.classList.toggle('hidden', !retry && !continueSearch && !back);
 }
 
 /** Оверлей появляется с задержкой, чтобы прогретый раунд не мигал. */
@@ -278,7 +278,7 @@ async function prepareRound(initialLocation, task = null) {
         }
 
         // Пустой locate тоже не доказывает отсутствия съёмок во всём районе.
-        // Ищем автоматически до следующей рабочей точки или серверного лимита.
+        // Ищем до рабочей точки или конца серии. Следующую открывает игрок.
         if (skips >= remainingSkips) {
             return {
                 ok: false, status: 'search_exhausted',
@@ -291,7 +291,7 @@ async function prepareRound(initialLocation, task = null) {
             location.round_id, skipReason, location.location_version
         );
         if (!skipped.ok || !skipped.data) {
-            if (skipped.status === 429) {
+            if (skipped.status === 429 && skipped.data?.reason === 'search_batch_exhausted') {
                 return {
                     ok: false,
                     status: 'search_exhausted',
@@ -304,7 +304,8 @@ async function prepareRound(initialLocation, task = null) {
             }
             return {
                 ok: false,
-                status: skipped.networkError ? 'network_error' : 'api_error',
+                status: skipped.status === 429 ? 'rate_limited'
+                    : skipped.networkError ? 'network_error' : 'api_error',
                 location,
                 attempts,
                 lookupMs: Math.round(performance.now() - started)
@@ -464,22 +465,17 @@ export async function loadPanorama(location, preloadTask = null) {
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
             showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
-        } else if (status === 'no_coverage' || status === 'search_exhausted') {
-            if (prepared && prepared.exhausted) {
-                showLoadingOverlay(
-                    'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.',
-                    { back: true }
-                );
-            } else {
-                showLoadingOverlay('Не удалось найти съёмку рядом.', {
-                    retry: true,
-                    skip: true,
-                    back: state.gameData.difficulty === 'district',
-                });
-            }
+        } else if (status === 'search_exhausted') {
+            showLoadingOverlay(
+                'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',
+                { continueSearch: true, back: true }
+            );
+        } else if (status === 'rate_limited') {
+            showLoadingOverlay('Поиск временно ограничен. Подождите минуту и повторите загрузку.',
+                               { retry: true, back: true });
         } else {
             showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
-                               { retry: true, skip: false });
+                               { retry: true });
         }
         return { ok: false, status, location: prepared ? prepared.location : location };
     }

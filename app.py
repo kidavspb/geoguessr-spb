@@ -19,7 +19,7 @@ from sqlalchemy import event
 from models import db, GameSession, GameRound, VerifiedPoint, utcnow
 from game_logic import (
     ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
-    MAX_SKIPS_PER_ROUND, MAX_ACTUAL_POINT_DRIFT_KM,
+    MAX_SKIPS_PER_SEARCH_BATCH, MAX_ACTUAL_POINT_DRIFT_KM,
     MIN_ROUND_LOCATION_DISTANCE_KM,
     TIME_LIMIT_GRACE_SECONDS, DIFFICULTY_SETTINGS,
     difficulty_name, haversine_distance,
@@ -279,7 +279,9 @@ def _location_payload(game, rnd):
         # Версия кандидата внутри того же round_id. Нужна, чтобы безопасно
         # повторить skip после потерянного HTTP-ответа, не перескочив ещё раз.
         'location_version': rnd.skips or 0,
-        'max_location_skips': MAX_SKIPS_PER_ROUND,
+        'search_batch': rnd.search_batch,
+        # Абсолютная граница текущей серии; skips при её продлении не сбрасываем.
+        'max_location_skips': rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH,
         'requires_spatial_validation': _round_requires_spatial_validation(game, rnd),
     }
     if game.difficulty == DISTRICT_MODE:
@@ -827,9 +829,7 @@ def round_ready():
 def skip_location():
     """Перегенерировать точку текущего раунда.
 
-    Нужно, когда в сгенерированной точке нет панорамы Яндекса. Количество
-    перегенераций ограничено и на сервере: иначе точку можно рероллить,
-    пока не выпадет знакомое место.
+    Поиск ограничен сериями; после появления панорамы менять точку нельзя.
     """
     data = _json_object()
     game, rnd, error = _round_from_payload(data)
@@ -848,8 +848,13 @@ def skip_location():
         if expected_version > current_version:
             return jsonify({'error': 'Версия точки устарела'}), 409
 
-    if (rnd.skips or 0) >= MAX_SKIPS_PER_ROUND:
-        return jsonify({'error': 'Лимит перегенераций точки для этого раунда исчерпан'}), 429
+    if rnd.started_at is not None:
+        return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
+    if (rnd.skips or 0) >= rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
+        return jsonify({
+            'error': 'Серия поиска завершена',
+            'reason': 'search_batch_exhausted',
+        }), 429
 
     reason = str(data.get('reason') or 'no_coverage')[:30]
     excluded_coords = [
@@ -927,6 +932,38 @@ def skip_location():
     rnd.panorama_status = None
     db.session.commit()
 
+    return jsonify(_location_payload(game, rnd))
+
+
+@app.route('/api/game/continue_search', methods=['POST'])
+@limiter.limit('10 per minute')
+def continue_search():
+    """Разрешить следующую серию поиска, сохранив раунд и версию точки."""
+    data = _json_object()
+    round_id = _integer_field(data, 'round_id', minimum=1)
+    expected_batch = _integer_field(data, 'search_batch', minimum=1)
+    expected_version = _integer_field(data, 'location_version')
+    if None in (round_id, expected_batch, expected_version):
+        return jsonify({'error': 'Нужны round_id, search_batch и location_version'}), 400
+    game, rnd, error = _round_from_payload(data)
+    if error:
+        return error
+    if rnd.started_at is not None:
+        return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
+
+    # Повтор после потерянного ответа или двойной клик не открывает ещё серию.
+    # Блокировка игры в _round_from_payload защищает и параллельные workers.
+    if expected_batch < rnd.search_batch:
+        payload = _location_payload(game, rnd)
+        payload['replayed'] = True
+        return jsonify(payload)
+    if expected_batch != rnd.search_batch or expected_version != (rnd.skips or 0):
+        return jsonify({'error': 'Серия поиска или версия точки устарела'}), 409
+    if (rnd.skips or 0) < rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
+        return jsonify({'error': 'Текущая серия поиска ещё не завершена'}), 409
+
+    rnd.search_batch += 1
+    db.session.commit()
     return jsonify(_location_payload(game, rnd))
 
 
@@ -1047,7 +1084,7 @@ def panorama_metric():
             return None
 
     status = str(data.get('status') or '')[:24]
-    allowed_statuses = {'ready', 'no_coverage', 'search_exhausted',
+    allowed_statuses = {'ready', 'no_coverage', 'search_exhausted', 'rate_limited',
                         'network_error', 'unsupported', 'api_error', 'cancelled'}
     rnd.panorama_lookup_ms = bounded_int('lookup_ms', 120_000)
     rnd.panorama_ready_ms = bounded_int('ready_ms', 180_000)

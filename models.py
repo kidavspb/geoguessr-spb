@@ -76,8 +76,10 @@ class GameRound(db.Model):
     round_number = db.Column(db.Integer, nullable=False)
     # Адрес точки ответа (обратное геокодирование), показывается на экране результата
     address = db.Column(db.String(300))
-    # Сколько раз точка раунда перегенерировалась (серверный лимит против абьюза)
+    # Монотонная версия точки: не сбрасывается при продолжении поиска.
     skips = db.Column(db.Integer, default=0)
+    # Новую серию из 10 замен открывает игрок, только до появления панорамы.
+    search_batch = db.Column(db.Integer, nullable=False, default=1, server_default='1')
     # Первый /ready после появления панорамы — начало лимита времени.
     started_at = db.Column(db.DateTime)
     # Когда игрок ответил; NULL — раунд ещё не сыгран

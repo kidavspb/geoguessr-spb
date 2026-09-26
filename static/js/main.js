@@ -83,7 +83,7 @@ function initEventListeners() {
     document.getElementById('map-handle').addEventListener('click', toggleMapPanel);
     document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
     document.getElementById('retry-panorama-btn').addEventListener('click', retryPanorama);
-    document.getElementById('skip-panorama-btn').addEventListener('click', skipPanorama);
+    document.getElementById('continue-search-btn').addEventListener('click', continuePanoramaSearch);
     document.getElementById('back-to-district-btn').addEventListener(
         'click', returnToSettings
     );
@@ -654,35 +654,36 @@ function returnToSettings() {
     document.getElementById('district-picker-btn')?.focus();
 }
 
-async function skipPanorama() {
-    if (!state.currentRoundId || state.roundLoading) return;
+async function continuePanoramaSearch() {
+    const location = state.currentLocation;
+    if (!location || state.roundLoading || state.roundInteractive) return;
+    const loadId = ++state.roundLoadId;
+    const isCurrent = () => loadId === state.roundLoadId &&
+        state.currentRoundId === location.round_id &&
+        document.getElementById('game-screen').classList.contains('active');
     state.roundLoading = true;
-    showLoadingOverlay('Выбираем другое место…');
-    let skipped;
+    showLoadingOverlay('Продолжаем поиск панорамы…');
+    let continued;
     try {
-        skipped = await api.skipLocation(
-            state.currentRoundId,
-            'manual_retry',
-            state.currentLocation ? state.currentLocation.location_version : null
-        );
+        continued = await api.continueSearch(location);
     } finally {
-        state.roundLoading = false;
+        if (isCurrent()) state.roundLoading = false;
     }
-    if (!skipped || !skipped.ok || !skipped.data) {
-        const limitReached = skipped && skipped.status === 429;
-        const message = limitReached
-            ? 'Поиск новой съёмки пока не удался. Попробуйте позже или измените настройки.'
-            : skipped && skipped.data && skipped.data.error
-                ? skipped.data.error : 'Не получилось сменить место.';
+    if (!isCurrent()) return;
+    if (!continued?.ok || !continued.data) {
+        // Сохраняем исходный номер серии: если ответ потерялся, повтор
+        // continue_search вернёт уже выданное разрешение без нового лимита.
+        const message = continued?.status === 429
+            ? 'Поиск временно ограничен. Подождите минуту и продолжите поиск.'
+            : continued?.data?.error || 'Не получилось продолжить поиск. Попробуйте ещё раз.';
         showLoadingOverlay(message, {
-            retry: !limitReached,
-            skip: !limitReached,
+            continueSearch: true,
             back: true,
         });
         return;
     }
-    state.currentLocation = skipped.data;
-    loadCurrentLocation(skipped.data);
+    state.currentLocation = continued.data;
+    loadCurrentLocation(continued.data);
 }
 
 // --------------------------------------------------------------------------

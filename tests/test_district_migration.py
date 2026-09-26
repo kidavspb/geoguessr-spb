@@ -1,4 +1,4 @@
-"""Регрессии recovery-safe миграции административных районов."""
+"""Миграции: сохранение данных и восстановление после частичного DDL."""
 import importlib
 import os
 from pathlib import Path
@@ -17,6 +17,7 @@ import districts
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRIOR_REVISION = 'a49c7d8e2f10'
 DISTRICT_REVISION = 'c82f4b10a6d1'
+SEARCH_REVISION = '972e240b1d4d'
 MIGRATION_MODULE = (
     'migrations.versions.c82f4b10a6d1_административные_районы'
 )
@@ -98,7 +99,7 @@ def test_upgrade_recovers_from_partially_applied_sqlite_ddl(
                     'ON verified_points (district_id)'
                 )
 
-    _upgrade(database_path, 'head')
+    _upgrade(database_path, DISTRICT_REVISION)
 
     engine = sa.create_engine(f'sqlite:///{database_path}')
     inspector = sa.inspect(engine)
@@ -169,7 +170,34 @@ def test_legacy_database_without_alembic_is_stamped_and_upgraded(tmp_path):
     _upgrade(database_path, 'head', auto_migrate=True)
     with sqlite3.connect(database_path) as connection:
         assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
-            DISTRICT_REVISION,
+            SEARCH_REVISION,
         )
         assert connection.execute('SELECT player_name FROM game_sessions').fetchone() == ('Legacy',)
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
+@pytest.mark.parametrize('partial_ddl', [False, True])
+def test_search_batch_migration_preserves_rounds(tmp_path, partial_ddl):
+    database_path = tmp_path / 'search.db'
+    _upgrade(database_path, DISTRICT_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("INSERT INTO game_sessions (id, total_score) VALUES (1, 5000)")
+        connection.execute('''INSERT INTO game_rounds
+            (id, session_id, round_number, skips, score, started_at)
+            VALUES (1, 1, 1, 10, 5000, '2026-09-25 12:00:00'),
+                   (2, 1, 2, 10, 0, NULL)''')
+        if partial_ddl:
+            connection.execute('ALTER TABLE game_rounds ADD COLUMN '
+                               'search_batch INTEGER NOT NULL DEFAULT 1')
+    _upgrade(database_path, 'head')
+    _upgrade(database_path, 'head')
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute('SELECT skips, score, started_at, search_batch '
+                                  'FROM game_rounds ORDER BY id').fetchall() == [
+            (10, 5000, '2026-09-25 12:00:00', 1), (10, 0, None, 1),
+        ]
+        assert connection.execute('SELECT total_score FROM game_sessions').fetchone() == (5000,)
+        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
+            SEARCH_REVISION,
+        )
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []

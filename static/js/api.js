@@ -80,6 +80,13 @@ export const api = {
             round_id: roundId, location_version: locationVersion
         }, { retries: 1 }),
 
+    continueSearch: location =>
+        post('/api/game/continue_search', {
+            round_id: location.round_id,
+            location_version: location.location_version,
+            search_batch: location.search_batch
+        }, { retries: 1 }),
+
     validatePanorama: (roundId, latitude, longitude, locationVersion = null) =>
         post('/api/game/validate_panorama', {
             round_id: roundId,
