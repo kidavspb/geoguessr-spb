@@ -76,7 +76,7 @@ function initEventListeners() {
     // Стартовый экран
     document.getElementById('start-btn').addEventListener('click', () => startGame());
     document.getElementById('daily-btn').addEventListener('click', () => startGame({ daily: true }));
-    document.getElementById('show-leaderboard-btn').addEventListener('click', openLeaderboard);
+    document.getElementById('show-leaderboard-btn').addEventListener('click', () => openLeaderboard());
 
     // Игровой экран
     document.getElementById('guess-btn').addEventListener('click', submitGuess);
@@ -103,7 +103,9 @@ function initEventListeners() {
         destroyFinalMap();
         showScreen('start-screen');
     });
-    document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
+    document.getElementById('final-leaderboard-btn').addEventListener(
+        'click', () => openLeaderboard({ fromGame: true })
+    );
     document.getElementById('challenge-btn').addEventListener('click', shareChallengeLink);
 
     // Фильтры таблицы лидеров: период и сложность — независимые оси
@@ -120,6 +122,11 @@ function initEventListeners() {
             syncLeaderboardFilters();
             showLeaderboard();
         });
+    });
+    document.getElementById('lb-district-select')?.addEventListener('change', event => {
+        state.lbState.districtId = event.target.value || null;
+        syncLeaderboardFilters();
+        showLeaderboard();
     });
 
     document.getElementById('back-btn').addEventListener('click', () => {
@@ -1126,12 +1133,15 @@ async function loadPlayerStats(playerName) {
 // Таблица лидеров
 // --------------------------------------------------------------------------
 
-function openLeaderboard() {
+function openLeaderboard({ fromGame = false } = {}) {
     destroyFinalMap();
-    state.lbState = { difficulty: 'all', period: 'all' };
+    const districtId = gameData.difficulty === 'district' ? gameData.districtId : null;
+    state.lbState = {
+        difficulty: fromGame ? gameData.difficulty : 'all',
+        period: fromGame && gameData.daily ? 'daily' : 'all',
+        districtId,
+    };
     syncLeaderboardFilters();
-    document.getElementById('leaderboard-table').innerHTML =
-        '<div class="leaderboard-empty">Загрузка…</div>';
     showScreen('leaderboard-screen');
     showLeaderboard();
 }
@@ -1142,13 +1152,23 @@ function openLeaderboard() {
  */
 function syncLeaderboardFilters() {
     document.querySelectorAll('.lb-period-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.period === state.lbState.period);
+        const active = b.dataset.period === state.lbState.period;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
     });
     document.querySelectorAll('#leaderboard-filter .lb-filter-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.difficulty === state.lbState.difficulty);
+        const active = b.dataset.difficulty === state.lbState.difficulty;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
     });
+    const daily = state.lbState.period === 'daily';
     document.getElementById('leaderboard-filter')
-        .classList.toggle('hidden', state.lbState.period === 'daily');
+        .classList.toggle('hidden', daily);
+    document.getElementById('lb-district-filter')?.classList.toggle(
+        'hidden', daily || state.lbState.difficulty !== 'district'
+    );
+    const districtSelect = document.getElementById('lb-district-select');
+    if (districtSelect) districtSelect.value = state.lbState.districtId || '';
 }
 
 /**
@@ -1158,11 +1178,19 @@ function syncLeaderboardFilters() {
 async function showLeaderboard() {
     const loadId = ++state.leaderboardLoadId;
     const lbState = { ...state.lbState };
+    const tableContainer = document.getElementById('leaderboard-table');
     if (!document.getElementById('leaderboard-screen').classList.contains('active')) {
-        document.getElementById('leaderboard-table').innerHTML =
-            '<div class="leaderboard-empty">Загрузка…</div>';
         showScreen('leaderboard-screen');
     }
+    if (lbState.period !== 'daily' && lbState.difficulty === 'district' && !lbState.districtId) {
+        tableContainer.setAttribute('aria-busy', 'false');
+        tableContainer.innerHTML =
+            '<div class="leaderboard-empty">Выберите район, чтобы увидеть его таблицу лидеров.</div>';
+        return;
+    }
+    // Строки прежнего района/периода не должны оставаться под новым фильтром.
+    tableContainer.setAttribute('aria-busy', 'true');
+    tableContainer.innerHTML = '<div class="leaderboard-empty">Загрузка…</div>';
 
     try {
         let result;
@@ -1171,18 +1199,18 @@ async function showLeaderboard() {
         } else {
             const params = new URLSearchParams();
             if (lbState.difficulty !== 'all') params.set('difficulty', lbState.difficulty);
+            if (lbState.difficulty === 'district') params.set('district_id', lbState.districtId);
             if (lbState.period !== 'all') params.set('period', lbState.period);
             result = await api.leaderboard(params);
         }
         if (loadId !== state.leaderboardLoadId) return;
         if (!result.ok) {
-            document.getElementById('leaderboard-table').innerHTML =
+            tableContainer.innerHTML =
                 '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
             return;
         }
         const data = result.data;
 
-        const tableContainer = document.getElementById('leaderboard-table');
         tableContainer.innerHTML = '';
 
         const showBadge = (lbState.difficulty === 'all' && lbState.period !== 'daily');
@@ -1230,13 +1258,18 @@ async function showLeaderboard() {
                 tableContainer.appendChild(row);
             });
         } else {
-            tableContainer.innerHTML = '<div class="leaderboard-empty">Пока нет результатов</div>';
+            const emptyMessage = lbState.difficulty === 'district' && lbState.period !== 'daily'
+                ? 'За выбранный период в этом районе пока нет результатов.'
+                : 'Пока нет результатов';
+            tableContainer.innerHTML = `<div class="leaderboard-empty">${emptyMessage}</div>`;
         }
     } catch (error) {
         console.error('Ошибка загрузки таблицы лидеров:', error);
         if (loadId === state.leaderboardLoadId) {
-            document.getElementById('leaderboard-table').innerHTML =
+            tableContainer.innerHTML =
                 '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
         }
+    } finally {
+        if (loadId === state.leaderboardLoadId) tableContainer.setAttribute('aria-busy', 'false');
     }
 }

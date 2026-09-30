@@ -9,6 +9,31 @@ import { reloadFailedScript, withTimeout } from './sdk.js';
 const API_READY_TIMEOUT_MS = 12000;
 let v3ReadyPromise = null;
 
+// Начальные виды подобраны по городской застройке и узнаваемым ориентирам.
+// Это настройки камеры, а не границы игры и не веса генератора точек.
+// Они не зависят от панорамы, пула или набора раундов и не меняются при
+// раскрытии карты: увеличение панели просто открывает больше территории.
+const DISTRICT_MAP_VIEWS = {
+    admiralteysky:    { center: [30.301, 59.922], zoom: 12 }, // Коломна — Садовая
+    vasileostrovsky:  { center: [30.251, 59.938], zoom: 12 }, // Линии Васильевского острова
+    vyborgsky:        { center: [30.326, 60.025], zoom: 11 }, // Удельная — Озерки
+    kalininsky:       { center: [30.393, 60.007], zoom: 11 }, // Академическая — Гражданка
+    kirovsky:         { center: [30.266, 59.870], zoom: 11 }, // Автово и проспект Стачек
+    kolpinsky:        { center: [30.592, 59.747], zoom: 11 }, // Колпино
+    krasnogvardeysky: { center: [30.456, 59.963], zoom: 11 }, // Охта — Пороховые
+    krasnoselsky:     { center: [30.163, 59.837], zoom: 11 }, // Жилая застройка юго-запада
+    kronshtadtsky:    { center: [29.765, 59.997], zoom: 12 }, // Город Кронштадт на Котлине
+    kurortny:         { center: [29.964, 60.098], zoom: 11 }, // Сестрорецк как начальный ориентир
+    moskovsky:        { center: [30.328, 59.859], zoom: 11 }, // Московская — Парк Победы
+    nevsky:          { center: [30.463, 59.900], zoom: 11 }, // Городские кварталы двух берегов
+    petrogradsky:     { center: [30.293, 59.964], zoom: 12 }, // Петроградская сторона
+    petrodvortsovy:   { center: [29.907, 59.880], zoom: 11 }, // Петергоф как начальный ориентир
+    primorsky:        { center: [30.239, 60.021], zoom: 11 }, // Комендантский — озеро Долгое
+    pushkinsky:       { center: [30.413, 59.707], zoom: 11 }, // Пушкин и Павловск
+    frunzensky:       { center: [30.395, 59.869], zoom: 11 }, // Купчино
+    tsentralny:       { center: [30.355, 59.933], zoom: 12 }, // Кварталы вокруг Невского
+};
+
 // Смена экранов сама вызывает :hover под неподвижным курсором. Разрешаем
 // раскрытие нового раунда только после реального движения вне панели.
 document.addEventListener('pointermove', event => {
@@ -58,8 +83,14 @@ export function ymapsV3Ready() {
     return v3ReadyPromise;
 }
 
-/** Центр района с привычным игровым масштабом, без привязки к ответу раунда. */
+/** Постоянный начальный вид территории, без привязки к ответу раунда. */
 function initialGuessMapLocation(container) {
+    if (state.gameData.difficulty === 'district' &&
+            Object.prototype.hasOwnProperty.call(DISTRICT_MAP_VIEWS, state.gameData.districtId)) {
+        const view = DISTRICT_MAP_VIEWS[state.gameData.districtId];
+        return { center: [...view.center], zoom: view.zoom };
+    }
+    // Для ещё не описанного района сохраняем прежний fallback по bounds.
     const bounds = state.gameData.districtBounds;
     if (state.gameData.difficulty !== 'district' || !Array.isArray(bounds) ||
             bounds.length !== 4 || !bounds.every(Number.isFinite)) {

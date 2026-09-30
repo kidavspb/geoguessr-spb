@@ -1557,12 +1557,16 @@ h1, h2 {
 }
 
 /* ===== Таблица лидеров ===== */
+.leaderboard-content {
+    max-width: 640px;
+}
+
 .leaderboard-content h2 {
     font-size: 1.9rem;
     margin-bottom: 1.5rem;
 }
 
-/* Фильтр таблицы лидеров по сложности */
+/* Фильтры таблицы лидеров по периоду и территории. */
 .leaderboard-filter {
     display: flex;
     flex-wrap: wrap;
@@ -1573,6 +1577,7 @@ h1, h2 {
 .lb-filter-btn {
     flex: 1;
     min-width: 70px;
+    min-height: 44px;
     padding: 0.5rem;
     border: 2px solid var(--border-color);
     border-radius: 999px;
@@ -1593,6 +1598,36 @@ h1, h2 {
     border-color: var(--navy);
     background: var(--navy);
     color: var(--cream);
+}
+
+.lb-filter-btn:focus-visible,
+.lb-district-select:focus-visible {
+    outline: 2px solid var(--navy);
+    outline-offset: 3px;
+}
+
+.lb-district-filter {
+    margin-bottom: 1rem;
+}
+
+.lb-district-filter label {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.lb-district-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0.65rem 0.75rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-control);
+    background: #fff;
+    color: var(--navy);
+    font: inherit;
+    font-size: 1rem;
 }
 
 /* Бейдж режима сложности рядом с именем игрока */
@@ -1631,8 +1666,10 @@ h1, h2 {
 }
 
 .leaderboard-row {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1.5rem minmax(0, 1fr) 4rem 5.5rem;
+    gap: 0.5rem;
+    align-items: start;
     padding: 0.9rem 1rem;
     border-bottom: 1px solid var(--border-color);
 }
@@ -1649,7 +1686,6 @@ h1, h2 {
 }
 
 .leaderboard-rank {
-    width: 50px;
     text-align: left;
     font-weight: bold;
 }
@@ -1659,18 +1695,17 @@ h1, h2 {
 .leaderboard-rank.bronze { color: #b06b3b; }
 
 .leaderboard-name {
-    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
     text-align: left;
 }
 
 .leaderboard-score {
-    width: 80px;
     text-align: right;
     font-weight: bold;
 }
 
 .leaderboard-date {
-    width: 100px;
     text-align: right;
     color: var(--text-muted);
 }
@@ -1682,6 +1717,37 @@ h1, h2 {
 .leaderboard-empty {
     padding: 2rem;
     color: var(--text-muted);
+}
+
+@media (max-width: 480px) {
+    .leaderboard-content {
+        padding: 1.25rem;
+    }
+
+    #lb-period-filter {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    #leaderboard-filter .lb-filter-btn {
+        min-width: 0;
+        flex-basis: calc((100% - 1rem) / 3);
+    }
+
+    .leaderboard-row {
+        grid-template-columns: 1.25rem minmax(0, 1fr) 3.5rem;
+        padding: 0.75rem;
+    }
+
+    .leaderboard-date {
+        grid-column: 2 / -1;
+        text-align: left;
+        font-size: 0.75rem;
+    }
+
+    .leaderboard-row.header .leaderboard-date {
+        display: none;
+    }
 }
 
 /* ===== Маркеры на карте ===== */

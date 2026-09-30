@@ -63,5 +63,6 @@ export const state = {
     },
 
     // Фильтры таблицы лидеров
-    lbState: { difficulty: 'all', period: 'all' }
+    // Район сохраняется при смене режима/периода только внутри таблицы лидеров.
+    lbState: { difficulty: 'all', period: 'all', districtId: null }
 };

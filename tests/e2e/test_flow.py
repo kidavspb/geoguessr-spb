@@ -44,10 +44,10 @@ def _play_round(page):
     expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=10000)
 
 
-@pytest.mark.parametrize('district_id', ['kronshtadtsky', 'pushkinsky', 'tsentralny'])
+@pytest.mark.parametrize('district_id', ['moskovsky', 'kronshtadtsky', 'pushkinsky', 'tsentralny'])
 @pytest.mark.parametrize('width', [390, 1280])
 def test_guess_map_starts_at_district_and_resets_each_round(page, server, district_id, width):
-    from districts import district_map
+    from districts import point_in_district
     page.set_viewport_size({'width': width, 'height': 844})
     page.goto(server)
     page.locator('#district-picker-btn').click()
@@ -56,12 +56,22 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     page.locator('#start-btn').click()
     expect(page.locator('#map')).to_have_attribute('data-map-location', re.compile('center'))
     location = page.locator('#map').evaluate('el => JSON.parse(el.dataset.mapLocation)')
-    west, south, east, north = district_map()[district_id].bounds
-    assert location['center'][0] == pytest.approx((west + east) / 2)
-    assert south < location['center'][1] < north
+    longitude, latitude = location['center']
+    assert point_in_district(latitude, longitude, district_id)
+    # Камера начинает поиск в городской застройке, а не в середине полного bbox.
+    if district_id == 'moskovsky':
+        assert 59.84 < latitude < 59.89  # городская ось Московского проспекта
+        assert 30.31 < longitude < 30.35
+    elif district_id == 'kronshtadtsky':
+        assert 59.98 < latitude < 60.02  # город на востоке Котлина
+        assert 29.73 < longitude < 29.80
+        assert location['zoom'] == 12
+    elif district_id == 'pushkinsky':
+        assert 59.69 < latitude < 59.73  # Пушкин и Павловск
+        assert 30.39 < longitude < 30.44
     default_zoom = page.evaluate("async () => (await import('/static/js/state.js')).DEFAULT_ZOOM")
     assert default_zoom <= location['zoom'] <= default_zoom + 1
-    if district_id in ('kronshtadtsky', 'pushkinsky'):
+    if district_id in ('moskovsky', 'pushkinsky'):
         assert location['zoom'] == default_zoom
     page.evaluate("""async () => {
         const { state } = await import('/static/js/state.js');
@@ -73,8 +83,7 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     page.locator('#next-round-btn').click()
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible()
     reset = page.locator('#map').evaluate('el => JSON.parse(el.dataset.mapLocation)')
-    assert reset['center'] == pytest.approx(location['center'])
-    assert default_zoom <= reset['zoom'] <= default_zoom + 1
+    assert reset == location
     standard = page.evaluate("""async () => {
         const { state, SPB_CENTER, DEFAULT_ZOOM } = await import('/static/js/state.js');
         const { resetMapForNewRound } = await import('/static/js/maps.js');
@@ -86,6 +95,46 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
         };
     }""")
     assert standard['actual'] == standard['expected']
+
+
+def test_district_map_views_are_stable_inside_each_territory(page, server):
+    from districts import DISTRICT_IDS, point_in_district
+
+    page.goto(server)
+    views = page.evaluate('''async () => {
+        const {state} = await import('/static/js/state.js');
+        const {showScreen} = await import('/static/js/utils.js');
+        const {initMap, resetMapForNewRound} = await import('/static/js/maps.js');
+        showScreen('game-screen');
+        await initMap();
+        const views = {};
+        for (const option of document.querySelectorAll('#district-list option[value]')) {
+            if (!option.value) continue;
+            state.gameData.difficulty = 'district';
+            state.gameData.districtId = option.value;
+            // Ни границы, ни расположение игровой панорамы не определяют preset.
+            state.gameData.districtBounds = null;
+            state.actualPoint = [0, 0];
+            resetMapForNewRound();
+            const first = document.getElementById('map').dataset.mapLocation;
+            state.actualPoint = [80, 150];
+            state.gameData.currentRound = 5;
+            resetMapForNewRound();
+            views[option.value] = {
+                first: JSON.parse(first),
+                last: JSON.parse(document.getElementById('map').dataset.mapLocation),
+            };
+        }
+        return views;
+    }''')
+    assert set(views) == set(DISTRICT_IDS)
+    for district_id, view in views.items():
+        assert view['first'] == view['last']
+        longitude, latitude = view['first']['center']
+        assert point_in_district(latitude, longitude, district_id)
+        assert 11 <= view['first']['zoom'] <= 12
+    assert page.evaluate('window.__ymapsStats.mapsActive') == 1
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 0
 
 
 def test_next_round_does_not_expand_map_under_stationary_pointer(page, server):

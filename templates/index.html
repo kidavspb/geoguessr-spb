@@ -195,25 +195,7 @@
                     Или выберите из списка
                 </label>
                 <select id="district-list" class="district-list">
-                    <option value="">Выберите район</option>
-                    <option value="admiralteysky">Адмиралтейский район</option>
-                    <option value="vasileostrovsky">Василеостровский район</option>
-                    <option value="vyborgsky">Выборгский район</option>
-                    <option value="kalininsky">Калининский район</option>
-                    <option value="kirovsky">Кировский район</option>
-                    <option value="kolpinsky">Колпинский район</option>
-                    <option value="krasnogvardeysky">Красногвардейский район</option>
-                    <option value="krasnoselsky">Красносельский район</option>
-                    <option value="kronshtadtsky">Кронштадтский район</option>
-                    <option value="kurortny">Курортный район</option>
-                    <option value="moskovsky">Московский район</option>
-                    <option value="nevsky">Невский район</option>
-                    <option value="petrogradsky">Петроградский район</option>
-                    <option value="petrodvortsovy">Петродворцовый район</option>
-                    <option value="primorsky">Приморский район</option>
-                    <option value="pushkinsky">Пушкинский район</option>
-                    <option value="frunzensky">Фрунзенский район</option>
-                    <option value="tsentralny">Центральный район</option>
+                    {% include '_district_options.html' %}
                 </select>
 
                 <div class="district-screen-actions">
@@ -367,15 +349,27 @@
                     <button type="button" class="lb-filter-btn lb-period-btn" data-period="daily">🗓 День</button>
                 </div>
 
-                <!-- Фильтр по сложности: режимы не сравнимы напрямую -->
+                <!-- Фильтр по территории: режимы не сравнимы напрямую -->
                 <div class="leaderboard-filter" id="leaderboard-filter">
                     <button type="button" class="lb-filter-btn active" data-difficulty="all">Все</button>
                     <button type="button" class="lb-filter-btn" data-difficulty="center">Центр</button>
                     <button type="button" class="lb-filter-btn" data-difficulty="medium">Средняя</button>
                     <button type="button" class="lb-filter-btn" data-difficulty="hard">Весь город</button>
+                    {% if district_feature_enabled|default(false) %}
+                    <button type="button" class="lb-filter-btn" data-difficulty="district">Район</button>
+                    {% endif %}
                 </div>
 
-                <div id="leaderboard-table" class="leaderboard-table">
+                {% if district_feature_enabled|default(false) %}
+                <div id="lb-district-filter" class="lb-district-filter hidden">
+                    <label for="lb-district-select">Район</label>
+                    <select id="lb-district-select" class="lb-district-select">
+                        {% include '_district_options.html' %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <div id="leaderboard-table" class="leaderboard-table" aria-live="polite" aria-busy="false">
                     <!-- Таблица будет добавлена динамически -->
                 </div>
 
