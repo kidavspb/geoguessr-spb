@@ -3,6 +3,10 @@ from datetime import datetime, timezone
 
 db = SQLAlchemy()
 
+# Сохраняется вместе с игрой: новые проверки нельзя применять задним числом
+# к панораме, которую старая вкладка уже показала до обновления сервера.
+CURRENT_PANORAMA_RULES_VERSION = 1
+
 
 def utcnow():
     """Текущее время в UTC (timezone-aware).
@@ -32,6 +36,12 @@ class GameSession(db.Model):
     # Стабильный slug административного района. Заполнен только при
     # difficulty=district; для старых режимов остаётся NULL.
     district_id = db.Column(db.String(32), index=True)
+    # 0 — исторические правила; 1 — точная граница hard и запрет повторов.
+    # Server default оставляет прежние правила старым workers во время deploy.
+    panorama_rules_version = db.Column(
+        db.Integer, nullable=False, default=CURRENT_PANORAMA_RULES_VERSION,
+        server_default='0',
+    )
     # Номер текущего раунда (0-based). Раньше жил в cookie-сессии клиента,
     # что позволяло реплеить старую cookie и переигрывать раунды.
     current_round = db.Column(db.Integer, default=0)

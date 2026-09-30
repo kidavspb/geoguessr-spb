@@ -64,7 +64,10 @@ function post(url, body, config = {}) {
 }
 
 export const api = {
-    startGame: body => post('/api/game/start', body, { timeoutMs: 15000 }),
+    startGame: body => post('/api/game/start', {
+        ...body,
+        client_panorama_rules_version: 1,
+    }, { timeoutMs: 15000 }),
 
     getLocation: () => request('/api/game/location', {}, { retries: 1 }),
 

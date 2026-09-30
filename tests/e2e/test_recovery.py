@@ -1,4 +1,5 @@
 """Recovery from failed HTTP requests and late responses across screens."""
+import json
 import re
 
 import pytest
@@ -130,3 +131,40 @@ def test_sdk_readiness_timeout_allows_a_fresh_attempt(page, server, sdk):
         await api[ready]();
         return true;
     }""", {'module': module, 'ready': ready})
+
+
+def test_outdated_tab_gets_reload_message_before_starting_game(page, server):
+    """Старый payload не запускает игру, после обновления можно начать."""
+    dialogs = []
+
+    def accept_dialog(dialog):
+        dialogs.append(dialog.message)
+        dialog.accept()
+
+    def old_start_payload(route):
+        payload = route.request.post_data_json
+        payload.pop('client_panorama_rules_version', None)
+        route.continue_(post_data=json.dumps(payload))
+
+    page.on('dialog', accept_dialog)
+    page.route('**/api/game/start', old_start_payload)
+    page.goto(server)
+    page.get_by_role('button', name='Весь город', exact=True).click()
+    page.locator('#start-btn').click()
+
+    expect(page.locator('#start-btn')).to_be_enabled()
+    assert dialogs == [
+        'Ошибка: Игра обновилась. Обновите страницу перед началом новой игры',
+    ]
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#game-screen')).not_to_have_class(re.compile('active'))
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 0
+
+    page.unroute('**/api/game/start', old_start_payload)
+    page.reload()
+    page.get_by_role('button', name='Весь город', exact=True).click()
+    page.locator('#start-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 1

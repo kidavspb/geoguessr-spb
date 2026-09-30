@@ -585,6 +585,7 @@ def test_legacy_hard_challenge_with_stored_outside_point_remains_playable(
         source = GameSession(
             player_name='Автор старого челленджа',
             difficulty='hard',
+            panorama_rules_version=0,
             total_score=25000,
             rounds_played=5,
             current_round=5,

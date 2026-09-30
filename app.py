@@ -16,7 +16,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import event
 
-from models import db, GameSession, GameRound, VerifiedPoint, utcnow
+from models import (db, GameSession, GameRound, VerifiedPoint, utcnow,
+                    CURRENT_PANORAMA_RULES_VERSION)
 from game_logic import (
     ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
     MAX_SKIPS_PER_SEARCH_BATCH, MAX_ACTUAL_POINT_DRIFT_KM,
@@ -228,19 +229,17 @@ def _current_game(*, lock=False):
     return db.session.get(GameSession, game_id)
 
 
-def _round_requires_spatial_validation(game, rnd):
+def _requires_spatial_validation(game):
     """Нужен ли authoritative PIP preflight перед показом панорамы.
 
-    Новые hard-раунды всегда сгенерированы внутри exact city union. Проверка
-    исходной точки оставляет рабочими уже созданные до обновления раунды и
-    старые challenge с сохранённой панорамой вне новой boundary: при replay
-    challenge копирует actual point автора как новую gen point.
+    Версия закреплена за всей игрой: старый hard мог уже показать панораму
+    за новой границей, хотя его исходная точка находится внутри города.
+    Challenge наследует правила автора. Район всегда проверяется точно.
     """
     if game.difficulty == DISTRICT_MODE:
         return True
-    if game.difficulty != CITY_MODE:
-        return False
-    return point_in_city(rnd.gen_latitude, rnd.gen_longitude)
+    return (game.difficulty == CITY_MODE
+            and game.panorama_rules_version >= 1)
 
 
 def _load_active_round():
@@ -282,7 +281,7 @@ def _location_payload(game, rnd):
         'search_batch': rnd.search_batch,
         # Абсолютная граница текущей серии; skips при её продлении не сбрасываем.
         'max_location_skips': rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH,
-        'requires_spatial_validation': _round_requires_spatial_validation(game, rnd),
+        'requires_spatial_validation': _requires_spatial_validation(game),
     }
     if game.difficulty == DISTRICT_MODE:
         payload['district_id'] = game.district_id
@@ -373,13 +372,13 @@ def _panorama_rejection_reason(game, rnd, latitude, longitude):
             return 'district_unavailable', drift
         if not point_in_district(latitude, longitude, game.district_id):
             return 'outside_district', drift
-    elif (_round_requires_spatial_validation(game, rnd)
+    elif (_requires_spatial_validation(game)
           and not point_in_city(latitude, longitude)):
         return 'outside_city', drift
     # Разные исходные координаты, особенно в небольшом районе, могут привести
     # locate к одной и той же панораме. Сравниваем фактические места съёмки
     # уже сыгранных раундов, а не только сгенерированные точки.
-    if any(
+    if game.panorama_rules_version >= 1 and any(
         other.round_number < rnd.round_number
         and other.answered_at is not None
         and haversine_distance(latitude, longitude, *_scoring_point(other))
@@ -604,6 +603,18 @@ def start_game():
     стартует с теми же точками, что у автора челленджа.
     """
     data = _json_object()
+    # Старая открытая вкладка не умеет проверять панорамы перед показом.
+    # Это подсказка обновить UI, а не защита от прямых запросов к API.
+    browser_request = 'Origin' in request.headers or 'Sec-Fetch-Mode' in request.headers
+    client_rules_version = data.get('client_panorama_rules_version')
+    if browser_request and (
+        type(client_rules_version) is not int
+        or client_rules_version != CURRENT_PANORAMA_RULES_VERSION
+    ):
+        return jsonify({
+            'error': 'Игра обновилась. Обновите страницу перед началом новой игры',
+            'reason': 'client_outdated',
+        }), 409
     try:
         player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
 
@@ -677,6 +688,8 @@ def start_game():
             player_name=player_name,
             difficulty=difficulty,
             district_id=district_id,
+            panorama_rules_version=(source.panorama_rules_version if source
+                                    else CURRENT_PANORAMA_RULES_VERSION),
             time_limit=time_limit,
             no_move=no_move,
             current_round=0,
@@ -800,7 +813,7 @@ def round_ready():
 
     # В district и новом exact-city hard Player можно открывать только после
     # того, как /validate_panorama подтвердил фактическую точку.
-    if (_round_requires_spatial_validation(game, rnd)
+    if (_requires_spatial_validation(game)
             and not _stored_panorama_is_valid(game, rnd)):
         return jsonify({
             'error': 'Панорама не подтверждена для выбранной территории',
@@ -1140,7 +1153,7 @@ def submit_guess():
                     '(round=%s, game_id=%s)',
                     reason, drift, rnd.round_number, game.id,
                 )
-                if (_round_requires_spatial_validation(game, rnd)
+                if (_requires_spatial_validation(game)
                         or reason == 'duplicate_panorama'):
                     return jsonify({
                         'error': ('Эта панорама уже была в текущей игре'
@@ -1149,7 +1162,7 @@ def submit_guess():
                         'reason': reason,
                     }), 409
 
-        if (_round_requires_spatial_validation(game, rnd)
+        if (_requires_spatial_validation(game)
                 and not _stored_panorama_is_valid(game, rnd)):
             return jsonify({
                 'error': 'Панорама не подтверждена для выбранной территории',

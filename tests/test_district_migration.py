@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRIOR_REVISION = 'a49c7d8e2f10'
 DISTRICT_REVISION = 'c82f4b10a6d1'
 SEARCH_REVISION = '972e240b1d4d'
+RULES_REVISION = '7cc7dd2165af'
 MIGRATION_MODULE = (
     'migrations.versions.c82f4b10a6d1_административные_районы'
 )
@@ -170,9 +171,51 @@ def test_legacy_database_without_alembic_is_stamped_and_upgraded(tmp_path):
     _upgrade(database_path, 'head', auto_migrate=True)
     with sqlite3.connect(database_path) as connection:
         assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
-            SEARCH_REVISION,
+            RULES_REVISION,
         )
         assert connection.execute('SELECT player_name FROM game_sessions').fetchone() == ('Legacy',)
+        assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
+@pytest.mark.parametrize('prior_revision,partial_ddl', [
+    (PRIOR_REVISION, False), (SEARCH_REVISION, False), (SEARCH_REVISION, True),
+])
+def test_rules_migration_preserves_games_and_old_worker_default(
+        tmp_path, prior_revision, partial_ddl):
+    database_path = tmp_path / 'rules.db'
+    _upgrade(database_path, prior_revision)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("INSERT INTO game_sessions "
+                           "(id, player_name, difficulty, total_score, current_round) "
+                           "VALUES (1, 'Legacy', 'hard', 5000, 1)")
+        connection.execute("INSERT INTO game_rounds "
+                           "(id, session_id, round_number, score, started_at) "
+                           "VALUES (1, 1, 2, 0, '2026-09-30 10:00:00')")
+        if partial_ddl:
+            connection.execute('ALTER TABLE game_sessions ADD COLUMN '
+                               'panorama_rules_version INTEGER NOT NULL DEFAULT 0')
+            connection.execute("INSERT INTO game_sessions "
+                               "(id, player_name, panorama_rules_version) "
+                               "VALUES (2, 'New', 1)")
+    _upgrade(database_path, 'head')
+    _upgrade(database_path, 'head')
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute('SELECT player_name, difficulty, total_score, '
+                                  'current_round, panorama_rules_version '
+                                  'FROM game_sessions WHERE id = 1').fetchone() == (
+            'Legacy', 'hard', 5000, 1, 0,
+        )
+        assert connection.execute('SELECT round_number, score, started_at '
+                                  'FROM game_rounds WHERE id = 1').fetchone() == (
+            2, 0, '2026-09-30 10:00:00',
+        )
+        if partial_ddl:
+            assert connection.execute('SELECT panorama_rules_version '
+                                      'FROM game_sessions WHERE id = 2').fetchone() == (1,)
+        connection.execute("INSERT INTO game_sessions (id, player_name) VALUES (3, 'Old worker')")
+        assert connection.execute('SELECT panorama_rules_version '
+                                  'FROM game_sessions WHERE id = 3').fetchone() == (0,)
+        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (RULES_REVISION,)
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
 
 
@@ -198,6 +241,6 @@ def test_search_batch_migration_preserves_rounds(tmp_path, partial_ddl):
         ]
         assert connection.execute('SELECT total_score FROM game_sessions').fetchone() == (5000,)
         assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
-            SEARCH_REVISION,
+            RULES_REVISION,
         )
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
