@@ -3,6 +3,10 @@ from datetime import datetime, timezone
 
 db = SQLAlchemy()
 
+# Сохраняется вместе с игрой: новые проверки нельзя применять задним числом
+# к панораме, которую старая вкладка уже показала до обновления сервера.
+CURRENT_PANORAMA_RULES_VERSION = 1
+
 
 def utcnow():
     """Текущее время в UTC (timezone-aware).
@@ -26,9 +30,18 @@ class GameSession(db.Model):
     player_name = db.Column(db.String(100), default='Аноним')
     total_score = db.Column(db.Integer, default=0)
     rounds_played = db.Column(db.Integer, default=0)
-    # Режим сложности, в котором сыграна игра (center / medium / hard).
+    # Территория игры: center / medium / hard или district.
     # Нужен, чтобы таблица лидеров была честной: режимы не сравнимы напрямую.
     difficulty = db.Column(db.String(10), default='medium')
+    # Стабильный slug административного района. Заполнен только при
+    # difficulty=district; для старых режимов остаётся NULL.
+    district_id = db.Column(db.String(32), index=True)
+    # 0 — исторические правила; 1 — точная граница hard и запрет повторов.
+    # Server default оставляет прежние правила старым workers во время deploy.
+    panorama_rules_version = db.Column(
+        db.Integer, nullable=False, default=CURRENT_PANORAMA_RULES_VERSION,
+        server_default='0',
+    )
     # Номер текущего раунда (0-based). Раньше жил в cookie-сессии клиента,
     # что позволяло реплеить старую cookie и переигрывать раунды.
     current_round = db.Column(db.Integer, default=0)
@@ -73,9 +86,11 @@ class GameRound(db.Model):
     round_number = db.Column(db.Integer, nullable=False)
     # Адрес точки ответа (обратное геокодирование), показывается на экране результата
     address = db.Column(db.String(300))
-    # Сколько раз точка раунда перегенерировалась (серверный лимит против абьюза)
+    # Монотонная версия точки: не сбрасывается при продолжении поиска.
     skips = db.Column(db.Integer, default=0)
-    # Когда точка выдана клиенту — от этого момента считается лимит времени
+    # Новую серию из 10 замен открывает игрок, только до появления панорамы.
+    search_batch = db.Column(db.Integer, nullable=False, default=1, server_default='1')
+    # Первый /ready после появления панорамы — начало лимита времени.
     started_at = db.Column(db.DateTime)
     # Когда игрок ответил; NULL — раунд ещё не сыгран
     answered_at = db.Column(db.DateTime)
@@ -111,12 +126,14 @@ class VerifiedPoint(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     latitude = db.Column(db.Float, nullable=False)
     longitude = db.Column(db.Float, nullable=False)
-    # Ключи дедупликации: координаты, округлённые до ~10 м (int(coord * 10000)).
-    # Две панорамы ближе ~10 м считаются одной точкой пула.
+    # Ключи ячейки: int(round(coord * 10000)), а не поиск по радиусу.
     lat_key = db.Column(db.Integer, nullable=False)
     lon_key = db.Column(db.Integer, nullable=False)
     # Расстояние до центра города — для отбора точек под режим сложности
     dist_from_center_km = db.Column(db.Float, nullable=False)
+    # Пространственный кэш: какому району принадлежит панорама.
+    # NULL допустим для legacy-точек и координат вне административной границы.
+    district_id = db.Column(db.String(32), index=True)
     # Сколько раз подряд у точки не нашлась панорама (панорамы иногда
     # пропадают). На пороге точка удаляется из пула; при успешном
     # подтверждении панорамы счётчик сбрасывается.

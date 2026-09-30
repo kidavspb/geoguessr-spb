@@ -5,14 +5,13 @@
 по дате.
 """
 import json
-import logging
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.exc import IntegrityError
 
 from models import db, DailyChallenge
 from game_logic import ROUNDS_PER_GAME
 from pool import choose_round_points
-
-logger = logging.getLogger(__name__)
 
 MSK = timezone(timedelta(hours=3))
 
@@ -42,7 +41,7 @@ def get_or_create_daily():
     try:
         db.session.add(challenge)
         db.session.commit()
-    except Exception:
+    except IntegrityError:
         # Гонка воркеров на unique(date): набор уже создал кто-то другой
         db.session.rollback()
         challenge = DailyChallenge.query.filter_by(date=date).first()

@@ -4,10 +4,44 @@
  */
 import { state, SPB_CENTER, DEFAULT_ZOOM, PIN_RED, PIN_NAVY } from './state.js';
 import { createPinElement, TILE_SIZE, mercatorY, mercatorYInv } from './utils.js';
-import { reloadFailedScript } from './sdk.js';
+import { reloadFailedScript, withTimeout } from './sdk.js';
 
 const API_READY_TIMEOUT_MS = 12000;
 let v3ReadyPromise = null;
+
+// Начальные виды подобраны по городской застройке и узнаваемым ориентирам.
+// Это настройки камеры, а не границы игры и не веса генератора точек.
+// Они не зависят от панорамы, пула или набора раундов и не меняются при
+// раскрытии карты: увеличение панели просто открывает больше территории.
+const DISTRICT_MAP_VIEWS = {
+    admiralteysky:    { center: [30.301, 59.922], zoom: 12 }, // Коломна — Садовая
+    vasileostrovsky:  { center: [30.251, 59.938], zoom: 12 }, // Линии Васильевского острова
+    vyborgsky:        { center: [30.326, 60.025], zoom: 11 }, // Удельная — Озерки
+    kalininsky:       { center: [30.393, 60.007], zoom: 11 }, // Академическая — Гражданка
+    kirovsky:         { center: [30.266, 59.870], zoom: 11 }, // Автово и проспект Стачек
+    kolpinsky:        { center: [30.592, 59.747], zoom: 11 }, // Колпино
+    krasnogvardeysky: { center: [30.456, 59.963], zoom: 11 }, // Охта — Пороховые
+    krasnoselsky:     { center: [30.163, 59.837], zoom: 11 }, // Жилая застройка юго-запада
+    kronshtadtsky:    { center: [29.765, 59.997], zoom: 12 }, // Город Кронштадт на Котлине
+    kurortny:         { center: [29.964, 60.098], zoom: 11 }, // Сестрорецк как начальный ориентир
+    moskovsky:        { center: [30.328, 59.859], zoom: 11 }, // Московская — Парк Победы
+    nevsky:          { center: [30.463, 59.900], zoom: 11 }, // Городские кварталы двух берегов
+    petrogradsky:     { center: [30.293, 59.964], zoom: 12 }, // Петроградская сторона
+    petrodvortsovy:   { center: [29.907, 59.880], zoom: 11 }, // Петергоф как начальный ориентир
+    primorsky:        { center: [30.239, 60.021], zoom: 11 }, // Комендантский — озеро Долгое
+    pushkinsky:       { center: [30.413, 59.707], zoom: 11 }, // Пушкин и Павловск
+    frunzensky:       { center: [30.395, 59.869], zoom: 11 }, // Купчино
+    tsentralny:       { center: [30.355, 59.933], zoom: 12 }, // Кварталы вокруг Невского
+};
+
+// Смена экранов сама вызывает :hover под неподвижным курсором. Разрешаем
+// раскрытие нового раунда только после реального движения вне панели.
+document.addEventListener('pointermove', event => {
+    const panel = document.getElementById('map-panel');
+    if (panel?.classList.contains('hover-paused') && !panel.contains(event.target)) {
+        panel.classList.remove('hover-paused');
+    }
+});
 
 /** Дождаться async-скрипта API v3, не блокируя первый экран приложения. */
 export function ymapsV3Ready() {
@@ -28,11 +62,9 @@ export function ymapsV3Ready() {
                 return;
             }
             if (typeof ymaps3 !== 'undefined' && ymaps3.ready) {
-                Promise.resolve(ymaps3.ready).then(resolve, error => {
-                    window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
-                    window.yandexMapsLoadErrors.v3 = true;
-                    reject(error);
-                });
+                withTimeout(
+                    ymaps3.ready, API_READY_TIMEOUT_MS, 'Таймаут готовности API карты'
+                ).then(resolve, reject);
                 return;
             }
             if (performance.now() - started >= API_READY_TIMEOUT_MS) {
@@ -44,14 +76,48 @@ export function ymapsV3Ready() {
         check();
     }).catch(error => {
         v3ReadyPromise = null;
+        window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
+        window.yandexMapsLoadErrors.v3 = true;
         throw error;
     });
     return v3ReadyPromise;
 }
 
-/**
- * Инициализация карты выбора
- */
+/** Постоянный начальный вид территории, без привязки к ответу раунда. */
+function initialGuessMapLocation(container) {
+    if (state.gameData.difficulty === 'district' &&
+            Object.prototype.hasOwnProperty.call(DISTRICT_MAP_VIEWS, state.gameData.districtId)) {
+        const view = DISTRICT_MAP_VIEWS[state.gameData.districtId];
+        return { center: [...view.center], zoom: view.zoom };
+    }
+    // Для ещё не описанного района сохраняем прежний fallback по bounds.
+    const bounds = state.gameData.districtBounds;
+    if (state.gameData.difficulty !== 'district' || !Array.isArray(bounds) ||
+            bounds.length !== 4 || !bounds.every(Number.isFinite)) {
+        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
+    }
+    const [west, south, east, north] = bounds;
+    if (west >= east || south >= north || south <= -85 || north >= 85) {
+        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
+    }
+    const southY = mercatorY(south);
+    const northY = mercatorY(north);
+    // clientWidth/Height не зависят от transform свёрнутого мобильного листа.
+    const width = Math.max(120, (container.clientWidth || 320) - 48);
+    const height = Math.max(120, (container.clientHeight || 220) - 48);
+    // Размер района влияет на приближение максимум на один шаг. Большие
+    // районы не отдаляем ради fit: важнее сразу удобно ставить точку.
+    const zoom = Math.floor(Math.max(DEFAULT_ZOOM, Math.min(DEFAULT_ZOOM + 1, Math.min(
+        Math.log2(width / TILE_SIZE / ((east - west) / 360)),
+        Math.log2(height / TILE_SIZE / Math.abs(northY - southY))
+    ))));
+    return {
+        center: [(west + east) / 2, mercatorYInv((southY + northY) / 2)],
+        zoom,
+    };
+}
+
+/** Инициализация карты выбора. */
 export async function initMap() {
     const loadId = ++state.mainMapLoadId;
     await ymapsV3Ready();
@@ -64,10 +130,7 @@ export async function initMap() {
     mapContainer.innerHTML = '';
 
     state.map = new YMap(mapContainer, {
-        location: {
-            center: [SPB_CENTER[1], SPB_CENTER[0]], // [lon, lat]
-            zoom: DEFAULT_ZOOM
-        }
+        location: initialGuessMapLocation(mapContainer)
     });
 
     state.map.addChild(new YMapDefaultSchemeLayer());
@@ -195,9 +258,13 @@ export function destroyFinalMap() {
  * Сброс карты для нового раунда
  */
 export function resetMapForNewRound() {
+    const panel = document.getElementById('map-panel');
+    panel.classList.add('hover-paused');
+    // Не переносим focus-within от карты предыдущего раунда.
+    if (panel.contains(document.activeElement)) document.activeElement.blur();
     // На телефоне раунд начинается со свёрнутой картой: первым делом игрок
     // всё равно осматривается, а карта закрывала бы пол-экрана.
-    // На десктопе панель маленькая и разворачивается наведением — оставляем.
+    // На десктопе оставляем компактную панель; раскрытие — новым наведением.
     setMapPanelCollapsed(window.innerWidth <= 720);
     if (state.currentMarker && state.map) {
         state.map.removeChild(state.currentMarker);
@@ -216,10 +283,7 @@ export function resetMapForNewRound() {
 
     // Центрируем карту
     if (state.map) {
-        state.map.setLocation({
-            center: [SPB_CENTER[1], SPB_CENTER[0]],
-            zoom: DEFAULT_ZOOM
-        });
+        state.map.setLocation(initialGuessMapLocation(document.getElementById('map')));
     }
 }
 
@@ -261,8 +325,8 @@ export async function showResultMap(data) {
     const guessLat = data.guess.latitude;
 
     // Сами вписываем обе точки в кадр — по фактическому размеру контейнера.
-    // На мобильных контейнер карты уже обрезан по высоте панели (CSS),
-    // на десктопе панель закрывает правую часть — учитываем её ширину.
+    // На мобильных панель закрывает только нижнюю полоску карты под скруглением;
+    // на десктопе она закрывает правую часть — учитываем обе области.
     const rect = mapContainer.getBoundingClientRect();
     const isMobile = window.innerWidth <= 720;
     // Страховка: если контейнер ещё не получил размер, берём оценку от окна
@@ -270,7 +334,9 @@ export async function showResultMap(data) {
     const stageH = rect.height > 50 ? rect.height
         : (isMobile ? window.innerHeight * 0.44 : window.innerHeight);
     const panelRight = isMobile ? 0 : Math.min(380, stageW);
-    const panelBottom = 0;
+    const panelBottom = isMobile
+        ? Math.max(0, rect.bottom - document.querySelector('.result-panel').getBoundingClientRect().top)
+        : 0;
     // Вертикальный запас больше горизонтального: пины рисуются НАД точкой
     // (~45px вверх) и на маленькой мобильной карте иначе срезаются краем
     const padX = isMobile ? 32 : 70;

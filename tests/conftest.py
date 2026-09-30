@@ -19,8 +19,6 @@ def app_module(tmp_path_factory):
     os.environ['RATELIMIT_ENABLED'] = 'false'      # лимиты мешали бы циклам в тестах
     # Схему в тестах создают фикстуры (db.create_all), миграции не нужны
     os.environ['AUTO_MIGRATE'] = 'false'
-    # Пустой ключ отключает обратное геокодирование: тесты не ходят в сеть
-    os.environ['YANDEX_GEOCODER_API_KEY'] = ''
     os.environ['YANDEX_MAPS_API_KEY'] = ''
     # Известный ключ админки для тестов модерации (не из .env)
     os.environ['ADMIN_KEY'] = 'test-admin-key'

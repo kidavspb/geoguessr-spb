@@ -11,9 +11,6 @@ export const DEFAULT_ZOOM = 11;
 export const PIN_RED = '/static/img/pin.svg';
 export const PIN_NAVY = '/static/img/pin-navy.svg';
 
-// Сколько раз перегенерировать точку, если панорамы нет (сервер лимитирует жёстче)
-export const MAX_PANORAMA_RETRIES = 3;
-
 // Мутабельное состояние. Модули меняют поля напрямую — приложение маленькое,
 // и это проще, чем шина событий.
 export const state = {
@@ -53,7 +50,12 @@ export const state = {
         totalRounds: 5,
         currentRound: 1,
         totalScore: 0,
-        difficulty: 'medium', // center, medium, hard, hardcore
+        // Tagged union территории: districtId непустой только при district.
+        difficulty: 'medium', // center, medium, hard, district
+        standardDifficulty: 'medium', // позиция приглушённой шкалы при district
+        districtId: null,
+        districtBounds: null, // [west, south, east, north] из ответа /start
+        districtName: null,
         timeLimit: 0,         // секунд на раунд, 0 — без лимита
         noMove: false,        // режим «без перемещения»
         challengeToken: null, // токен челленджа из ссылки-вызова
@@ -61,5 +63,6 @@ export const state = {
     },
 
     // Фильтры таблицы лидеров
-    lbState: { difficulty: 'all', period: 'all' }
+    // Район сохраняется при смене режима/периода только внутри таблицы лидеров.
+    lbState: { difficulty: 'all', period: 'all', districtId: null }
 };

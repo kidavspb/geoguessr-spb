@@ -153,3 +153,20 @@ def test_admin_stats(client):
     assert stats['games_total'] == 1
     assert stats['games_completed_7d'] == 1
     assert stats['completion_rate_7d'] == 1.0
+
+
+def test_completion_rate_uses_the_same_started_cohort(client, app):
+    from datetime import timedelta
+    from models import GameSession, db, utcnow
+
+    with app.app_context():
+        now = utcnow()
+        db.session.add_all([
+            GameSession(created_at=now - timedelta(days=10), completed_at=now),
+            GameSession(created_at=now - timedelta(days=1), completed_at=now),
+            GameSession(created_at=now),
+        ])
+        db.session.commit()
+    stats = client.get('/api/admin/stats', headers=ADMIN_HEADERS).get_json()
+    assert stats['games_started_7d'] == stats['games_completed_7d'] == 2
+    assert stats['completion_rate_7d'] == 0.5

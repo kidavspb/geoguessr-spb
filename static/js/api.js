@@ -64,13 +64,12 @@ function post(url, body, config = {}) {
 }
 
 export const api = {
-    startGame: body => post('/api/game/start', body, { timeoutMs: 15000 }),
+    startGame: body => post('/api/game/start', {
+        ...body,
+        client_panorama_rules_version: 1,
+    }, { timeoutMs: 15000 }),
 
-    getLocation: (peek = false) => request(
-        peek ? '/api/game/location?peek=1' : '/api/game/location',
-        {},
-        { retries: 1 }
-    ),
+    getLocation: () => request('/api/game/location', {}, { retries: 1 }),
 
     skipLocation: (roundId, reason = 'no_coverage', locationVersion = null) =>
         post('/api/game/skip_location', {
@@ -79,8 +78,25 @@ export const api = {
             location_version: locationVersion
         }, { retries: locationVersion == null ? 0 : 1 }),
 
-    roundReady: roundId =>
-        post('/api/game/ready', { round_id: roundId }, { retries: 1 }),
+    roundReady: (roundId, locationVersion) =>
+        post('/api/game/ready', {
+            round_id: roundId, location_version: locationVersion
+        }, { retries: 1 }),
+
+    continueSearch: location =>
+        post('/api/game/continue_search', {
+            round_id: location.round_id,
+            location_version: location.location_version,
+            search_batch: location.search_batch
+        }, { retries: 1 }),
+
+    validatePanorama: (roundId, latitude, longitude, locationVersion = null) =>
+        post('/api/game/validate_panorama', {
+            round_id: roundId,
+            latitude,
+            longitude,
+            location_version: locationVersion
+        }, { retries: 1 }),
 
     guess: payload => post('/api/game/guess', payload, {
         timeoutMs: 12000,

@@ -1,44 +1,38 @@
-"""GeoGuessr СПб («Петербургский следопыт») — Flask-приложение и API.
-
-Структура проекта:
-  game_logic.py — чистая игровая логика (константы, расчёты, валидация)
-  pool.py       — пул проверенных точек с панорамами
-  geocoder.py   — обратное геокодирование (адрес точки ответа)
-  models.py     — модели БД
-  app.py        — конфигурация, миграции, rate limiting, HTTP-роуты
-"""
+"""GeoGuessr СПб: конфигурация Flask, миграции и HTTP API."""
 import hmac
 import os
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
-from flask import Flask, g, render_template, jsonify, request, session, send_from_directory
+from flask import (Flask, g, render_template, jsonify, request, session,
+                   send_file, send_from_directory)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import BadRequest
 from dotenv import load_dotenv
 from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembic_stamp
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import event
 
-from models import db, GameSession, GameRound, utcnow
-# Ре-экспорт логики в неймспейс app: роуты используют её напрямую,
-# а тесты обращаются к функциям и константам через модуль app.
+from models import (db, GameSession, GameRound, VerifiedPoint, utcnow,
+                    CURRENT_PANORAMA_RULES_VERSION)
 from game_logic import (
-    ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND, MAX_DISTANCE_KM,
-    MAX_SKIPS_PER_ROUND, MAX_ACTUAL_POINT_DRIFT_KM,
-    TIME_LIMIT_GRACE_SECONDS, TIME_LIMIT_MIN, TIME_LIMIT_MAX,
-    SPB_BOUNDS, SPB_CENTER, DIFFICULTY_SETTINGS,
-    difficulty_name, generate_random_point, haversine_distance,
+    ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
+    MAX_SKIPS_PER_SEARCH_BATCH, MAX_ACTUAL_POINT_DRIFT_KM,
+    MIN_ROUND_LOCATION_DISTANCE_KM,
+    TIME_LIMIT_GRACE_SECONDS, DIFFICULTY_SETTINGS,
+    difficulty_name, haversine_distance,
     calculate_score, parse_coords, parse_time_limit,
 )
-from pool import POOL_MIN_SIZE, POOL_USE_PROBABILITY, POOL_RADIUS_KM, \
-    choose_round_points, choose_round_candidates, add_verified_point, mark_point_failed
-from geocoder import reverse_geocode
+from pool import choose_round_candidates, add_verified_point, mark_point_failed
 from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
-from models import VerifiedPoint
+from districts import (
+    DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DistrictDataError, district_map,
+    district_name, is_valid_district_id, point_in_city, point_in_district,
+)
 
 # Загружаем переменные окружения из .env
 load_dotenv()
@@ -85,7 +79,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
 )
 
-# Приложение работает за обратным прокси (nginx) — доверяем одному прокси,
+# Приложение работает за обратным прокси (Apache) — доверяем одному прокси,
 # чтобы корректно видеть схему (https) и реальный IP клиента.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -168,12 +162,84 @@ def _aware_utc(dt):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def _current_game():
+DISTRICT_MODE = 'district'
+CITY_MODE = 'hard'
+
+
+def _territory_payload(difficulty, district_id=None):
+    """Единообразно сериализовать территорию игры в API."""
+    selected_name = district_name(district_id) if difficulty == DISTRICT_MODE else None
+    return {
+        'difficulty': difficulty,
+        # Старые клиенты уже показывают difficulty_name.
+        'difficulty_name': selected_name or difficulty_name(difficulty),
+        'district_id': district_id if difficulty == DISTRICT_MODE else None,
+        'district_name': selected_name,
+        'district_bounds': list(district_map()[district_id].bounds) if selected_name else None,
+    }
+
+
+def _parse_requested_territory(data):
+    """Валидировать tagged union (difficulty, district_id).
+
+    Неизвестный legacy difficulty по-прежнему нормализуется в medium,
+    но district mode никогда не получает молчаливый fallback в другой режим.
+    """
+    difficulty = data.get('difficulty', 'medium')
+    if not isinstance(difficulty, str):
+        raise BadRequest('difficulty должен быть строкой')
+    district_id = data.get('district_id')
+    if district_id not in (None, ''):
+        district_id = str(district_id).strip()
+    else:
+        district_id = None
+
+    if difficulty == DISTRICT_MODE:
+        if not is_valid_district_id(district_id):
+            return None, None, (jsonify({'error': 'Неизвестный административный район'}), 400)
+        # Повреждённый/неполный dataset должен дать явную 503,
+        # а не стартовать игру из случайно уцелевших точек пула.
+        district_map()
+        return difficulty, district_id, None
+
+    if district_id is not None:
+        return None, None, (jsonify({
+            'error': 'district_id допустим только для режима district'
+        }), 400)
+    if difficulty not in DIFFICULTY_SETTINGS:
+        difficulty = 'medium'
+    return difficulty, None, None
+
+
+def _current_game(*, lock=False):
     """Игровая сессия текущего игрока (по game_id из подписанной cookie)."""
     game_id = session.get('game_id')
     if not game_id:
         return None
+    if lock:
+        # Блокируем запись ДО чтения состояния раунда. SELECT FOR UPDATE
+        # игнорируется SQLite; no-op UPDATE берёт writer lock там и row lock
+        # в PostgreSQL. Lock живёт до commit/rollback текущего запроса, поэтому
+        # guess/skip/ready разных workers не работают с одним старым снимком.
+        db.session.execute(
+            db.update(GameSession).where(GameSession.id == game_id)
+            .values(current_round=GameSession.current_round)
+            .execution_options(synchronize_session=False)
+        )
     return db.session.get(GameSession, game_id)
+
+
+def _requires_spatial_validation(game):
+    """Нужен ли authoritative PIP preflight перед показом панорамы.
+
+    Версия закреплена за всей игрой: старый hard мог уже показать панораму
+    за новой границей, хотя его исходная точка находится внутри города.
+    Challenge наследует правила автора. Район всегда проверяется точно.
+    """
+    if game.difficulty == DISTRICT_MODE:
+        return True
+    return (game.difficulty == CITY_MODE
+            and game.panorama_rules_version >= 1)
 
 
 def _load_active_round():
@@ -199,7 +265,7 @@ def _load_active_round():
 
 def _location_payload(game, rnd):
     """Публичные данные точки, достаточные клиенту для поиска панорамы."""
-    return {
+    payload = {
         'round_id': rnd.id,
         'round': rnd.round_number,
         'total_rounds': ROUNDS_PER_GAME,
@@ -212,7 +278,14 @@ def _location_payload(game, rnd):
         # Версия кандидата внутри того же round_id. Нужна, чтобы безопасно
         # повторить skip после потерянного HTTP-ответа, не перескочив ещё раз.
         'location_version': rnd.skips or 0,
+        'search_batch': rnd.search_batch,
+        # Абсолютная граница текущей серии; skips при её продлении не сбрасываем.
+        'max_location_skips': rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH,
+        'requires_spatial_validation': _requires_spatial_validation(game),
     }
+    if game.difficulty == DISTRICT_MODE:
+        payload['district_id'] = game.district_id
+    return payload
 
 
 def _round_from_payload(data, *, allow_answered=False, require_active=True):
@@ -222,17 +295,13 @@ def _round_from_payload(data, *, allow_answered=False, require_active=True):
     активный раунд. Новый фронтенд всегда передаёт id, поэтому повтор запроса
     никогда не сможет случайно изменить следующий раунд.
     """
-    game = _current_game()
+    game = _current_game(lock=True)
     if game is None:
         return None, None, (jsonify({'error': 'Игра не начата'}), 400)
 
-    round_id = data.get('round_id') if isinstance(data, dict) else None
-    if round_id in (None, ''):
+    round_id = _integer_field(data, 'round_id', minimum=1)
+    if round_id is None:
         return _load_active_round()
-    try:
-        round_id = int(round_id)
-    except (TypeError, ValueError):
-        return None, None, (jsonify({'error': 'Некорректный идентификатор раунда'}), 400)
 
     rnd = db.session.get(GameRound, round_id)
     if rnd is None or rnd.session_id != game.id:
@@ -255,6 +324,78 @@ def _scoring_point(rnd):
     if rnd.actual_latitude is not None and rnd.actual_longitude is not None:
         return rnd.actual_latitude, rnd.actual_longitude
     return rnd.gen_latitude, rnd.gen_longitude
+
+
+def _location_version_error(data, rnd):
+    """Защита от запоздавшего locate предыдущей версии того же раунда."""
+    expected = _integer_field(data, 'location_version')
+    if expected is None:
+        return None
+    if expected != (rnd.skips or 0):
+        return jsonify({'error': 'Версия точки устарела'}), 409
+    return None
+
+
+def _integer_field(data, name, *, minimum=0):
+    value = data.get(name)
+    if value in (None, ''):
+        return None  # старые клиенты ещё могут не передавать id/версию
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise BadRequest(f'Некорректное поле {name}') from None
+    if (isinstance(value, bool) or (isinstance(value, float) and value != parsed)
+            or not minimum <= parsed <= 2**63 - 1):
+        raise BadRequest(f'Некорректное поле {name}')
+    return parsed
+
+
+def _json_object():
+    # Пустое тело сохраняет контракт start/skip старых клиентов.
+    if not request.get_data():
+        return {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise BadRequest('Ожидается JSON-объект')
+    return data
+
+
+def _panorama_rejection_reason(game, rnd, latitude, longitude):
+    """Причина, по которой фактическую точку панорамы нельзя принять."""
+    drift = haversine_distance(
+        latitude, longitude, rnd.gen_latitude, rnd.gen_longitude
+    )
+    if drift > MAX_ACTUAL_POINT_DRIFT_KM:
+        return 'too_far', drift
+    if game.difficulty == DISTRICT_MODE:
+        if not is_valid_district_id(game.district_id):
+            return 'district_unavailable', drift
+        if not point_in_district(latitude, longitude, game.district_id):
+            return 'outside_district', drift
+    elif (_requires_spatial_validation(game)
+          and not point_in_city(latitude, longitude)):
+        return 'outside_city', drift
+    # Разные исходные координаты, особенно в небольшом районе, могут привести
+    # locate к одной и той же панораме. Сравниваем фактические места съёмки
+    # уже сыгранных раундов, а не только сгенерированные точки.
+    if game.panorama_rules_version >= 1 and any(
+        other.round_number < rnd.round_number
+        and other.answered_at is not None
+        and haversine_distance(latitude, longitude, *_scoring_point(other))
+        < MIN_ROUND_LOCATION_DISTANCE_KM
+        for other in game.rounds
+    ):
+        return 'duplicate_panorama', drift
+    return None, drift
+
+
+def _stored_panorama_is_valid(game, rnd):
+    if rnd.actual_latitude is None or rnd.actual_longitude is None:
+        return False
+    reason, _drift = _panorama_rejection_reason(
+        game, rnd, rnd.actual_latitude, rnd.actual_longitude
+    )
+    return reason is None
 
 
 def _round_result_payload(game, rnd, *, replayed=False, percentile=None):
@@ -296,6 +437,17 @@ def ratelimit_handler(e):
     return jsonify({'error': 'Слишком много запросов. Попробуйте чуть позже.'}), 429
 
 
+@app.errorhandler(BadRequest)
+def bad_request_handler(error):
+    return jsonify({'error': error.description}), 400
+
+
+@app.errorhandler(DistrictDataError)
+def district_data_handler(error):
+    app.logger.error('Ошибка dataset районов: %s', error)
+    return jsonify({'error': 'Выбор района временно недоступен'}), 503
+
+
 @app.before_request
 def _start_request_timer():
     if request.path.startswith('/api/'):
@@ -334,11 +486,16 @@ def inject_asset_version():
     браузерами и без перезапуска сервиса.
     """
     version = 0
-    for rel in ('css/style.css', 'js/main.js', 'js/panorama.js', 'js/maps.js',
-                'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
-                'manifest.json', 'manifest-dev.json',
-                'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
-                'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico'):
+    important_assets = (
+        'css/style.css', 'js/main.js', 'js/districts.js',
+        'js/panorama.js', 'js/maps.js',
+        'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
+        'manifest.json', 'manifest-dev.json',
+        'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
+        'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico',
+    ) + tuple(f'img/district-icons/{district_id}.svg'
+              for district_id in DISTRICT_IDS)
+    for rel in important_assets:
         path = os.path.join(app.static_folder, rel)
         try:
             version = max(version, os.stat(path).st_mtime_ns)
@@ -395,7 +552,8 @@ def index():
                            yandex_api_key=YANDEX_MAPS_API_KEY,
                            metrika_id=METRIKA_ID,
                            og_title=og_title,
-                           og_description=og_description)
+                           og_description=og_description,
+                           district_feature_enabled=True)
 
 
 @app.route('/favicon.ico')
@@ -403,6 +561,32 @@ def favicon():
     """Фавиконка для запросов к корню сайта (браузеры/краулеры идут на /favicon.ico)."""
     return send_from_directory(app.static_folder, favicon_asset('favicon.ico'),
                                mimetype='image/vnd.microsoft.icon')
+
+
+@app.route('/api/districts/geometry', methods=['GET'])
+def district_geometry():
+    """Локальная GeoJSON-геометрия районов для SVG-selector.
+
+    Перед отдачей прогоняем тот же loader, что использует backend-логика.
+    ``send_file`` даёт ETag/Last-Modified и условные 304 без runtime GIS API.
+    """
+    try:
+        district_map()
+    except DistrictDataError:
+        app.logger.exception('Невалидная GeoJSON-геометрия районов')
+        return jsonify({'error': 'Карта районов временно недоступна'}), 503
+    response = send_file(
+        DISTRICTS_GEOJSON_PATH,
+        mimetype='application/geo+json',
+        conditional=True,
+        etag=True,
+        # URL стабилен между deploy: браузер обязан ревалидировать ETag,
+        # чтобы frontend и backend не разошлись на час после обновления.
+        max_age=0,
+    )
+    response.cache_control.public = True
+    response.cache_control.no_cache = True
+    return response
 
 
 # --------------------------------------------------------------------------
@@ -418,8 +602,20 @@ def start_game():
     клиента остаётся только id игры. При переданном challenge_token игра
     стартует с теми же точками, что у автора челленджа.
     """
+    data = _json_object()
+    # Старая открытая вкладка не умеет проверять панорамы перед показом.
+    # Это подсказка обновить UI, а не защита от прямых запросов к API.
+    browser_request = 'Origin' in request.headers or 'Sec-Fetch-Mode' in request.headers
+    client_rules_version = data.get('client_panorama_rules_version')
+    if browser_request and (
+        type(client_rules_version) is not int
+        or client_rules_version != CURRENT_PANORAMA_RULES_VERSION
+    ):
+        return jsonify({
+            'error': 'Игра обновилась. Обновите страницу перед началом новой игры',
+            'reason': 'client_outdated',
+        }), 409
     try:
-        data = request.get_json(silent=True) or {}
         player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
 
         source = None
@@ -449,19 +645,21 @@ def start_game():
                     resumed_payload = {
                         'game_id': prev_game.id,
                         'total_rounds': ROUNDS_PER_GAME,
-                        'difficulty': prev_game.difficulty,
-                        'difficulty_name': difficulty_name(prev_game.difficulty),
                         'time_limit': prev_game.time_limit,
                         'daily': True,
                         'resumed': True,
                         'total_score': prev_game.total_score,
                         'message': 'Продолжаем вызов дня!'
                     }
+                    resumed_payload.update(_territory_payload(
+                        prev_game.difficulty, prev_game.district_id
+                    ))
                     if active_round is not None:
                         resumed_payload['location'] = _location_payload(prev_game, active_round)
                     return jsonify(resumed_payload)
             daily = get_or_create_daily()
             difficulty = DAILY_DIFFICULTY
+            district_id = None
             time_limit = None
             no_move = False  # вызов дня — в стандартных правилах для всех
         elif challenge_token:
@@ -472,18 +670,26 @@ def start_game():
             if source is None:
                 return jsonify({'error': 'Челлендж не найден или игра ещё не завершена'}), 404
             difficulty = source.difficulty
+            district_id = source.district_id if difficulty == DISTRICT_MODE else None
+            if difficulty == DISTRICT_MODE and not is_valid_district_id(district_id):
+                return jsonify({'error': 'Район исходного челленджа больше недоступен'}), 409
+            if difficulty == DISTRICT_MODE:
+                district_map()
             time_limit = source.time_limit
             no_move = bool(source.no_move)
         else:
-            difficulty = data.get('difficulty', 'medium')  # center, medium, hard, hardcore
-            if difficulty not in DIFFICULTY_SETTINGS:
-                difficulty = 'medium'
+            difficulty, district_id, territory_error = _parse_requested_territory(data)
+            if territory_error:
+                return territory_error
             time_limit = parse_time_limit(data.get('time_limit'))
             no_move = bool(data.get('no_move'))
 
         game_session = GameSession(
             player_name=player_name,
             difficulty=difficulty,
+            district_id=district_id,
+            panorama_rules_version=(source.panorama_rules_version if source
+                                    else CURRENT_PANORAMA_RULES_VERSION),
             time_limit=time_limit,
             no_move=no_move,
             current_round=0,
@@ -521,7 +727,9 @@ def start_game():
                     location_source='challenge',
                 ))
         else:
-            candidates = choose_round_candidates(difficulty, ROUNDS_PER_GAME)
+            candidates = choose_round_candidates(
+                difficulty, ROUNDS_PER_GAME, district_id=district_id
+            )
             for i, (lat, lon, point_source) in enumerate(candidates, start=1):
                 db.session.add(GameRound(
                     session_id=game_session.id,
@@ -540,19 +748,19 @@ def start_game():
 
         app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, '
                         f'difficulty={difficulty}, time_limit={time_limit}, '
+                        f'district_id={district_id}, '
                         f'daily={"да" if daily else "нет"}, '
                         f'challenge={"да" if source else "нет"}')
 
         response = {
             'game_id': game_session.id,
             'total_rounds': ROUNDS_PER_GAME,
-            'difficulty': difficulty,
-            'difficulty_name': difficulty_name(difficulty),
             'time_limit': time_limit,
             'no_move': no_move,
             'daily': daily is not None,
             'message': 'Игра началась!'
         }
+        response.update(_territory_payload(difficulty, district_id))
         first_round = GameRound.query.filter_by(
             session_id=game_session.id, round_number=1
         ).first()
@@ -566,6 +774,13 @@ def start_game():
                 'opponent_score': source.total_score,
             }
         return jsonify(response)
+    except BadRequest:
+        db.session.rollback()
+        raise
+    except DistrictDataError:
+        app.logger.exception('Не удалось загрузить границы районов')
+        db.session.rollback()
+        return jsonify({'error': 'Выбор района временно недоступен'}), 503
     except Exception:
         app.logger.exception('Ошибка при старте игры')
         db.session.rollback()
@@ -588,10 +803,22 @@ def get_current_location():
 @app.route('/api/game/ready', methods=['POST'])
 def round_ready():
     """Зафиксировать момент, когда панорама действительно появилась на экране."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
+
+    # В district и новом exact-city hard Player можно открывать только после
+    # того, как /validate_panorama подтвердил фактическую точку.
+    if (_requires_spatial_validation(game)
+            and not _stored_panorama_is_valid(game, rnd)):
+        return jsonify({
+            'error': 'Панорама не подтверждена для выбранной территории',
+            'reason': 'panorama_not_validated',
+        }), 409
 
     if rnd.started_at is None:
         rnd.started_at = utcnow()
@@ -615,21 +842,15 @@ def round_ready():
 def skip_location():
     """Перегенерировать точку текущего раунда.
 
-    Нужно, когда в сгенерированной точке нет панорамы Яндекса. Количество
-    перегенераций ограничено и на сервере: иначе точку можно рероллить,
-    пока не выпадет знакомое место.
+    Поиск ограничен сериями; после появления панорамы менять точку нельзя.
     """
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
 
-    expected_version = data.get('location_version')
-    if expected_version not in (None, ''):
-        try:
-            expected_version = int(expected_version)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'Некорректная версия точки'}), 400
+    expected_version = _integer_field(data, 'location_version')
+    if expected_version is not None:
         current_version = rnd.skips or 0
         if expected_version < current_version:
             # Первый POST уже сработал, но ответ потерялся: возвращаем тот же
@@ -640,8 +861,13 @@ def skip_location():
         if expected_version > current_version:
             return jsonify({'error': 'Версия точки устарела'}), 409
 
-    if (rnd.skips or 0) >= MAX_SKIPS_PER_ROUND:
-        return jsonify({'error': 'Лимит перегенераций точки для этого раунда исчерпан'}), 429
+    if rnd.started_at is not None:
+        return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
+    if (rnd.skips or 0) >= rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
+        return jsonify({
+            'error': 'Серия поиска завершена',
+            'reason': 'search_batch_exhausted',
+        }), 429
 
     reason = str(data.get('reason') or 'no_coverage')[:30]
     excluded_coords = [
@@ -649,6 +875,11 @@ def skip_location():
         for other in game.rounds
         if other.gen_latitude is not None and other.gen_longitude is not None
     ]
+    played_coords = [
+        _scoring_point(other) for other in game.rounds
+        if other.answered_at is not None
+    ]
+    excluded_coords.extend(played_coords)
     # Пустой успешный ответ locate означает, что покрытие действительно
     # исчезло. Сетевой сбой не должен отравлять и постепенно удалять весь пул.
     if reason == 'no_coverage':
@@ -660,10 +891,44 @@ def skip_location():
     # восстанавливаем раунд из пула, чтобы не заставлять игрока ждать цепочку
     # новых случайных кандидатов. При маленьком пуле генерация остаётся фолбэком.
     previous_source = rnd.location_source or 'legacy'
-    lat, lon, _ = choose_round_candidates(
-        game.difficulty or 'medium', 1, prefer_pool=True,
+    lat, lon, replacement_source = choose_round_candidates(
+        game.difficulty or 'medium', 1, district_id=game.district_id,
+        prefer_pool=True,
         exclude=excluded_coords,
+        avoid=played_coords if reason == 'duplicate_panorama' else None,
     )[0]
+    if (game.difficulty == DISTRICT_MODE and game.daily_date is None
+            and game.challenged_from_id is None):
+        # Малый пул может целиком быть зарезервирован за будущими раундами.
+        # Не теряем эти проверенные места: переносим лучшее вперёд, а новый
+        # кандидат ставим в освободившийся будущий раунд той же партии.
+        future_pool = [
+            other for other in game.rounds
+            if other.round_number > rnd.round_number
+            and other.answered_at is None
+            and (other.location_source or '').startswith('pool')
+            and all(haversine_distance(
+                other.gen_latitude, other.gen_longitude, *point
+            ) >= MIN_ROUND_LOCATION_DISTANCE_KM for point in played_coords)
+        ]
+        if future_pool:
+            def distance_from_played(candidate_lat, candidate_lon):
+                return min((haversine_distance(
+                    candidate_lat, candidate_lon, *point
+                ) for point in played_coords), default=float('inf'))
+
+            future = max(future_pool, key=lambda other: distance_from_played(
+                other.gen_latitude, other.gen_longitude
+            ))
+            future_distance = distance_from_played(
+                future.gen_latitude, future.gen_longitude
+            )
+            if (future_distance > distance_from_played(lat, lon)
+                    or (replacement_source == 'explore' and future_distance
+                        > MAX_ACTUAL_POINT_DRIFT_KM + MIN_ROUND_LOCATION_DISTANCE_KM)):
+                future.gen_latitude, lat = lat, future.gen_latitude
+                future.gen_longitude, lon = lon, future.gen_longitude
+                future.location_source = replacement_source
     rnd.gen_latitude = lat
     rnd.gen_longitude = lon
     rnd.actual_latitude = None
@@ -683,30 +948,66 @@ def skip_location():
     return jsonify(_location_payload(game, rnd))
 
 
-@app.route('/api/game/set_actual_point', methods=['POST'])
-def set_actual_point():
-    """Сохранить реальные координаты найденной панорамы"""
-    data = request.get_json(silent=True) or {}
+@app.route('/api/game/continue_search', methods=['POST'])
+@limiter.limit('10 per minute')
+def continue_search():
+    """Разрешить следующую серию поиска, сохранив раунд и версию точки."""
+    data = _json_object()
+    round_id = _integer_field(data, 'round_id', minimum=1)
+    expected_batch = _integer_field(data, 'search_batch', minimum=1)
+    expected_version = _integer_field(data, 'location_version')
+    if None in (round_id, expected_batch, expected_version):
+        return jsonify({'error': 'Нужны round_id, search_batch и location_version'}), 400
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
+    if rnd.started_at is not None:
+        return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
+
+    # Повтор после потерянного ответа или двойной клик не открывает ещё серию.
+    # Блокировка игры в _round_from_payload защищает и параллельные workers.
+    if expected_batch < rnd.search_batch:
+        payload = _location_payload(game, rnd)
+        payload['replayed'] = True
+        return jsonify(payload)
+    if expected_batch != rnd.search_batch or expected_version != (rnd.skips or 0):
+        return jsonify({'error': 'Серия поиска или версия точки устарела'}), 409
+    if (rnd.skips or 0) < rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
+        return jsonify({'error': 'Текущая серия поиска ещё не завершена'}), 409
+
+    rnd.search_batch += 1
+    db.session.commit()
+    return jsonify(_location_payload(game, rnd))
+
+
+@app.route('/api/game/set_actual_point', methods=['POST'])
+def set_actual_point():
+    """Сохранить реальные координаты найденной панорамы.
+
+    Endpoint оставлен для старых клиентов; новый frontend делает тот же
+    authoritative preflight через /validate_panorama до создания Player.
+    """
+    data = _json_object()
+    game, rnd, error = _round_from_payload(data)
+    if error:
+        return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     coords = parse_coords(data)
     if coords is None:
         return jsonify({'error': 'Некорректные координаты'}), 400
     lat, lon = coords
 
-    # Антифрод: панорама, найденная клиентом, должна быть рядом со сгенерированной
-    # сервером точкой. Иначе игнорируем — счёт будет считаться по серверной точке,
-    # координаты которой в честном клиенте не видны. Это не даёт выдать свою
-    # догадку за ответ.
-    drift = haversine_distance(lat, lon, rnd.gen_latitude, rnd.gen_longitude)
-    if drift > MAX_ACTUAL_POINT_DRIFT_KM:
+    reason, drift = _panorama_rejection_reason(game, rnd, lat, lon)
+    if reason is not None:
         app.logger.warning(
-            f'Отклонена actual_point: drift={drift:.2f} км '
-            f'(round={rnd.round_number}, game_id={game.id})'
+            'Отклонена actual_point: reason=%s, drift=%.2f км '
+            '(round=%s, game_id=%s)',
+            reason, drift, rnd.round_number, game.id,
         )
-        return jsonify({'success': False, 'reason': 'too_far'}), 200
+        return jsonify({'success': False, 'reason': reason}), 200
 
     rnd.actual_latitude = lat
     rnd.actual_longitude = lon
@@ -718,10 +1019,50 @@ def set_actual_point():
     return jsonify({'success': True})
 
 
+@app.route('/api/game/validate_panorama', methods=['POST'])
+@limiter.limit('120 per minute')
+def validate_panorama():
+    """Подтвердить точную точку locate до показа Player.
+
+    Для district mode проверяется выбранный район, для hard — exact union
+    административных районов. Ответ на валидный запрос всегда 200:
+    ``valid=false`` — продуктовый сигнал для замены локации, а 4xx/5xx —
+    ошибка запроса/сервера.
+    """
+    data = _json_object()
+    game, rnd, error = _round_from_payload(data)
+    if error:
+        return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
+
+    coords = parse_coords(data)
+    if coords is None:
+        return jsonify({'error': 'Некорректные координаты'}), 400
+    lat, lon = coords
+    reason, drift = _panorama_rejection_reason(game, rnd, lat, lon)
+    if reason == 'district_unavailable':
+        return jsonify({'error': 'Район текущей игры больше недоступен'}), 409
+    if reason is not None:
+        app.logger.info(
+            'Панорама не прошла preflight: reason=%s, drift=%.2f км '
+            '(round=%s, game_id=%s)',
+            reason, drift, rnd.round_number, game.id,
+        )
+        return jsonify({'valid': False, 'reason': reason})
+
+    rnd.actual_latitude = lat
+    rnd.actual_longitude = lon
+    db.session.commit()
+    add_verified_point(lat, lon)
+    return jsonify({'valid': True})
+
+
 @app.route('/api/game/set_address', methods=['POST'])
 def set_round_address():
     """Best-effort сохранение адреса, найденного клиентом после показа результата."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(
         data, allow_answered=True, require_active=False
     )
@@ -739,22 +1080,25 @@ def set_round_address():
 @limiter.limit('120 per minute')
 def panorama_metric():
     """Принять безопасные агрегируемые метрики загрузки конкретного раунда."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(
         data, allow_answered=True, require_active=False
     )
     if error:
         return error
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     def bounded_int(name, maximum):
         try:
             return max(0, min(int(data.get(name)), maximum))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     status = str(data.get('status') or '')[:24]
-    allowed_statuses = {'ready', 'no_coverage', 'network_error', 'unsupported',
-                        'api_error', 'cancelled'}
+    allowed_statuses = {'ready', 'no_coverage', 'search_exhausted', 'rate_limited',
+                        'network_error', 'unsupported', 'api_error', 'cancelled'}
     rnd.panorama_lookup_ms = bounded_int('lookup_ms', 120_000)
     rnd.panorama_ready_ms = bounded_int('ready_ms', 180_000)
     rnd.panorama_attempts = bounded_int('attempts', 20)
@@ -766,7 +1110,7 @@ def panorama_metric():
 @app.route('/api/game/guess', methods=['POST'])
 def submit_guess():
     """Отправить угаданные координаты (или таймаут раунда без догадки)."""
-    data = request.get_json(silent=True) or {}
+    data = _json_object()
     game, rnd, error = _round_from_payload(data, allow_answered=True)
     if error:
         return error
@@ -777,6 +1121,9 @@ def submit_guess():
         return jsonify(_round_result_payload(
             game, rnd, replayed=True, percentile=percentile
         ))
+    version_error = _location_version_error(data, rnd)
+    if version_error:
+        return version_error
 
     coords = parse_coords(data)
     # Клиент может завершить раунд без догадки, когда время вышло
@@ -794,18 +1141,33 @@ def submit_guess():
         })
         if panorama_coords is not None:
             pano_lat, pano_lon = panorama_coords
-            drift = haversine_distance(
-                pano_lat, pano_lon, rnd.gen_latitude, rnd.gen_longitude
+            reason, drift = _panorama_rejection_reason(
+                game, rnd, pano_lat, pano_lon
             )
-            if drift <= MAX_ACTUAL_POINT_DRIFT_KM:
+            if reason is None:
                 rnd.actual_latitude = pano_lat
                 rnd.actual_longitude = pano_lon
             else:
                 app.logger.warning(
-                    'Отклонена panorama point в /guess: drift=%.2f км '
+                    'Отклонена panorama point в /guess: reason=%s, drift=%.2f км '
                     '(round=%s, game_id=%s)',
-                    drift, rnd.round_number, game.id,
+                    reason, drift, rnd.round_number, game.id,
                 )
+                if (_requires_spatial_validation(game)
+                        or reason == 'duplicate_panorama'):
+                    return jsonify({
+                        'error': ('Эта панорама уже была в текущей игре'
+                                  if reason == 'duplicate_panorama' else
+                                  'Панорама не принадлежит выбранной территории'),
+                        'reason': reason,
+                    }), 409
+
+        if (_requires_spatial_validation(game)
+                and not _stored_panorama_is_valid(game, rnd)):
+            return jsonify({
+                'error': 'Панорама не подтверждена для выбранной территории',
+                'reason': 'panorama_not_validated',
+            }), 409
 
         actual_lat, actual_lon = _scoring_point(rnd)
 
@@ -857,6 +1219,10 @@ def submit_guess():
         # но больше не требует отдельного клиентского POST в критической гонке.
         if rnd.actual_latitude is not None:
             add_verified_point(rnd.actual_latitude, rnd.actual_longitude)
+    except DistrictDataError:
+        db.session.rollback()
+        app.logger.exception('Не удалось проверить район панорамы')
+        return jsonify({'error': 'Выбор района временно недоступен'}), 503
     except Exception:
         db.session.rollback()
         app.logger.exception('Ошибка при обработке догадки')
@@ -896,14 +1262,13 @@ def get_results():
         'total_score': game.total_score,
         'max_possible_score': ROUNDS_PER_GAME * MAX_SCORE_PER_ROUND,
         'rounds_played': game.rounds_played,
-        'difficulty': game.difficulty,
-        'difficulty_name': difficulty_name(game.difficulty),
         'time_limit': game.time_limit,
         'no_move': bool(game.no_move),
         'challenge_token': game.challenge_token if game.completed_at else None,
         'daily': game.daily_date is not None,
         'rounds': rounds_data
     }
+    payload.update(_territory_payload(game.difficulty, game.district_id))
 
     # Сравнение с автором челленджа, если игра начата по ссылке-вызову
     if game.challenged_from_id:
@@ -980,15 +1345,15 @@ def challenge_info(token):
     if source is None:
         return jsonify({'error': 'Челлендж не найден'}), 404
 
-    return jsonify({
+    payload = {
         'player_name': source.player_name,
         'total_score': source.total_score,
-        'difficulty': source.difficulty,
-        'difficulty_name': difficulty_name(source.difficulty),
         'time_limit': source.time_limit,
         'no_move': bool(source.no_move),
         'total_rounds': ROUNDS_PER_GAME,
-    })
+    }
+    payload.update(_territory_payload(source.difficulty, source.district_id))
+    return jsonify(payload)
 
 
 @app.route('/api/player/stats', methods=['GET'])
@@ -1033,8 +1398,16 @@ def get_leaderboard():
     query = GameSession.query.filter(GameSession.completed_at.isnot(None))
 
     difficulty = request.args.get('difficulty')
-    if difficulty in DIFFICULTY_SETTINGS:
+    valid_difficulty = difficulty in DIFFICULTY_SETTINGS or difficulty == DISTRICT_MODE
+    district_id = None
+    if valid_difficulty:
         query = query.filter(GameSession.difficulty == difficulty)
+    if difficulty == DISTRICT_MODE:
+        requested_district = (request.args.get('district_id') or '').strip()
+        if not is_valid_district_id(requested_district):
+            return jsonify({'error': 'Для топа района нужен валидный district_id'}), 400
+        district_id = requested_district
+        query = query.filter(GameSession.district_id == district_id)
 
     period = request.args.get('period')
     if period not in LEADERBOARD_PERIODS:
@@ -1047,23 +1420,25 @@ def get_leaderboard():
 
     top_games = query.order_by(GameSession.total_score.desc()).limit(LEADERBOARD_LIMIT).all()
 
-    return jsonify({
-        'difficulty': difficulty if difficulty in DIFFICULTY_SETTINGS else 'all',
+    response = {
+        'difficulty': difficulty if valid_difficulty else 'all',
+        'district_id': district_id,
+        'district_name': district_name(district_id),
         'period': period,
         'leaderboard': [
             {
                 'rank': i + 1,
                 'player_name': game.player_name,
                 'total_score': game.total_score,
-                'difficulty': game.difficulty,
-                'difficulty_name': difficulty_name(game.difficulty),
+                **_territory_payload(game.difficulty, game.district_id),
                 'time_limit': game.time_limit,
                 'no_move': bool(game.no_move),
                 'date': game.completed_at.strftime('%d.%m.%Y') if game.completed_at else None
             }
             for i, game in enumerate(top_games)
         ]
-    })
+    }
+    return jsonify(response)
 
 
 # --------------------------------------------------------------------------
@@ -1079,7 +1454,7 @@ def _check_admin():
     if not ADMIN_KEY:
         return jsonify({'error': 'Не найдено'}), 404
     provided = request.headers.get('X-Admin-Key', '')
-    if not hmac.compare_digest(provided, ADMIN_KEY):
+    if not hmac.compare_digest(provided.encode('utf-8'), ADMIN_KEY.encode('utf-8')):
         return jsonify({'error': 'Неверный ключ'}), 403
     return None
 
@@ -1106,6 +1481,7 @@ def admin_list_points():
             'latitude': p.latitude,
             'longitude': p.longitude,
             'dist_from_center_km': round(p.dist_from_center_km, 2),
+            'district_id': p.district_id,
             'fail_count': p.fail_count or 0,
             'created_at': p.created_at.strftime('%d.%m.%Y') if p.created_at else None,
         }
@@ -1131,6 +1507,12 @@ def admin_stats():
                     .filter(GameSession.completed_at.isnot(None),
                             GameSession.completed_at >= week_ago)
                     .count())
+    # Доигрываемость — доля завершённых среди начатых за этот период.
+    # Игры прошлой недели, завершённые сегодня, не входят в эту когорту.
+    cohort_completed = (GameSession.query
+                        .filter(GameSession.created_at >= week_ago,
+                                GameSession.completed_at.isnot(None))
+                        .count())
     daily_today = (GameSession.query
                    .filter(GameSession.daily_date == today_msk(),
                            GameSession.completed_at.isnot(None))
@@ -1158,6 +1540,12 @@ def admin_stats():
         .group_by(GameRound.location_source)
         .all()
     )
+    district_pool_counts = dict(
+        db.session.query(VerifiedPoint.district_id, db.func.count(VerifiedPoint.id))
+        .filter(VerifiedPoint.district_id.isnot(None))
+        .group_by(VerifiedPoint.district_id)
+        .all()
+    )
     failed_metrics = sum(
         1 for r in metric_rounds
         if r.panorama_status not in ('ready', 'cancelled')
@@ -1168,9 +1556,13 @@ def admin_stats():
         'games_completed_total': completed_total,
         'games_started_7d': started_7d,
         'games_completed_7d': completed_7d,
-        'completion_rate_7d': round(completed_7d / started_7d, 2) if started_7d else None,
+        'completion_rate_7d': round(cohort_completed / started_7d, 2) if started_7d else None,
         'daily_players_today': daily_today,
         'pool_points': VerifiedPoint.query.count(),
+        'pool_points_by_district': {
+            district_id: district_pool_counts.get(district_id, 0)
+            for district_id in DISTRICT_IDS
+        },
         'panorama_samples': len(metric_rounds),
         'panorama_ready_p50_ms': percentile(ready_times, 0.50),
         'panorama_ready_p95_ms': percentile(ready_times, 0.95),

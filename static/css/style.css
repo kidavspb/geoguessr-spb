@@ -58,9 +58,16 @@ html {
 
 body {
     font-family: var(--font-body);
-    background: var(--bg-color);
+    background: var(--navy);
     color: var(--text-color);
     min-height: 100vh;
+    min-height: 100dvh;
+}
+
+/* Светлые экраны меняют и canvas документа: он виден в safe area и при bounce. */
+html.theme-light,
+html.theme-light body {
+    background: var(--bg-color);
 }
 
 h1, h2 {
@@ -149,10 +156,17 @@ h1, h2 {
 .start-layout,
 .page-layout {
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 2rem 1rem;
+}
+
+/* Светлое окружение карточек на экранах итогов и рейтинга. */
+#final-screen,
+#leaderboard-screen {
+    background: var(--bg-color);
 }
 
 .start-card,
@@ -252,6 +266,35 @@ h1, h2 {
     text-wrap: balance;
 }
 
+.start-feedback {
+    margin-top: 1rem;
+    color: rgba(253, 250, 228, 0.7);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    text-wrap: balance;
+}
+
+.start-feedback a {
+    display: table;
+    margin: 0 auto;
+    padding: 0.7rem 0.25rem;
+    min-height: 44px;
+    color: var(--cream);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-color: rgba(253, 250, 228, 0.45);
+}
+
+.start-feedback a:hover {
+    text-decoration-color: currentColor;
+}
+
+.start-feedback a:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
 .input-group {
     margin-bottom: 1.5rem;
     text-align: left;
@@ -313,15 +356,24 @@ h1, h2 {
 }
 
 .setting-value {
-    flex: 0 0 auto;
+    min-width: 0;
+    flex: 0 1 auto;
     color: var(--cream);
     font-size: 0.9rem;
     font-weight: 600;
+    line-height: 1.25;
+    text-align: right;
 }
 
 /* Три дискретные позиции: нативный range отвечает за drag, snap и клавиатуру. */
 .territory-control {
     --territory-position: 50%;
+    --territory-track-color: rgba(253, 250, 228, 0.24);
+    --territory-fill-color: rgba(253, 250, 228, 0.78);
+    --territory-tick-color: rgba(253, 250, 228, 0.72);
+    --territory-label-color: rgba(253, 250, 228, 0.62);
+    --territory-label-active-color: rgba(253, 250, 228, 0.82);
+    --territory-thumb-color: var(--cream);
 }
 
 .territory-labels {
@@ -338,7 +390,7 @@ h1, h2 {
     padding: 0.05rem 0.15rem 0.25rem;
     border: 0;
     background: transparent;
-    color: rgba(253, 250, 228, 0.62);
+    color: var(--territory-label-color);
     font: inherit;
     font-size: 0.875rem;
     cursor: pointer;
@@ -355,7 +407,7 @@ h1, h2 {
 }
 
 .territory-label[aria-pressed="true"] {
-    color: rgba(253, 250, 228, 0.82);
+    color: var(--territory-label-active-color);
 }
 
 @media (hover: hover) {
@@ -377,17 +429,19 @@ h1, h2 {
 .territory-slider-wrap {
     position: relative;
     height: 44px;
+    overflow: visible;
 }
 
 .territory-track {
     position: absolute;
     top: 50%;
-    left: 9px;
-    right: 9px;
+    left: 10px;
+    right: 10px;
     height: 4px;
     transform: translateY(-50%);
     border-radius: 2px;
-    background: rgba(253, 250, 228, 0.24);
+    background: var(--territory-track-color);
+    transition: background 0.15s ease;
 }
 
 .territory-track::before {
@@ -396,8 +450,8 @@ h1, h2 {
     inset: 0 auto 0 0;
     width: var(--territory-position);
     border-radius: inherit;
-    background: rgba(253, 250, 228, 0.78);
-    transition: width 0.15s ease;
+    background: var(--territory-fill-color);
+    transition: width 0.15s ease, background 0.15s ease;
 }
 
 .territory-tick {
@@ -406,9 +460,10 @@ h1, h2 {
     width: 10px;
     height: 10px;
     transform: translate(-50%, -50%);
-    border: 2px solid rgba(253, 250, 228, 0.72);
+    border: 2px solid var(--territory-tick-color);
     border-radius: 50%;
     background: var(--navy);
+    transition: border-color 0.15s ease;
 }
 
 .territory-tick:nth-child(1) { left: 0; }
@@ -453,9 +508,9 @@ h1, h2 {
     -webkit-appearance: none;
     border: 3px solid var(--navy);
     border-radius: 50%;
-    background: var(--cream);
-    box-shadow: 0 0 0 1px var(--cream);
-    transition: transform 0.15s ease;
+    background: var(--territory-thumb-color);
+    box-shadow: none;
+    transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .territory-slider::-moz-range-thumb {
@@ -464,9 +519,9 @@ h1, h2 {
     height: 20px;
     border: 3px solid var(--navy);
     border-radius: 50%;
-    background: var(--cream);
-    box-shadow: 0 0 0 1px var(--cream);
-    transition: transform 0.15s ease;
+    background: var(--territory-thumb-color);
+    box-shadow: none;
+    transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .territory-slider:active::-webkit-slider-thumb {
@@ -483,6 +538,383 @@ h1, h2 {
 
 .territory-slider:focus-visible::-moz-range-thumb {
     box-shadow: 0 0 0 2px var(--navy), 0 0 0 4px var(--green-light);
+}
+
+/* Район — альтернативная территория, а не четвёртая позиция шкалы. */
+.district-choice-separator {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.55rem;
+    margin: 0.05rem 0 0.9rem;
+    color: rgba(253, 250, 228, 0.38);
+    font-size: 0.72rem;
+    font-weight: normal;
+    line-height: 1;
+}
+
+.district-choice-separator::before,
+.district-choice-separator::after {
+    content: '';
+    height: 1px;
+    background: rgba(253, 250, 228, 0.16);
+}
+
+.district-action {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    gap: 0.65rem;
+    margin-top: 0;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid rgba(253, 250, 228, 0.28);
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: rgba(253, 250, 228, 0.82);
+    font: inherit;
+    font-size: 0.95rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.district-action:hover {
+    border-color: rgba(253, 250, 228, 0.46);
+    background: rgba(253, 250, 228, 0.04);
+    color: var(--cream);
+}
+
+.district-action:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 2px;
+}
+
+.district-action-icon {
+    display: flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+    font-size: 1.15rem;
+    font-weight: normal;
+    line-height: 1;
+}
+
+.district-action-emoji {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.district-action-emblem {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.district-action-chevron {
+    font-size: 1.65rem;
+    font-weight: 300;
+    line-height: 1;
+}
+
+.territory-control.district-active {
+    --territory-track-color: rgba(253, 250, 228, 0.09);
+    --territory-fill-color: rgba(253, 250, 228, 0.23);
+    --territory-tick-color: rgba(253, 250, 228, 0.28);
+    --territory-label-color: rgba(253, 250, 228, 0.36);
+    --territory-label-active-color: rgba(253, 250, 228, 0.42);
+    /* Непрозрачная смесь cream/navy: tick и track не просвечивают через thumb. */
+    --territory-thumb-color: #8c87a0;
+}
+
+.territory-control.district-active:hover,
+.territory-control.district-active:focus-within {
+    --territory-track-color: rgba(253, 250, 228, 0.14);
+    --territory-fill-color: rgba(253, 250, 228, 0.4);
+    --territory-tick-color: rgba(253, 250, 228, 0.46);
+    --territory-label-color: rgba(253, 250, 228, 0.55);
+    --territory-label-active-color: rgba(253, 250, 228, 0.6);
+    --territory-thumb-color: #bcb7bd;
+}
+
+/* ===== Выбор административного района ===== */
+#district-screen {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--navy);
+}
+
+.district-layout {
+    display: flex;
+    min-height: 100vh;
+    min-height: 100dvh;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 1rem;
+}
+
+.district-card {
+    width: min(100%, 720px);
+    color: var(--cream);
+}
+
+.district-screen-header {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.district-screen-header > div {
+    grid-column: 2;
+    text-align: center;
+}
+
+.district-screen-header h1 {
+    color: var(--cream);
+    font-size: 1.85rem;
+    line-height: 1.1;
+}
+
+/* tabindex=-1 нужен только для объявления нового экрана screen reader'ом. */
+.district-screen-header h1:focus {
+    outline: none;
+}
+
+.district-screen-header p {
+    margin-top: 0.35rem;
+    color: rgba(253, 250, 228, 0.62);
+    font-size: 0.9rem;
+}
+
+.district-back {
+    grid-column: 1;
+    grid-row: 1;
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgba(253, 250, 228, 0.28);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--cream);
+    font: inherit;
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+
+.district-back:hover {
+    border-color: var(--cream);
+}
+
+.district-back:focus-visible,
+.district-map-reset:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 3px;
+}
+
+.district-selection {
+    margin-bottom: 0.75rem;
+    text-align: center;
+}
+
+.district-selection span {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: rgba(253, 250, 228, 0.58);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.district-selection strong {
+    display: block;
+    min-height: 1.45em;
+    color: var(--cream);
+    font-family: var(--font-accent);
+    font-size: 1.35rem;
+    font-weight: normal;
+}
+
+.district-map-frame {
+    position: relative;
+    min-height: 340px;
+    overflow: hidden;
+    border: 2px solid rgba(253, 250, 228, 0.25);
+    border-radius: var(--radius-card);
+    background: rgba(253, 250, 228, 0.055);
+}
+
+.district-map-loading,
+.district-map-error {
+    display: flex;
+    min-height: 340px;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: rgba(253, 250, 228, 0.7);
+    line-height: 1.5;
+    text-align: center;
+}
+
+.district-map-error {
+    color: var(--yellow);
+}
+
+.district-map {
+    display: block;
+    width: 100%;
+    height: 420px;
+    touch-action: pan-y;
+}
+
+.district-map.is-zoomed {
+    touch-action: none;
+}
+
+.district-map.is-panning {
+    cursor: grabbing;
+}
+
+.district-map.is-panning .district-shape {
+    cursor: grabbing;
+}
+
+.district-shape {
+    fill: rgba(253, 250, 228, 0.16);
+    stroke: rgba(253, 250, 228, 0.72);
+    stroke-width: 1.4;
+    vector-effect: non-scaling-stroke;
+    fill-rule: evenodd;
+    cursor: pointer;
+    transition: fill 0.15s ease, stroke 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.district-shape:hover,
+.district-shape:focus {
+    fill: rgba(253, 250, 228, 0.3);
+    stroke: var(--cream);
+    stroke-width: 2.2;
+    outline: none;
+}
+
+.district-shape.is-selected {
+    fill: var(--green-light);
+    stroke: var(--cream);
+    stroke-width: 2.4;
+}
+
+.district-shape:focus-visible {
+    stroke: var(--yellow);
+    stroke-width: 4;
+}
+
+.district-map-reset {
+    position: absolute;
+    display: grid;
+    right: 0.65rem;
+    bottom: 0.65rem;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid rgba(253, 250, 228, 0.45);
+    border-radius: 50%;
+    background: var(--navy);
+    color: var(--cream);
+    font: inherit;
+    font-size: 1.25rem;
+    line-height: 1;
+    place-items: center;
+    cursor: pointer;
+}
+
+.district-map-reset-icon {
+    display: block;
+    transform: translateY(-0.08em);
+}
+
+.district-list-label {
+    display: block;
+    margin: 1rem 0 0.4rem;
+    color: rgba(253, 250, 228, 0.68);
+    font-size: 0.85rem;
+}
+
+.district-list {
+    width: 100%;
+    min-height: 48px;
+    padding: 0.65rem 2.5rem 0.65rem 0.9rem;
+    border: 2px solid rgba(253, 250, 228, 0.28);
+    border-radius: var(--radius-control);
+    background: var(--navy-soft);
+    color: var(--cream);
+    font: inherit;
+    font-size: 1rem;
+}
+
+.district-list:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 2px;
+}
+
+.district-screen-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.district-screen-actions .btn {
+    min-height: 48px;
+    margin: 0;
+    padding: 0.75rem 1rem;
+}
+
+.district-screen-actions .btn-secondary {
+    border-color: rgba(253, 250, 228, 0.3);
+    color: rgba(253, 250, 228, 0.82);
+}
+
+.district-attribution {
+    margin-top: 0.85rem;
+    color: rgba(253, 250, 228, 0.5);
+    font-size: 0.72rem;
+    text-align: center;
+}
+
+.district-attribution a {
+    color: rgba(253, 250, 228, 0.75);
+}
+
+@media (max-width: 600px) {
+    .district-layout {
+        min-height: auto;
+        align-items: flex-start;
+        padding: 1rem 0.75rem 1.25rem;
+    }
+
+    .district-screen-header h1 {
+        font-size: 1.55rem;
+    }
+
+    .district-map-frame,
+    .district-map-loading,
+    .district-map-error {
+        min-height: 300px;
+    }
+
+    .district-map {
+        height: clamp(288px, calc(100vw - 1.5rem), 360px);
+    }
 }
 
 /* Пресеты времени — одна radio group, визуально единый control. */
@@ -747,6 +1179,8 @@ h1, h2 {
 
 .photo-overlay-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 0.65rem;
     width: min(360px, calc(100vw - 2rem));
 }
@@ -831,9 +1265,10 @@ h1, h2 {
     transition: opacity 0.18s ease;
 }
 
-.map-panel:hover,
+.map-panel:not(.hover-paused):hover,
 .map-panel:focus-within {
     opacity: 1;
+    width: min(560px, calc(100vw - 2rem));
 }
 
 .map-wrap {
@@ -847,12 +1282,7 @@ h1, h2 {
     contain: layout paint;
 }
 
-.map-panel:hover,
-.map-panel:focus-within {
-    width: min(560px, calc(100vw - 2rem));
-}
-
-.map-panel:hover .map-wrap,
+.map-panel:not(.hover-paused):hover .map-wrap,
 .map-panel:focus-within .map-wrap {
     height: min(400px, 55vh);
 }
@@ -895,7 +1325,7 @@ h1, h2 {
 .result-stage {
     position: fixed;
     inset: 0;
-    background: var(--bg-color);
+    background: var(--navy);
 }
 
 .result-map-container {
@@ -933,6 +1363,14 @@ h1, h2 {
 
 /* Лёгкая кнопка просмотра места; живой Player создаётся только по клику. */
 .result-pano {
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     width: 190px;
     height: 190px;
     border-radius: 50%;
@@ -957,6 +1395,28 @@ h1, h2 {
     color: var(--cream);
     font-size: 0.78rem;
     font-weight: 600;
+}
+
+/* Дочерние картинка и подпись не перехватывают клик кнопки. */
+.result-pano > * {
+    pointer-events: none;
+}
+
+/* Значок «развернуть» в углу круга */
+.result-pano::after {
+    content: '⤢';
+    position: absolute;
+    right: 6%;
+    bottom: 6%;
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    background: rgba(253, 250, 228, 0.92);
+    color: var(--navy);
+    font-size: 0.95rem;
+    pointer-events: none;
 }
 
 .result-score-block {
@@ -1018,7 +1478,6 @@ h1, h2 {
     margin-bottom: 0.2rem;
 }
 
-/* Карточка «Знал ли ты, что …» */
 .result-panel-spacer {
     flex: 1;
 }
@@ -1098,12 +1557,16 @@ h1, h2 {
 }
 
 /* ===== Таблица лидеров ===== */
+.leaderboard-content {
+    max-width: 640px;
+}
+
 .leaderboard-content h2 {
     font-size: 1.9rem;
     margin-bottom: 1.5rem;
 }
 
-/* Фильтр таблицы лидеров по сложности */
+/* Фильтры таблицы лидеров по периоду и территории. */
 .leaderboard-filter {
     display: flex;
     flex-wrap: wrap;
@@ -1114,6 +1577,7 @@ h1, h2 {
 .lb-filter-btn {
     flex: 1;
     min-width: 70px;
+    min-height: 44px;
     padding: 0.5rem;
     border: 2px solid var(--border-color);
     border-radius: 999px;
@@ -1134,6 +1598,36 @@ h1, h2 {
     border-color: var(--navy);
     background: var(--navy);
     color: var(--cream);
+}
+
+.lb-filter-btn:focus-visible,
+.lb-district-select:focus-visible {
+    outline: 2px solid var(--navy);
+    outline-offset: 3px;
+}
+
+.lb-district-filter {
+    margin-bottom: 1rem;
+}
+
+.lb-district-filter label {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.lb-district-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0.65rem 0.75rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-control);
+    background: #fff;
+    color: var(--navy);
+    font: inherit;
+    font-size: 1rem;
 }
 
 /* Бейдж режима сложности рядом с именем игрока */
@@ -1172,8 +1666,10 @@ h1, h2 {
 }
 
 .leaderboard-row {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1.5rem minmax(0, 1fr) 4rem 5.5rem;
+    gap: 0.5rem;
+    align-items: start;
     padding: 0.9rem 1rem;
     border-bottom: 1px solid var(--border-color);
 }
@@ -1190,7 +1686,6 @@ h1, h2 {
 }
 
 .leaderboard-rank {
-    width: 50px;
     text-align: left;
     font-weight: bold;
 }
@@ -1200,18 +1695,17 @@ h1, h2 {
 .leaderboard-rank.bronze { color: #b06b3b; }
 
 .leaderboard-name {
-    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
     text-align: left;
 }
 
 .leaderboard-score {
-    width: 80px;
     text-align: right;
     font-weight: bold;
 }
 
 .leaderboard-date {
-    width: 100px;
     text-align: right;
     color: var(--text-muted);
 }
@@ -1223,6 +1717,37 @@ h1, h2 {
 .leaderboard-empty {
     padding: 2rem;
     color: var(--text-muted);
+}
+
+@media (max-width: 480px) {
+    .leaderboard-content {
+        padding: 1.25rem;
+    }
+
+    #lb-period-filter {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    #leaderboard-filter .lb-filter-btn {
+        min-width: 0;
+        flex-basis: calc((100% - 1rem) / 3);
+    }
+
+    .leaderboard-row {
+        grid-template-columns: 1.25rem minmax(0, 1fr) 3.5rem;
+        padding: 0.75rem;
+    }
+
+    .leaderboard-date {
+        grid-column: 2 / -1;
+        text-align: left;
+        font-size: 0.75rem;
+    }
+
+    .leaderboard-row.header .leaderboard-date {
+        display: none;
+    }
 }
 
 /* ===== Маркеры на карте ===== */
@@ -1260,32 +1785,43 @@ h1, h2 {
         opacity: 1;
     }
 
-    .map-panel:hover,
+    .map-panel:not(.hover-paused):hover,
     .map-panel:focus-within {
         width: auto;
     }
 
     .map-wrap,
-    .map-panel:hover .map-wrap,
+    .map-panel:not(.hover-paused):hover .map-wrap,
     .map-panel:focus-within .map-wrap {
         height: 36vh;
+        height: 36dvh;
     }
 
-    /* Результат: карта сверху, панель — нижний лист. Контейнер карты
-       обрезан по высоте панели, чтобы контролы Яндекса («Открыть в
-       Яндекс Картах», копирайт) не залезали под панель и кнопки. */
+    /* Живая карта заходит под скругление панели. Небольшой радиус оставляет
+       штатные подписи Яндекса у нижнего края карты полностью видимыми. */
+    .result-stage {
+        --result-corner-radius: 8px;
+        display: flex;
+        flex-direction: column;
+    }
+
     .result-map-container {
-        bottom: 56vh;
+        position: relative;
+        inset: auto;
+        flex: 1 1 0;
+        min-height: 0;
+        margin-bottom: calc(-1 * var(--result-corner-radius));
     }
 
     .result-panel {
-        top: auto;
-        left: 0;
-        right: 0;
+        position: relative;
+        inset: auto;
+        flex: 0 0 auto;
         width: 100%;
-        max-height: 56vh;
-        overflow: hidden;
-        border-radius: 20px 20px 0 0;
+        max-height: calc(100vh - 10rem);
+        max-height: calc(100dvh - 10rem);
+        overflow-y: auto;
+        border-radius: var(--result-corner-radius) var(--result-corner-radius) 0 0;
         padding: 1rem 1.25rem 0.9rem;
         gap: 0.55rem;
         box-shadow: 0 -10px 30px rgba(35, 28, 98, 0.35);
@@ -1556,45 +2092,6 @@ h1, h2 {
 }
 
 
-/* ===== Панорама-«фото» на экране результата ===== */
-/* Контейнер — кнопка: клик открывает полноэкранный просмотр */
-.result-pano {
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    position: relative;
-    display: block;
-}
-
-.result-pano:not(.hidden) {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-}
-
-/* Дочерние картинка и подпись не перехватывают клик кнопки. */
-.result-pano > * {
-    pointer-events: none;
-}
-
-/* Значок «развернуть» в углу круга */
-.result-pano::after {
-    content: '⤢';
-    position: absolute;
-    right: 6%;
-    bottom: 6%;
-    width: 28px;
-    height: 28px;
-    line-height: 28px;
-    text-align: center;
-    border-radius: 50%;
-    background: rgba(253, 250, 228, 0.92);
-    color: var(--navy);
-    font-size: 0.95rem;
-    pointer-events: none;
-}
-
 /* ===== Полноэкранный просмотр панорамы ===== */
 .pano-modal {
     position: fixed;
@@ -1645,26 +2142,6 @@ h1, h2 {
     .pano-home {
         bottom: auto;
         top: 76px;
-    }
-}
-
-/* ===== iOS Safari: динамическая высота вьюпорта ===== */
-/* 100vh на iOS больше видимой области (панели браузера не учитываются) —
-   из-за этого кнопка «Продолжить» уезжала под тулбар, а страница получала
-   фантомную прокрутку. dvh меряет реально видимую высоту. */
-@supports (height: 100dvh) {
-    body {
-        min-height: 100dvh;
-    }
-
-    @media (max-width: 720px) {
-        .result-map-container {
-            bottom: 56dvh;
-        }
-
-        .result-panel {
-            max-height: 56dvh;
-        }
     }
 }
 

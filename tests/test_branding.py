@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from flask import render_template
+
 
 def _assert_manifest_icons_exist(app, manifest_name):
     static_dir = Path(app.static_folder)
@@ -45,3 +47,26 @@ def test_index_revalidates_html_and_templates_auto_reload(client, app):
     assert app.config['TEMPLATES_AUTO_RELOAD'] is True
     assert app.jinja_env.auto_reload is True
     assert response.headers['Cache-Control'] == 'no-cache, max-age=0, must-revalidate'
+
+
+def test_district_ui_is_hidden_without_backend_capability(app):
+    """Старый worker не должен показать новый selector до своего рестарта."""
+    with app.test_request_context('/'):
+        page = render_template(
+            'index.html',
+            yandex_api_key='',
+            metrika_id='',
+            og_title='Петербургский следопыт',
+            og_description='Тест',
+        )
+
+    assert 'id="territory-range"' in page
+    assert 'id="district-picker-btn"' not in page
+    assert 'id="district-screen"' not in page
+
+
+def test_index_enables_district_ui(client):
+    page = client.get('/').get_data(as_text=True)
+
+    assert 'id="district-picker-btn"' in page
+    assert 'id="district-screen"' in page

@@ -25,6 +25,7 @@ window.ymaps3 = {
             window.__ymapsStats.mapsActive++;
             this._destroyed = false;
             this._el = container;
+            this.setLocation(opts.location);
             this._listeners = [];
             container.classList.add('stub-map');
             container.style.background = '#dfe8d0';
@@ -43,7 +44,9 @@ window.ymaps3 = {
         removeChild(child) {
             if (child && child.__el && child.__el.parentNode) child.__el.remove();
         }
-        setLocation() {}
+        setLocation(location) {
+            this._el.dataset.mapLocation = JSON.stringify(location);
+        }
         destroy() {
             if (this._destroyed) return;
             this._destroyed = true;

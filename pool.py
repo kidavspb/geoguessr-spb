@@ -1,16 +1,24 @@
 """Пул проверенных точек — мест, где панорама Яндекса точно существует.
 
-Пополняется автоматически из честных игр (см. set_actual_point): каждая
-панорама, прошедшая антифрод, попадает в пул. Новые игры берут точки отсюда —
-раунд стартует сразу, без перебора случайных точек в поисках панорамы.
+Пополняется из validate_panorama и guess (set_actual_point — старый API).
+Клиентские координаты ограничены серверной точкой и выбранной территорией;
+это базовая проверка, а не подтверждение панорамы независимым источником.
 """
 import logging
 import random
 
 from sqlalchemy import or_
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import db, VerifiedPoint
-from game_logic import SPB_BOUNDS, SPB_CENTER, generate_random_point, haversine_distance
+from game_logic import (
+    MIN_ROUND_LOCATION_DISTANCE_KM, SPB_BOUNDS, SPB_CENTER,
+    generate_random_point, haversine_distance,
+)
+from districts import (
+    DistrictDataError, district_for_point, generate_district_point,
+    is_valid_district_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +26,16 @@ logger = logging.getLogger(__name__)
 # свежесгенерированных, чтобы пул продолжал расти.
 POOL_MIN_SIZE = 15
 POOL_USE_PROBABILITY = 0.7
-# Максимальное расстояние точки пула от центра для режима сложности (км);
-# None — без ограничения (весь город).
+# Максимальное расстояние точки пула от центра для прежних центральных режимов.
+# Hard отбирается отдельно по предвычисленному district_id.
 POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
+# Исторический охват пула остаётся неизменным для center/medium.
+LEGACY_POOL_BOUNDS = {
+    'lat_min': SPB_BOUNDS['lat_min'] - 0.01,
+    'lat_max': SPB_BOUNDS['lat_max'] + 0.01,
+    'lon_min': SPB_BOUNDS['lon_min'] - 0.02,
+    'lon_max': SPB_BOUNDS['lon_max'] + 0.02,
+}
 # После скольких неудачных поисков панорамы подряд точка выбывает из пула
 POOL_MAX_FAILS = 3
 
@@ -50,13 +65,18 @@ def mark_point_failed(lat, lon, *, commit=True):
                         POOL_MAX_FAILS, lat, lon)
         if commit:
             db.session.commit()
-    except Exception:
+    except SQLAlchemyError:
+        if not commit:
+            # Внешняя транзакция владеет также сменой точки и lock игры.
+            # Нельзя молча откатить её и продолжить skip без защиты от гонок.
+            raise
         db.session.rollback()
-        logger.debug('Не удалось обновить статус точки пула', exc_info=True)
+        logger.warning('Не удалось обновить статус точки пула', exc_info=True)
 
 
-def choose_round_candidates(difficulty, count, *, pool_only=False,
-                            prefer_pool=False, exclude=None):
+def choose_round_candidates(difficulty, count, *, district_id=None,
+                            pool_only=False, prefer_pool=False, exclude=None,
+                            avoid=None):
     """Кандидаты раундов вместе с источником точки.
 
     Обычная игра сохраняет прежнюю долю исследовательских точек — молодой
@@ -65,6 +85,8 @@ def choose_round_candidates(difficulty, count, *, pool_only=False,
     состоялась, и дальше важнее быстро восстановить раунд. ``pool_only`` нужен
     для честных общих наборов (вызов дня), если в пуле хватает точек.
     ``exclude`` не даёт восстановлению повторить место из той же партии.
+    ``avoid`` при замене повторной панорамы направляет поиск подальше от
+    уже сыгранных съёмок, не запрещая тесные районы целиком.
 
     Возвращает ``[(latitude, longitude, source), ...]``.
     """
@@ -76,49 +98,130 @@ def choose_round_candidates(difficulty, count, *, pool_only=False,
             VerifiedPoint.lat_key != exclude_lat_key,
             VerifiedPoint.lon_key != exclude_lon_key,
         ))
-    radius = POOL_RADIUS_KM.get(difficulty)
-    if radius is not None:
-        query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
+    if difficulty == 'district':
+        if not is_valid_district_id(district_id):
+            raise ValueError(f'Неизвестный district id: {district_id!r}')
+        query = query.filter(VerifiedPoint.district_id == district_id)
+    elif difficulty == 'hard':
+        # district_id уже вычисляется один раз при добавлении точки и был
+        # backfill-нут миграцией. Non-NULL эквивалентен membership в union 18
+        # canonical районов, поэтому GEOS не нужен на каждую строку/запрос.
+        query = query.filter(VerifiedPoint.district_id.isnot(None))
+    else:
+        # Center/medium сохраняют исторические bounds и радиус.
+        query = query.filter(
+            VerifiedPoint.latitude >= LEGACY_POOL_BOUNDS['lat_min'],
+            VerifiedPoint.latitude <= LEGACY_POOL_BOUNDS['lat_max'],
+            VerifiedPoint.longitude >= LEGACY_POOL_BOUNDS['lon_min'],
+            VerifiedPoint.longitude <= LEGACY_POOL_BOUNDS['lon_max'],
+        )
+        radius = POOL_RADIUS_KM.get(difficulty)
+        if radius is not None:
+            query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
 
+    excluded_coords = list(exclude or ())
+    avoided_coords = list(avoid or ())
     pool = []
     pool_count = query.count()
-    enough_for_regular = pool_count >= POOL_MIN_SIZE
+    # Районный пул на старте может быть мал: берём любые известные
+    # панорамы и добиваем партию exploration-точками. Порог старых
+    # режимов остаётся без изменений.
+    enough_for_regular = (pool_count > 0 if difficulty == 'district'
+                          else pool_count >= POOL_MIN_SIZE)
     enough_for_pool_only = pool_count >= count
     if enough_for_regular or (pool_only and enough_for_pool_only) or (prefer_pool and pool_count):
-        pool = query.order_by(db.func.random()).limit(count).all()
+        # Несколько записей пула могут лежать рядом с уже сыгранной съёмкой.
+        # Берём запас кандидатов, чтобы найти другую точку до fallback-генерации.
+        pool = query.order_by(db.func.random()).limit(
+            min(pool_count, max(count * 10, 30))
+        ).all()
+        if prefer_pool and avoided_coords:
+            pool.sort(key=lambda point: min(
+                haversine_distance(point.latitude, point.longitude, lat, lon)
+                for lat, lon in avoided_coords
+            ), reverse=True)
 
     points = []
     pool_iter = iter(pool)
+
+    def is_repeated(lat, lon):
+        return any(
+            haversine_distance(lat, lon, other_lat, other_lon)
+            < MIN_ROUND_LOCATION_DISTANCE_KM
+            for other_lat, other_lon in excluded_coords
+        )
+
     for _ in range(count):
         should_use_pool = pool_only or prefer_pool or random.random() < POOL_USE_PROBABILITY
-        picked = next(pool_iter, None) if should_use_pool else None
+        picked = None
+        if should_use_pool:
+            for candidate in pool_iter:
+                if not is_repeated(candidate.latitude, candidate.longitude):
+                    picked = candidate
+                    break
         if picked is not None:
             source = 'pool_recovery' if prefer_pool else 'pool'
-            points.append((picked.latitude, picked.longitude, source))
+            lat, lon = picked.latitude, picked.longitude
         else:
-            lat, lon = generate_random_point(difficulty)
-            points.append((lat, lon, 'explore'))
+            # Генератор обычно выдаёт новое место сразу. Повторные попытки
+            # нужны для небольших районов и пересечения с точками пула.
+            generated = []
+            target_count = 12 if prefer_pool and avoided_coords else 1
+            for _attempt in range(100):
+                if difficulty == 'district':
+                    lat, lon = generate_district_point(district_id)
+                else:
+                    lat, lon = generate_random_point(difficulty)
+                if not is_repeated(lat, lon):
+                    generated.append((lat, lon))
+                    if len(generated) == target_count:
+                        break
+            if not generated:
+                raise ValueError('Не удалось подобрать неповторяющуюся точку раунда')
+            lat, lon = max(generated, key=lambda point: min(
+                haversine_distance(*point, other_lat, other_lon)
+                for other_lat, other_lon in avoided_coords
+            )) if avoided_coords else generated[0]
+            source = 'explore'
+        points.append((lat, lon, source))
+        excluded_coords.append((lat, lon))
     return points
 
 
 def choose_round_points(difficulty, count, **kwargs):
-    """Совместимая обёртка, возвращающая только пары координат."""
+    """Координаты для общего набора daily, без диагностического source."""
     return [(lat, lon) for lat, lon, _source in
             choose_round_candidates(difficulty, count, **kwargs)]
 
 
 def add_verified_point(lat, lon):
     """Добавить панораму в пул проверенных точек (с дедупликацией ~10 м)."""
-    if not (SPB_BOUNDS['lat_min'] - 0.01 <= lat <= SPB_BOUNDS['lat_max'] + 0.01 and
-            SPB_BOUNDS['lon_min'] - 0.02 <= lon <= SPB_BOUNDS['lon_max'] + 0.02):
+    in_legacy_bounds = (
+        LEGACY_POOL_BOUNDS['lat_min'] <= lat <= LEGACY_POOL_BOUNDS['lat_max'] and
+        LEGACY_POOL_BOUNDS['lon_min'] <= lon <= LEGACY_POOL_BOUNDS['lon_max']
+    )
+    try:
+        point_district_id = district_for_point(lat, lon)
+    except DistrictDataError:
+        # Повреждённый optional dataset не должен ломать старые режимы,
+        # но вне прежних bounds без валидации ничего не сохраняем.
+        logger.error('Не удалось классифицировать точку пула', exc_info=True)
+        point_district_id = None
+    if not in_legacy_bounds and point_district_id is None:
         return
     try:
         lat_key, lon_key = int(round(lat * 10000)), int(round(lon * 10000))
-        existing = VerifiedPoint.query.filter_by(lat_key=lat_key, lon_key=lon_key).first()
+        existing = _point_by_coords(lat, lon)
         if existing is not None:
             # Панорама подтверждена живой — прощаем прошлые неудачи
+            changed = False
             if existing.fail_count:
                 existing.fail_count = 0
+                changed = True
+            if existing.district_id is None and point_district_id is not None:
+                existing.district_id = point_district_id
+                changed = True
+            if changed:
                 db.session.commit()
             return
         db.session.add(VerifiedPoint(
@@ -127,10 +230,11 @@ def add_verified_point(lat, lon):
             lat_key=lat_key,
             lon_key=lon_key,
             dist_from_center_km=haversine_distance(lat, lon, *SPB_CENTER),
+            district_id=point_district_id,
         ))
         db.session.commit()
-    except Exception:
+    except SQLAlchemyError:
         # Гонка на unique-ключе или временная блокировка SQLite — точка пула
         # не критична, просто пропускаем.
         db.session.rollback()
-        logger.debug('Точка пула не добавлена (гонка/блокировка)', exc_info=True)
+        logger.warning('Точка пула не добавлена (гонка/блокировка)', exc_info=True)

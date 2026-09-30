@@ -15,10 +15,34 @@ import {
     initMap, toggleMapPanel, resetMapForNewRound, showResultMap, renderFinalMap,
     destroyMainMap, destroyResultMap, destroyFinalMap
 } from './maps.js';
+import {
+    initDistrictPicker, openDistrictPicker, closeDistrictPicker,
+    districtDisplayName
+} from './districts.js';
 
 const { gameData } = state;
 const TERRITORIES = ['center', 'medium', 'hard'];
 const TERRITORY_NAMES = ['Центр', 'Средняя', 'Весь город'];
+let districtActionIconLoadId = 0;
+
+/** Атомарно обновить tagged-union территории.
+ * `districtId` существует только для активного district mode; последняя
+ * стандартная позиция хранится отдельно лишь для визуально приглушённой шкалы. */
+function setTerritoryState(difficulty, districtId = null, districtName = null) {
+    gameData.districtBounds = null;
+    if (difficulty === 'district' && districtId) {
+        gameData.difficulty = 'district';
+        gameData.districtId = districtId;
+        gameData.districtName = districtName || districtDisplayName(districtId) || districtId;
+        return;
+    }
+
+    const normalized = TERRITORIES.includes(difficulty) ? difficulty : 'medium';
+    gameData.difficulty = normalized;
+    gameData.standardDifficulty = normalized;
+    gameData.districtId = null;
+    gameData.districtName = null;
+}
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
@@ -52,14 +76,17 @@ function initEventListeners() {
     // Стартовый экран
     document.getElementById('start-btn').addEventListener('click', () => startGame());
     document.getElementById('daily-btn').addEventListener('click', () => startGame({ daily: true }));
-    document.getElementById('show-leaderboard-btn').addEventListener('click', openLeaderboard);
+    document.getElementById('show-leaderboard-btn').addEventListener('click', () => openLeaderboard());
 
     // Игровой экран
     document.getElementById('guess-btn').addEventListener('click', submitGuess);
     document.getElementById('map-handle').addEventListener('click', toggleMapPanel);
     document.getElementById('pano-home').addEventListener('click', returnToPanoStart);
     document.getElementById('retry-panorama-btn').addEventListener('click', retryPanorama);
-    document.getElementById('skip-panorama-btn').addEventListener('click', skipPanorama);
+    document.getElementById('continue-search-btn').addEventListener('click', continuePanoramaSearch);
+    document.getElementById('back-to-district-btn').addEventListener(
+        'click', returnToSettings
+    );
 
     // Экран результата. ВАЖНО: обработчик кнопки «Продолжить» назначается
     // только через onclick в showRoundResult — addEventListener здесь дал бы
@@ -76,7 +103,9 @@ function initEventListeners() {
         destroyFinalMap();
         showScreen('start-screen');
     });
-    document.getElementById('final-leaderboard-btn').addEventListener('click', openLeaderboard);
+    document.getElementById('final-leaderboard-btn').addEventListener(
+        'click', () => openLeaderboard({ fromGame: true })
+    );
     document.getElementById('challenge-btn').addEventListener('click', shareChallengeLink);
 
     // Фильтры таблицы лидеров: период и сложность — независимые оси
@@ -93,6 +122,11 @@ function initEventListeners() {
             syncLeaderboardFilters();
             showLeaderboard();
         });
+    });
+    document.getElementById('lb-district-select')?.addEventListener('change', event => {
+        state.lbState.districtId = event.target.value || null;
+        syncLeaderboardFilters();
+        showLeaderboard();
     });
 
     document.getElementById('back-btn').addEventListener('click', () => {
@@ -127,7 +161,7 @@ function initTerritoryControl() {
     territoryRange.addEventListener('input', () => {
         const index = Math.max(0, Math.min(TERRITORIES.length - 1,
             Number.parseInt(territoryRange.value, 10) || 0));
-        gameData.difficulty = TERRITORIES[index];
+        setTerritoryState(TERRITORIES[index]);
         syncTerritoryControl();
     });
 
@@ -137,6 +171,22 @@ function initTerritoryControl() {
             territoryRange.dispatchEvent(new Event('input', { bubbles: true }));
         });
     });
+
+    const pickerButton = document.getElementById('district-picker-btn');
+    if (pickerButton && document.getElementById('district-screen')) {
+        const pickerInitialized = initDistrictPicker({
+            onConfirm: district => {
+                setTerritoryState('district', district.id, district.name);
+                syncTerritoryControl();
+            }
+        });
+        if (pickerInitialized) {
+            pickerButton.addEventListener('click', () => {
+                openDistrictPicker(gameData.difficulty === 'district'
+                    ? gameData.districtId : null);
+            });
+        }
+    }
 }
 
 function initTimeControl() {
@@ -174,20 +224,84 @@ function syncSettingsControls() {
     syncMovementControl();
 }
 
+function syncDistrictActionIcon(districtId) {
+    const container = document.getElementById('district-action-icon');
+    const emoji = container?.querySelector('.district-action-emoji');
+    const emblem = container?.querySelector('.district-action-emblem');
+    if (!container || !emoji || !emblem) return;
+
+    const normalizedId = districtId && districtDisplayName(districtId)
+        ? districtId : '';
+    if (container.dataset.districtId === normalizedId) return;
+
+    container.dataset.districtId = normalizedId;
+    const loadId = ++districtActionIconLoadId;
+    emblem.onload = null;
+    emblem.onerror = null;
+    emblem.removeAttribute('src');
+    emblem.classList.add('hidden');
+    emoji.classList.remove('hidden');
+
+    const template = container.dataset.iconTemplate || '';
+    if (!normalizedId || !template.includes('__district__')) return;
+
+    const source = template.replace('__district__', encodeURIComponent(normalizedId));
+    emblem.onload = () => {
+        if (loadId !== districtActionIconLoadId ||
+                container.dataset.districtId !== normalizedId) return;
+        emoji.classList.add('hidden');
+        emblem.classList.remove('hidden');
+    };
+    emblem.onerror = () => {
+        if (loadId !== districtActionIconLoadId ||
+                container.dataset.districtId !== normalizedId) return;
+        emblem.onload = null;
+        emblem.onerror = null;
+        emblem.removeAttribute('src');
+        emblem.classList.add('hidden');
+        emoji.classList.remove('hidden');
+    };
+    emblem.src = source;
+}
+
 function syncTerritoryControl() {
-    const territoryIndex = Math.max(0, TERRITORIES.indexOf(gameData.difficulty));
     const territoryRange = document.getElementById('territory-range');
     const territoryControl = document.getElementById('territory-control');
     const territoryValue = document.getElementById('territory-value');
+    const districtActionLabel = document.getElementById('district-action-label');
+    const districtPicker = document.getElementById('district-picker-btn');
     if (!territoryRange || !territoryControl || !territoryValue) return;
 
+    const districtActive = gameData.difficulty === 'district' && !!gameData.districtId;
+    const standardDifficulty = TERRITORIES.includes(gameData.standardDifficulty)
+        ? gameData.standardDifficulty : 'medium';
+    const territoryIndex = Math.max(0, TERRITORIES.indexOf(
+        districtActive ? standardDifficulty : gameData.difficulty
+    ));
+    const activeName = districtActive
+        ? (gameData.districtName || districtDisplayName(gameData.districtId) || 'Выбранный район')
+        : TERRITORY_NAMES[territoryIndex];
+
     territoryRange.value = String(territoryIndex);
-    territoryRange.setAttribute('aria-valuetext', TERRITORY_NAMES[territoryIndex]);
-    territoryValue.textContent = TERRITORY_NAMES[territoryIndex];
+    territoryRange.setAttribute('aria-valuetext', districtActive
+        ? `${TERRITORY_NAMES[territoryIndex]}. Активен ${activeName}`
+        : TERRITORY_NAMES[territoryIndex]);
+    territoryValue.textContent = activeName;
     territoryControl.style.setProperty('--territory-position', `${territoryIndex * 50}%`);
+    territoryControl.classList.toggle('district-active', districtActive);
     document.querySelectorAll('#difficulty-group .territory-label').forEach((label, index) => {
-        label.setAttribute('aria-pressed', String(index === territoryIndex));
+        label.setAttribute('aria-pressed', String(!districtActive && index === territoryIndex));
     });
+    if (districtActionLabel) {
+        districtActionLabel.textContent = districtActive
+            ? activeName : 'Выбрать конкретный район';
+    }
+    if (districtPicker) {
+        districtPicker.setAttribute('aria-label', districtActive
+            ? `Изменить район. Сейчас выбран ${activeName}`
+            : 'Выбрать конкретный район');
+    }
+    syncDistrictActionIcon(districtActive ? gameData.districtId : null);
 }
 
 function syncTimeControl() {
@@ -270,6 +384,9 @@ async function initChallengeFromUrl() {
         banner.classList.remove('hidden');
 
         // Параметры фиксированы челленджем — селекторы прячем
+        if (document.getElementById('district-screen')?.classList.contains('active')) {
+            closeDistrictPicker({ restoreFocus: false });
+        }
         document.getElementById('difficulty-group').classList.add('hidden');
         document.getElementById('timer-group').classList.add('hidden');
         document.getElementById('move-group').classList.add('hidden');
@@ -318,6 +435,7 @@ async function startGame(opts = {}) {
         const { ok, status, data } = await api.startGame({
             player_name: playerName,
             difficulty: gameData.difficulty,
+            district_id: gameData.difficulty === 'district' ? gameData.districtId : null,
             time_limit: gameData.timeLimit || null,
             no_move: gameData.noMove,
             challenge_token: gameData.challengeToken,
@@ -341,8 +459,14 @@ async function startGame(opts = {}) {
         gameData.totalRounds = data.total_rounds;
         gameData.currentRound = 1;
         gameData.totalScore = data.total_score || 0; // >0 при возврате в недоигранный вызов дня
-        gameData.difficulty = data.difficulty || gameData.difficulty;
+        setTerritoryState(
+            data.difficulty || gameData.difficulty,
+            data.district_id || null,
+            data.district_name || null,
+        );
         gameData.timeLimit = data.time_limit || 0;   // серверные значения — истина
+        gameData.districtBounds = gameData.difficulty === 'district'
+            ? data.district_bounds || null : null;
         gameData.noMove = !!data.no_move;
         gameData.daily = !!data.daily;
         syncSettingsControls();
@@ -434,6 +558,8 @@ async function loadCurrentLocation(locationOverride = null) {
         // preload-задаче. Не делаем второй GET и не запускаем второй locate.
         if (!data && preload && preload.location) data = preload.location;
         if (!data) {
+            state.currentLocation = null;
+            state.currentRoundId = null;
             const response = await api.getLocation();
             data = response.data;
 
@@ -490,7 +616,8 @@ async function loadCurrentLocation(locationOverride = null) {
             loaded.readyPromise.then(ready => {
                 const serverDeadline = ready && ready.ok && ready.data
                     ? ready.data.deadline_ms : null;
-                if (serverDeadline && loaded.loadId === state.roundLoadId &&
+                if (serverDeadline && state.roundInteractive && !state.guessSubmitting &&
+                        loaded.loadId === state.roundLoadId &&
                         state.currentRoundId === loaded.location.round_id &&
                         document.getElementById('game-screen').classList.contains('active')) {
                     startRoundTimer(serverDeadline);
@@ -506,35 +633,64 @@ async function loadCurrentLocation(locationOverride = null) {
 }
 
 function retryPanorama() {
-    if (!state.currentLocation || state.roundLoading) return;
+    if (state.roundLoading) return;
     loadCurrentLocation(state.currentLocation);
 }
 
-async function skipPanorama() {
-    if (!state.currentRoundId || state.roundLoading) return;
+/** Возврат к прежним настройкам из неудачного поиска панорамы. */
+function returnToSettings() {
+    stopRoundTimer();
+    state.roundInteractive = false;
+    state.roundLoading = false;
+    state.currentLocation = null;
+    state.currentRoundId = null;
+    state.actualPoint = null;
+    state.lastPanorama = null;
+    state.panoStartPoint = null;
+    state.guessCoords = null;
+    state.currentMarker = null;
+    discardPreloaded(state.preloaded);
+    state.preloaded = null;
+    closePanoModal();
+    destroyPanoramaPlayer();
+    destroyMainMap();
+    destroyResultMap();
+    destroyFinalMap();
+    syncSettingsControls();
+    showScreen('start-screen');
+    document.getElementById('district-picker-btn')?.focus();
+}
+
+async function continuePanoramaSearch() {
+    const location = state.currentLocation;
+    if (!location || state.roundLoading || state.roundInteractive) return;
+    const loadId = ++state.roundLoadId;
+    const isCurrent = () => loadId === state.roundLoadId &&
+        state.currentRoundId === location.round_id &&
+        document.getElementById('game-screen').classList.contains('active');
     state.roundLoading = true;
-    showLoadingOverlay('Выбираем другое место…');
-    let skipped;
+    showLoadingOverlay('Продолжаем поиск панорамы…');
+    let continued;
     try {
-        skipped = await api.skipLocation(
-            state.currentRoundId,
-            'manual_retry',
-            state.currentLocation ? state.currentLocation.location_version : null
-        );
+        continued = await api.continueSearch(location);
     } finally {
-        state.roundLoading = false;
+        if (isCurrent()) state.roundLoading = false;
     }
-    if (!skipped || !skipped.ok || !skipped.data) {
-        const message = skipped && skipped.data && skipped.data.error
-            ? skipped.data.error : 'Не получилось сменить место.';
+    if (!isCurrent()) return;
+    if (!continued?.ok || !continued.data) {
+        // Сохраняем исходный номер серии: если ответ потерялся, повтор
+        // continue_search вернёт уже выданное разрешение без нового лимита.
+        const message = continued?.status === 429
+            ? 'Поиск временно ограничен. Подождите минуту и продолжите поиск.'
+            : continued?.data?.error || 'Не получилось продолжить поиск. Попробуйте ещё раз.';
         showLoadingOverlay(message, {
-            retry: true,
-            skip: !skipped || skipped.status !== 429
+            continueSearch: true,
+            back: true,
         });
         return;
     }
-    state.currentLocation = skipped.data;
-    loadCurrentLocation(skipped.data);
+    state.currentLocation = continued.data;
+    loadCurrentLocation(continued.data);
 }
 
 // --------------------------------------------------------------------------
@@ -554,8 +710,9 @@ function startRoundTimer(serverDeadlineMs = null) {
     state.roundDeadline = serverDeadlineMs || (Date.now() + gameData.timeLimit * 1000);
     state.lastTimerSecond = null;
     chip.classList.remove('hidden', 'timer-low');
-    updateTimerDisplay();
     state.roundTimerInterval = setInterval(updateTimerDisplay, 250);
+    // Уже истёкший серверный deadline может синхронно остановить интервал.
+    updateTimerDisplay();
 }
 
 function updateTimerDisplay() {
@@ -620,8 +777,13 @@ async function sendGuess(payload) {
     stopRoundTimer();
 
     let retryTimedOut = false;
+    const roundId = state.currentRoundId;
+    const loadId = state.roundLoadId;
     try {
-        const requestPayload = { ...payload, round_id: state.currentRoundId };
+        const requestPayload = {
+            ...payload, round_id: roundId,
+            location_version: state.currentLocation?.location_version
+        };
         // Проверяемый actual point попадает в ту же транзакцию /guess: счёт
         // всегда считается по той съёмке, которую видел игрок.
         if (state.actualPoint) {
@@ -649,7 +811,10 @@ async function sendGuess(payload) {
     } finally {
         state.guessSubmitting = false;
         if (retryTimedOut) {
-            setTimeout(() => sendGuess(payload), 1200);
+            setTimeout(() => {
+                if (roundId === state.currentRoundId && loadId === state.roundLoadId &&
+                        state.roundInteractive) sendGuess(payload);
+            }, 1200);
         }
     }
 }
@@ -669,8 +834,7 @@ function showRoundResult(data) {
     gameData.totalScore = data.total_score;
     document.getElementById('total-score').textContent = data.total_score;
 
-    // Адрес точки («Это было: …»): серверный, а если сервер без ключа
-    // геокодера — клиентский, через JS API v2 с обычным ключом карт.
+    // Сохранённый адрес или новый запрос через клиентский JS API v2.
     // Сам адрес — ссылка на панораму этого места в Яндекс Картах.
     const locationBlock = document.getElementById('result-location');
     const addressLink = document.getElementById('correct-location-name');
@@ -793,24 +957,21 @@ async function showFinalResults() {
     state.finalLoading = true;
     const nextButton = document.getElementById('next-round-btn');
     nextButton.disabled = true;
-    destroyResultPano();
-    destroyResultMap();
-    destroyPanoramaPlayer();
-    state.lastPanorama = null;
-    state.panoStartPoint = null;
-    state.actualPoint = null;
-    closePanoModal();
-    destroyMainMap();
-    state.resultRoundId = null;
-    discardPreloaded(state.preloaded);
-    state.preloaded = null;
     try {
         const { ok, data } = await api.results();
+        if (!ok || !data) throw new Error(data?.error || 'Не удалось загрузить результаты');
 
-        if (!ok) {
-            showScreen('final-screen');
-            return;
-        }
+        destroyResultPano();
+        destroyResultMap();
+        destroyPanoramaPlayer();
+        state.lastPanorama = null;
+        state.panoStartPoint = null;
+        state.actualPoint = null;
+        closePanoModal();
+        destroyMainMap();
+        state.resultRoundId = null;
+        discardPreloaded(state.preloaded);
+        state.preloaded = null;
 
         document.getElementById('final-score').textContent = data.total_score;
 
@@ -849,9 +1010,13 @@ async function showFinalResults() {
         showDailyTop(data.daily);
     } catch (error) {
         console.error('Ошибка получения результатов:', error);
-        showScreen('final-screen');
+        showToast(error.message);
+        if (document.getElementById('game-screen').classList.contains('active')) {
+            showLoadingOverlay(error.message, { retry: true });
+        }
     } finally {
         state.finalLoading = false;
+        nextButton.disabled = false;
     }
 }
 
@@ -968,12 +1133,15 @@ async function loadPlayerStats(playerName) {
 // Таблица лидеров
 // --------------------------------------------------------------------------
 
-function openLeaderboard() {
+function openLeaderboard({ fromGame = false } = {}) {
     destroyFinalMap();
-    state.lbState = { difficulty: 'all', period: 'all' };
+    const districtId = gameData.difficulty === 'district' ? gameData.districtId : null;
+    state.lbState = {
+        difficulty: fromGame ? gameData.difficulty : 'all',
+        period: fromGame && gameData.daily ? 'daily' : 'all',
+        districtId,
+    };
     syncLeaderboardFilters();
-    document.getElementById('leaderboard-table').innerHTML =
-        '<div class="leaderboard-empty">Загрузка…</div>';
     showScreen('leaderboard-screen');
     showLeaderboard();
 }
@@ -984,13 +1152,23 @@ function openLeaderboard() {
  */
 function syncLeaderboardFilters() {
     document.querySelectorAll('.lb-period-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.period === state.lbState.period);
+        const active = b.dataset.period === state.lbState.period;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
     });
     document.querySelectorAll('#leaderboard-filter .lb-filter-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.difficulty === state.lbState.difficulty);
+        const active = b.dataset.difficulty === state.lbState.difficulty;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', String(active));
     });
+    const daily = state.lbState.period === 'daily';
     document.getElementById('leaderboard-filter')
-        .classList.toggle('hidden', state.lbState.period === 'daily');
+        .classList.toggle('hidden', daily);
+    document.getElementById('lb-district-filter')?.classList.toggle(
+        'hidden', daily || state.lbState.difficulty !== 'district'
+    );
+    const districtSelect = document.getElementById('lb-district-select');
+    if (districtSelect) districtSelect.value = state.lbState.districtId || '';
 }
 
 /**
@@ -1000,11 +1178,19 @@ function syncLeaderboardFilters() {
 async function showLeaderboard() {
     const loadId = ++state.leaderboardLoadId;
     const lbState = { ...state.lbState };
+    const tableContainer = document.getElementById('leaderboard-table');
     if (!document.getElementById('leaderboard-screen').classList.contains('active')) {
-        document.getElementById('leaderboard-table').innerHTML =
-            '<div class="leaderboard-empty">Загрузка…</div>';
         showScreen('leaderboard-screen');
     }
+    if (lbState.period !== 'daily' && lbState.difficulty === 'district' && !lbState.districtId) {
+        tableContainer.setAttribute('aria-busy', 'false');
+        tableContainer.innerHTML =
+            '<div class="leaderboard-empty">Выберите район, чтобы увидеть его таблицу лидеров.</div>';
+        return;
+    }
+    // Строки прежнего района/периода не должны оставаться под новым фильтром.
+    tableContainer.setAttribute('aria-busy', 'true');
+    tableContainer.innerHTML = '<div class="leaderboard-empty">Загрузка…</div>';
 
     try {
         let result;
@@ -1013,18 +1199,18 @@ async function showLeaderboard() {
         } else {
             const params = new URLSearchParams();
             if (lbState.difficulty !== 'all') params.set('difficulty', lbState.difficulty);
+            if (lbState.difficulty === 'district') params.set('district_id', lbState.districtId);
             if (lbState.period !== 'all') params.set('period', lbState.period);
             result = await api.leaderboard(params);
         }
         if (loadId !== state.leaderboardLoadId) return;
         if (!result.ok) {
-            document.getElementById('leaderboard-table').innerHTML =
+            tableContainer.innerHTML =
                 '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
             return;
         }
         const data = result.data;
 
-        const tableContainer = document.getElementById('leaderboard-table');
         tableContainer.innerHTML = '';
 
         const showBadge = (lbState.difficulty === 'all' && lbState.period !== 'daily');
@@ -1072,13 +1258,18 @@ async function showLeaderboard() {
                 tableContainer.appendChild(row);
             });
         } else {
-            tableContainer.innerHTML = '<div class="leaderboard-empty">Пока нет результатов</div>';
+            const emptyMessage = lbState.difficulty === 'district' && lbState.period !== 'daily'
+                ? 'За выбранный период в этом районе пока нет результатов.'
+                : 'Пока нет результатов';
+            tableContainer.innerHTML = `<div class="leaderboard-empty">${emptyMessage}</div>`;
         }
     } catch (error) {
         console.error('Ошибка загрузки таблицы лидеров:', error);
         if (loadId === state.leaderboardLoadId) {
-            document.getElementById('leaderboard-table').innerHTML =
+            tableContainer.innerHTML =
                 '<div class="leaderboard-empty">Не удалось загрузить таблицу</div>';
         }
+    } finally {
+        if (loadId === state.leaderboardLoadId) tableContainer.setAttribute('aria-busy', 'false');
     }
 }

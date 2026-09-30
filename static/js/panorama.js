@@ -2,10 +2,10 @@
  * Панорамы Яндекса: один поиск ближайшей съёмки, отменяемая подготовка
  * следующего раунда и дешёвый прогрев низкодетализированных тайлов.
  */
-import { state, MAX_PANORAMA_RETRIES } from './state.js';
+import { state } from './state.js';
 import { showToast } from './utils.js';
 import { api } from './api.js';
-import { reloadFailedScript } from './sdk.js';
+import { reloadFailedScript, withTimeout } from './sdk.js';
 
 const PLAYER_OPTIONS = {
     controls: ['zoomControl'],
@@ -36,28 +36,13 @@ function distanceKm(lat1, lon1, lat2, lon2) {
     return 6371 * 2 * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
 }
 
-function withTimeout(value, timeoutMs, message) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-        Promise.resolve(value).then(
-            result => {
-                clearTimeout(timer);
-                resolve(result);
-            },
-            error => {
-                clearTimeout(timer);
-                reject(error);
-            }
-        );
-    });
-}
-
-function setOverlayActions({ retry = false, skip = false } = {}) {
+function setOverlayActions({ retry = false, continueSearch = false, back = false } = {}) {
     const actions = document.getElementById('photo-overlay-actions');
     if (!actions) return;
     document.getElementById('retry-panorama-btn').classList.toggle('hidden', !retry);
-    document.getElementById('skip-panorama-btn').classList.toggle('hidden', !skip);
-    actions.classList.toggle('hidden', !retry && !skip);
+    document.getElementById('continue-search-btn').classList.toggle('hidden', !continueSearch);
+    document.getElementById('back-to-district-btn').classList.toggle('hidden', !back);
+    actions.classList.toggle('hidden', !retry && !continueSearch && !back);
 }
 
 /** Оверлей появляется с задержкой, чтобы прогретый раунд не мигал. */
@@ -106,7 +91,11 @@ export function ymapsV2Ready() {
             }
             if (typeof ymaps !== 'undefined' && ymaps.ready) {
                 try {
-                    ymaps.ready(resolve);
+                    withTimeout(
+                        new Promise(ready => ymaps.ready(ready)),
+                        API_READY_TIMEOUT_MS,
+                        'Таймаут готовности API панорам'
+                    ).then(resolve, reject);
                 } catch (error) {
                     reject(error);
                 }
@@ -123,6 +112,8 @@ export function ymapsV2Ready() {
         // Следующая ручная попытка после сетевого восстановления должна иметь
         // возможность снова дождаться API.
         v2ReadyPromise = null;
+        window.yandexMapsLoadErrors = window.yandexMapsLoadErrors || {};
+        window.yandexMapsLoadErrors.v2 = true;
         throw error;
     });
     return v2ReadyPromise;
@@ -152,6 +143,7 @@ function metricFor(prepared, status, readyMs = null) {
     if (!prepared || !prepared.location || !prepared.location.round_id) return;
     api.panoramaMetric({
         round_id: prepared.location.round_id,
+        location_version: prepared.location.location_version,
         status,
         lookup_ms: prepared.lookupMs,
         ready_ms: readyMs,
@@ -169,6 +161,10 @@ async function prepareRound(initialLocation, task = null) {
     let location = initialLocation;
     let attempts = 0;
     let skips = 0;
+    const remainingSkips = Math.max(0,
+        (Number(initialLocation.max_location_skips) || 10) -
+        (Number(initialLocation.location_version) || 0)
+    );
 
     try {
         await ymapsV2Ready();
@@ -187,7 +183,7 @@ async function prepareRound(initialLocation, task = null) {
         };
     }
 
-    while (skips <= MAX_PANORAMA_RETRIES) {
+    while (true) {
         if (task && task.cancelled) {
             return {
                 ok: false, status: 'cancelled', location,
@@ -196,6 +192,7 @@ async function prepareRound(initialLocation, task = null) {
         }
 
         let located = null;
+        let skipReason = 'no_coverage';
         for (let networkTry = 0; networkTry < 2; networkTry++) {
             attempts++;
             located = await locatePanorama(location.latitude, location.longitude);
@@ -211,20 +208,65 @@ async function prepareRound(initialLocation, task = null) {
             );
             const maxDrift = Number(location.max_panorama_drift_km) || 1;
             if (drift <= maxDrift) {
-                return {
-                    ok: true,
-                    status: 'ready',
-                    location,
-                    panorama,
-                    position,
-                    attempts,
-                    lookupMs: Math.round(performance.now() - started)
-                };
+                const districtId = location.district_id ||
+                    (state.gameData.difficulty === 'district'
+                        ? state.gameData.districtId : null);
+                const needsPreflight = Boolean(
+                    districtId || location.requires_spatial_validation || location.round > 1
+                );
+                if (needsPreflight) {
+                    const validation = await api.validatePanorama(
+                        location.round_id,
+                        position[0],
+                        position[1],
+                        location.location_version,
+                    );
+                    if (!validation.ok || !validation.data) {
+                        return {
+                            ok: false,
+                            status: validation.networkError ? 'network_error' : 'api_error',
+                            location,
+                            attempts,
+                            lookupMs: Math.round(performance.now() - started)
+                        };
+                    }
+                    if (!validation.data.valid) {
+                        // Повтор съёмки или выход за границу не означает, что
+                        // панорама исчезла: точку пула нельзя помечать плохой.
+                        const rejectedReason = validation.data.reason;
+                        skipReason = ['outside_city', 'outside_district',
+                            'duplicate_panorama'].includes(rejectedReason)
+                            ? rejectedReason : 'no_coverage';
+                        located = { status: skipReason, panorama: null };
+                    } else {
+                        return {
+                            ok: true,
+                            status: 'ready',
+                            location,
+                            panorama,
+                            position,
+                            attempts,
+                            lookupMs: Math.round(performance.now() - started)
+                        };
+                    }
+                } else {
+                    return {
+                        ok: true,
+                        status: 'ready',
+                        location,
+                        panorama,
+                        position,
+                        attempts,
+                        lookupMs: Math.round(performance.now() - started)
+                    };
+                }
             }
-            // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
-            // может оказаться слишком далеко от загаданного места. Такой Player
-            // дал бы визуально один адрес, а сервер считал бы по другому.
-            located = { status: 'no_coverage', panorama: null };
+            if (located.status === 'ready') {
+                // locate возвращает ближайшую съёмку, но в редкой пустой зоне она
+                // может оказаться слишком далеко от загаданного места. Такой Player
+                // дал бы визуально один адрес, а сервер считал бы по другому.
+                located = { status: 'no_coverage', panorama: null };
+            }
         }
 
         if (located.status === 'network_error') {
@@ -235,20 +277,35 @@ async function prepareRound(initialLocation, task = null) {
             };
         }
 
-        if (skips >= MAX_PANORAMA_RETRIES) {
+        // Пустой locate тоже не доказывает отсутствия съёмок во всём районе.
+        // Ищем до рабочей точки или конца серии. Следующую открывает игрок.
+        if (skips >= remainingSkips) {
             return {
-                ok: false, status: 'no_coverage', location, attempts,
+                ok: false, status: 'search_exhausted',
+                location, attempts, exhausted: true,
                 lookupMs: Math.round(performance.now() - started)
             };
         }
 
         const skipped = await api.skipLocation(
-            location.round_id, 'no_coverage', location.location_version
+            location.round_id, skipReason, location.location_version
         );
         if (!skipped.ok || !skipped.data) {
+            if (skipped.status === 429 && skipped.data?.reason === 'search_batch_exhausted') {
+                return {
+                    ok: false,
+                    status: 'search_exhausted',
+                    exhausted: true,
+                    error: skipped.data && skipped.data.error,
+                    location,
+                    attempts,
+                    lookupMs: Math.round(performance.now() - started)
+                };
+            }
             return {
                 ok: false,
-                status: skipped.networkError ? 'network_error' : 'api_error',
+                status: skipped.status === 429 ? 'rate_limited'
+                    : skipped.networkError ? 'network_error' : 'api_error',
                 location,
                 attempts,
                 lookupMs: Math.round(performance.now() - started)
@@ -408,11 +465,17 @@ export async function loadPanorama(location, preloadTask = null) {
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
             showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
-        } else if (status === 'no_coverage') {
-            showLoadingOverlay('Не удалось найти съёмку рядом.', { retry: true, skip: true });
+        } else if (status === 'search_exhausted') {
+            showLoadingOverlay(
+                'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',
+                { continueSearch: true, back: true }
+            );
+        } else if (status === 'rate_limited') {
+            showLoadingOverlay('Поиск временно ограничен. Подождите минуту и повторите загрузку.',
+                               { retry: true, back: true });
         } else {
             showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
-                               { retry: true, skip: false });
+                               { retry: true });
         }
         return { ok: false, status, location: prepared ? prepared.location : location };
     }
@@ -441,7 +504,9 @@ export async function loadPanorama(location, preloadTask = null) {
         startNoMoveWatchdog();
         // Запускаем фиксацию дедлайна параллельно первому paint: сеть не должна
         // задерживать появление уже открытого Player.
-        const readyPromise = api.roundReady(prepared.location.round_id);
+        const readyPromise = api.roundReady(
+            prepared.location.round_id, prepared.location.location_version
+        );
         await nextPaint();
         if (loadId !== state.roundLoadId) {
             return { ok: false, status: 'cancelled' };

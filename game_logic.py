@@ -8,25 +8,27 @@ import random
 # Константы игры
 ROUNDS_PER_GAME = 5
 MAX_SCORE_PER_ROUND = 5000
-# Максимальное расстояние для СПб (примерно 30 км диаметр города)
+# Расстояние, начиная с которого раунд даёт ноль очков.
 MAX_DISTANCE_KM = 30
 
-# Серверный предел перегенераций точки на раунд (клиент сдаётся после 8):
-# без него можно бесконечно рероллить точку, пока не выпадет знакомое место.
-MAX_SKIPS_PER_ROUND = 10
+# Число автоматических замен до паузы: следующую серию открывает игрок.
+# После /ready смена уже показанной точки запрещена независимо от лимита.
+MAX_SKIPS_PER_SEARCH_BATCH = 10
 
 # Максимальное допустимое расхождение (км) между сгенерированной сервером точкой
 # и «реальной» точкой панорамы, которую сообщает клиент. Защита от накрутки очков:
 # клиент не может выдать произвольные координаты за правильный ответ.
 MAX_ACTUAL_POINT_DRIFT_KM = 1.0
+MIN_ROUND_LOCATION_DISTANCE_KM = 0.02  # Не показывать в партии ту же съёмку (20 м).
 
 # Запас к лимиту времени на сетевые задержки и загрузку панорамы.
 TIME_LIMIT_GRACE_SECONDS = 20
 # Допустимые границы лимита времени на раунд (секунды).
 TIME_LIMIT_MIN, TIME_LIMIT_MAX = 30, 600
 
-# Границы Санкт-Петербурга для генерации случайных точек
-# (центральная часть города, где в основном есть панорамы)
+# Исторические bounds центральной части города. Они остаются неизменными для
+# режимов center/medium; hard («Весь город») использует canonical polygon
+# административных районов через districts.generate_city_point().
 SPB_BOUNDS = {
     'lat_min': 59.87,
     'lat_max': 60.02,
@@ -37,7 +39,8 @@ SPB_BOUNDS = {
 # Центр СПб (Дворцовая площадь) — вокруг него генерируются точки
 SPB_CENTER = (59.939, 30.315)
 
-# Режимы сложности: разброс гауссианы вокруг центра города
+# Режимы территории. Center/medium сохраняют прежний гауссов разброс вокруг
+# центра; hard выбирает точку по точной административной геометрии города.
 DIFFICULTY_SETTINGS = {
     'center': {
         'name': 'Центр',
@@ -50,9 +53,7 @@ DIFFICULTY_SETTINGS = {
         'std_lon': 0.05,
     },
     'hard': {
-        'name': 'Сложная',
-        'std_lat': 0.06,   # ~6 км разброс
-        'std_lon': 0.12,
+        'name': 'Весь город',
     }
 }
 
@@ -64,7 +65,13 @@ def difficulty_name(difficulty):
 
 
 def generate_random_point(difficulty='medium'):
-    """Случайная точка с нормальным распределением вокруг центра СПб."""
+    """Случайная точка для выбранной стандартной территории."""
+    if difficulty == 'hard':
+        # Локальный импорт сохраняет лёгкий импорт чистой арифметики модуля;
+        # сама geometry загружается и объединяется лениво один раз на процесс.
+        from districts import generate_city_point
+        return generate_city_point()
+
     settings = DIFFICULTY_SETTINGS.get(difficulty, DIFFICULTY_SETTINGS['medium'])
 
     while True:
@@ -88,6 +95,8 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
     a = math.sin(delta_lat / 2) ** 2 + \
         math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    # У противоположных точек погрешность float может дать a > 1.
+    a = min(1.0, max(0.0, a))
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     return R * c
@@ -109,10 +118,12 @@ def parse_coords(data):
     """
     if not isinstance(data, dict):
         return None
+    if isinstance(data.get('latitude'), bool) or isinstance(data.get('longitude'), bool):
+        return None
     try:
         lat = float(data['latitude'])
         lon = float(data['longitude'])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(lat) or not math.isfinite(lon):
         return None
@@ -127,7 +138,7 @@ def parse_time_limit(value):
         return None
     try:
         seconds = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if TIME_LIMIT_MIN <= seconds <= TIME_LIMIT_MAX:
         return seconds
