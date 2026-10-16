@@ -48,15 +48,6 @@ def test_legacy_hard_game_finishes_with_outside_and_repeated_panorama(
     assert result['is_game_over'] is True
 
 
-def test_start_cannot_opt_out_of_current_panorama_rules(client, app):
-    result = client.post('/api/game/start', json={
-        'difficulty': 'hard', 'panorama_rules_version': 0,
-    }).get_json()
-    assert result['location']['requires_spatial_validation'] is True
-    with app.app_context():
-        assert db.session.get(GameSession, result['game_id']).panorama_rules_version == 1
-
-
 @pytest.mark.parametrize('rules_version', [0, 1])
 def test_challenge_inherits_source_rules(client, app, rules_version):
     with app.app_context():

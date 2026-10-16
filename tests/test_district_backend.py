@@ -397,15 +397,28 @@ def test_validate_panorama_rejects_neighbouring_district_before_ready(client, ap
     }).status_code == 200
 
 
-def test_stale_panorama_validation_cannot_mutate_skipped_location(client):
+def test_stale_panorama_validation_cannot_mutate_skipped_location(client, app):
+    from models import GameRound, VerifiedPoint, db
+
     first = _start_district(client).get_json()['location']
-    client.post('/api/game/skip_location', json={
+    skipped = client.post('/api/game/skip_location', json={
         'round_id': first['round_id'], 'location_version': 0,
         'reason': 'outside_district',
     })
+    assert skipped.status_code == 200
+    replacement = skipped.get_json()
 
     stale = _validate_location(client, first)
     assert stale.status_code == 409
+    with app.app_context():
+        rnd = db.session.get(GameRound, first['round_id'])
+        assert (rnd.gen_latitude, rnd.gen_longitude) == (
+            replacement['latitude'], replacement['longitude'],
+        )
+        assert rnd.skips == replacement['location_version'] == 1
+        assert rnd.actual_latitude is None
+        assert rnd.actual_longitude is None
+        assert VerifiedPoint.query.count() == 0
 
 
 def test_guess_rechecks_district_and_keeps_prevalidated_point(client, app_module):

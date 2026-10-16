@@ -37,9 +37,11 @@ def test_invalid_location_version_is_rejected(client, endpoint, value):
     location = client.post('/api/game/start', json={}).get_json()['location']
     response = client.post(f'/api/game/{endpoint}', json={
         'round_id': location['round_id'], 'location_version': value,
+        'search_batch': location['search_batch'],
         'latitude': location['latitude'], 'longitude': location['longitude'],
     })
     assert response.status_code == 400
+    assert response.get_json() == {'error': 'Некорректное поле location_version'}
 
 
 @pytest.mark.parametrize('value', [[], {}, True, 1.5])
