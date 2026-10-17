@@ -15,7 +15,9 @@ from dotenv import load_dotenv
 from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembic_stamp
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import event
+from alembic.script import ScriptDirectory
+from sqlalchemy import event, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import (db, GameSession, GameRound, VerifiedPoint, utcnow,
                     CURRENT_PANORAMA_RULES_VERSION)
@@ -103,7 +105,11 @@ ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
 METRIKA_ID = os.environ.get('METRIKA_ID', '')
 
 db.init_app(app)
-migrate = Migrate(app, db, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations'))
+MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
+migrate = Migrate(app, db, directory=MIGRATIONS_DIR)
+# Ревизия схемы, которую ожидает код этого процесса: миграции читаются при
+# импорте вместе с кодом, а не позже, когда deploy уже обновил файлы на диске.
+CODE_SCHEMA_REVISION = ScriptDirectory(MIGRATIONS_DIR).get_current_head()
 
 
 if database_uri.startswith('sqlite:'):
@@ -606,6 +612,27 @@ def index():
                            og_title=og_title,
                            og_description=og_description,
                            district_feature_enabled=True)
+
+
+@app.route('/healthz')
+def healthz():
+    """Проверка для deploy: БД отвечает и её схема совпадает с кодом процесса.
+
+    ``/`` не обращается к БД, поэтому сломанная миграция проходила бы его.
+    """
+    try:
+        db_revision = db.session.execute(
+            text('SELECT version_num FROM alembic_version')
+        ).scalar()
+    except SQLAlchemyError:
+        app.logger.exception('Healthcheck: база данных недоступна')
+        return jsonify({'status': 'error', 'error': 'database'}), 503
+    healthy = db_revision == CODE_SCHEMA_REVISION
+    return jsonify({
+        'status': 'ok' if healthy else 'error',
+        'db_revision': db_revision,
+        'code_revision': CODE_SCHEMA_REVISION,
+    }), 200 if healthy else 503
 
 
 @app.route('/favicon.ico')
