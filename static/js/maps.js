@@ -150,7 +150,7 @@ export function destroyMainMap() {
 /**
  * Размещение маркера догадки на карте
  */
-export function placeMarker(coordinates) {
+function placeMarker(coordinates) {
     const [lon, lat] = coordinates;
     state.guessCoords = { latitude: lat, longitude: lon };
 
@@ -176,7 +176,7 @@ export function placeMarker(coordinates) {
  * В отличие от встроенного fullscreen Яндекса, панораму не трогаем вообще —
  * игрок остаётся ровно там, куда дошёл.
  */
-export function setMapPanelCollapsed(collapse) {
+function setMapPanelCollapsed(collapse) {
     const panel = document.getElementById('map-panel');
     const handle = document.getElementById('map-handle');
     panel.classList.toggle('collapsed', collapse);

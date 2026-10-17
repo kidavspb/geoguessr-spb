@@ -4,12 +4,9 @@
  * Каждый запрос имеет конечный таймаут. Безопасные GET и идемпотентные POST,
  * привязанные к round_id, один раз повторяются после короткой паузы.
  */
+import { delay } from './utils.js';
 
 const DEFAULT_TIMEOUT_MS = 10000;
-
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 async function request(url, options = {}, config = {}) {
     const timeoutMs = config.timeoutMs || DEFAULT_TIMEOUT_MS;
@@ -71,12 +68,12 @@ export const api = {
 
     getLocation: () => request('/api/game/location', {}, { retries: 1 }),
 
-    skipLocation: (roundId, reason = 'no_coverage', locationVersion = null) =>
+    skipLocation: (roundId, reason, locationVersion) =>
         post('/api/game/skip_location', {
             round_id: roundId,
             reason,
             location_version: locationVersion
-        }, { retries: locationVersion == null ? 0 : 1 }),
+        }, { retries: 1 }),
 
     roundReady: (roundId, locationVersion) =>
         post('/api/game/ready', {
@@ -90,7 +87,7 @@ export const api = {
             search_batch: location.search_batch
         }, { retries: 1 }),
 
-    validatePanorama: (roundId, latitude, longitude, locationVersion = null) =>
+    validatePanorama: (roundId, latitude, longitude, locationVersion) =>
         post('/api/game/validate_panorama', {
             round_id: roundId,
             latitude,
@@ -98,10 +95,7 @@ export const api = {
             location_version: locationVersion
         }, { retries: 1 }),
 
-    guess: payload => post('/api/game/guess', payload, {
-        timeoutMs: 12000,
-        retries: payload && payload.round_id ? 1 : 0
-    }),
+    guess: payload => post('/api/game/guess', payload, { timeoutMs: 12000, retries: 1 }),
 
     setRoundAddress: (roundId, address) =>
         post('/api/game/set_address', { round_id: roundId, address }, { retries: 1 }),

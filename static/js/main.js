@@ -94,7 +94,7 @@ function initEventListeners() {
     document.getElementById('pano-modal-close').addEventListener('click', closePanoModal);
 
     // Финальный экран
-    document.getElementById('play-again-btn').addEventListener('click', () => {
+    document.getElementById('home-btn').addEventListener('click', () => {
         discardPreloaded(state.preloaded);
         state.preloaded = null;
         closePanoModal();
@@ -122,7 +122,7 @@ function initEventListeners() {
             showLeaderboard();
         });
     });
-    document.getElementById('lb-district-select')?.addEventListener('change', event => {
+    document.getElementById('lb-district-select').addEventListener('change', event => {
         state.lbState.districtId = event.target.value || null;
         syncLeaderboardFilters();
         showLeaderboard();
@@ -152,10 +152,6 @@ function initToggles() {
 function initTerritoryControl() {
     const territoryRange = document.getElementById('territory-range');
     const labels = document.querySelectorAll('#difficulty-group .territory-label');
-    if (!territoryRange || labels.length !== TERRITORIES.length) {
-        console.warn('Territory control markup is missing or incompatible');
-        return;
-    }
 
     territoryRange.addEventListener('input', () => {
         const index = Math.max(0, Math.min(TERRITORIES.length - 1,
@@ -171,31 +167,20 @@ function initTerritoryControl() {
         });
     });
 
-    const pickerButton = document.getElementById('district-picker-btn');
-    if (pickerButton && document.getElementById('district-screen')) {
-        const pickerInitialized = initDistrictPicker({
-            onConfirm: district => {
-                setTerritoryState('district', district.id, district.name);
-                syncTerritoryControl();
-            }
-        });
-        if (pickerInitialized) {
-            pickerButton.addEventListener('click', () => {
-                openDistrictPicker(gameData.difficulty === 'district'
-                    ? gameData.districtId : null);
-            });
+    initDistrictPicker({
+        onConfirm: district => {
+            setTerritoryState('district', district.id, district.name);
+            syncTerritoryControl();
         }
-    }
+    });
+    document.getElementById('district-picker-btn').addEventListener('click', () => {
+        openDistrictPicker(gameData.difficulty === 'district'
+            ? gameData.districtId : null);
+    });
 }
 
 function initTimeControl() {
-    const inputs = document.querySelectorAll('input[name="round-time"]');
-    if (!inputs.length) {
-        console.warn('Time control markup is missing');
-        return;
-    }
-
-    inputs.forEach(input => {
+    document.querySelectorAll('input[name="round-time"]').forEach(input => {
         input.addEventListener('change', () => {
             if (!input.checked) return;
             gameData.timeLimit = Number.parseInt(input.value, 10) || 0;
@@ -205,13 +190,7 @@ function initTimeControl() {
 }
 
 function initMovementControl() {
-    const movementToggle = document.getElementById('movement-toggle');
-    if (!movementToggle) {
-        console.warn('Movement control markup is missing');
-        return;
-    }
-
-    movementToggle.addEventListener('change', event => {
+    document.getElementById('movement-toggle').addEventListener('change', event => {
         gameData.noMove = !event.target.checked;
         syncMovementControl();
     });
@@ -225,9 +204,8 @@ function syncSettingsControls() {
 
 function syncDistrictActionIcon(districtId) {
     const container = document.getElementById('district-action-icon');
-    const emoji = container?.querySelector('.district-action-emoji');
-    const emblem = container?.querySelector('.district-action-emblem');
-    if (!container || !emoji || !emblem) return;
+    const emoji = container.querySelector('.district-action-emoji');
+    const emblem = container.querySelector('.district-action-emblem');
 
     const normalizedId = districtId && districtDisplayName(districtId)
         ? districtId : '';
@@ -269,7 +247,6 @@ function syncTerritoryControl() {
     const territoryValue = document.getElementById('territory-value');
     const districtActionLabel = document.getElementById('district-action-label');
     const districtPicker = document.getElementById('district-picker-btn');
-    if (!territoryRange || !territoryControl || !territoryValue) return;
 
     const districtActive = gameData.difficulty === 'district' && !!gameData.districtId;
     const standardDifficulty = TERRITORIES.includes(gameData.standardDifficulty)
@@ -291,15 +268,11 @@ function syncTerritoryControl() {
     document.querySelectorAll('#difficulty-group .territory-label').forEach((label, index) => {
         label.setAttribute('aria-pressed', String(!districtActive && index === territoryIndex));
     });
-    if (districtActionLabel) {
-        districtActionLabel.textContent = districtActive
-            ? activeName : 'Выбрать конкретный район';
-    }
-    if (districtPicker) {
-        districtPicker.setAttribute('aria-label', districtActive
-            ? `Изменить район. Сейчас выбран ${activeName}`
-            : 'Выбрать конкретный район');
-    }
+    districtActionLabel.textContent = districtActive
+        ? activeName : 'Выбрать конкретный район';
+    districtPicker.setAttribute('aria-label', districtActive
+        ? `Изменить район. Сейчас выбран ${activeName}`
+        : 'Выбрать конкретный район');
     syncDistrictActionIcon(districtActive ? gameData.districtId : null);
 }
 
@@ -314,7 +287,6 @@ function syncMovementControl() {
     const movementToggle = document.getElementById('movement-toggle');
     const movementTitle = document.getElementById('movement-title');
     const movementDescription = document.getElementById('movement-description');
-    if (!movementToggle || !movementTitle || !movementDescription) return;
 
     movementToggle.checked = !gameData.noMove;
     movementTitle.textContent = gameData.noMove
@@ -383,7 +355,7 @@ async function initChallengeFromUrl() {
         banner.classList.remove('hidden');
 
         // Параметры фиксированы челленджем — селекторы прячем
-        if (document.getElementById('district-screen')?.classList.contains('active')) {
+        if (document.getElementById('district-screen').classList.contains('active')) {
             closeDistrictPicker({ restoreFocus: false });
         }
         document.getElementById('difficulty-group').classList.add('hidden');
@@ -456,7 +428,6 @@ async function startGame(opts = {}) {
         }
 
         gameData.totalRounds = data.total_rounds;
-        gameData.currentRound = 1;
         gameData.totalScore = data.total_score || 0; // >0 при возврате в недоигранный вызов дня
         setTerritoryState(
             data.difficulty || gameData.difficulty,
@@ -571,16 +542,11 @@ async function loadCurrentLocation(locationOverride = null) {
             }
         }
 
-        if (data && data.game_over) {
-            showFinalResults();
-            return;
-        }
         if (!data || !data.round_id) {
             showLoadingOverlay('Сервер вернул неполные данные раунда.', { retry: true });
             return;
         }
 
-        gameData.currentRound = data.round;
         state.currentLocation = data;
         state.currentRoundId = data.round_id;
         document.getElementById('current-round').textContent = data.round;
@@ -658,7 +624,7 @@ function returnToSettings() {
     destroyFinalMap();
     syncSettingsControls();
     showScreen('start-screen');
-    document.getElementById('district-picker-btn')?.focus();
+    document.getElementById('district-picker-btn').focus();
 }
 
 async function continuePanoramaSearch() {
@@ -1178,11 +1144,11 @@ function syncLeaderboardFilters() {
     const daily = state.lbState.period === 'daily';
     document.getElementById('leaderboard-filter')
         .classList.toggle('hidden', daily);
-    document.getElementById('lb-district-filter')?.classList.toggle(
+    document.getElementById('lb-district-filter').classList.toggle(
         'hidden', daily || state.lbState.difficulty !== 'district'
     );
     const districtSelect = document.getElementById('lb-district-select');
-    if (districtSelect) districtSelect.value = state.lbState.districtId || '';
+    districtSelect.value = state.lbState.districtId || '';
 }
 
 /**

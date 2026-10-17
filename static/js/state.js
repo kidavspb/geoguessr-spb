@@ -48,7 +48,6 @@ export const state = {
 
     gameData: {
         totalRounds: 5,
-        currentRound: 1,
         totalScore: 0,
         // Tagged union территории: districtId непустой только при district.
         difficulty: 'medium', // center, medium, hard, district

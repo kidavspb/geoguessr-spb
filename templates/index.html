@@ -172,7 +172,7 @@
                     <strong id="district-selected-name">Район не выбран</strong>
                 </div>
 
-                <div class="district-map-frame" id="district-map-frame">
+                <div class="district-map-frame">
                     <div class="district-map-loading" id="district-map-loading"
                          role="status">Загружаем карту районов…</div>
                     <svg id="district-map" class="district-map hidden"
@@ -215,9 +215,7 @@
         <div class="game-stage">
             <!-- Панорама текущего раунда -->
             <div class="location-container">
-                <div id="panorama-mode" class="location-mode">
-                    <div id="panorama-player"></div>
-                </div>
+                <div id="panorama-player"></div>
                 <div class="photo-overlay" id="photo-overlay">
                     <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="" class="overlay-logo">
                     <span>Загрузка…</span>
@@ -324,7 +322,7 @@
 
                 <div class="final-actions">
                     <button id="challenge-btn" class="btn btn-secondary hidden">⚔️ Бросить вызов другу</button>
-                    <button id="play-again-btn" class="btn btn-primary">На главный экран</button>
+                    <button id="home-btn" class="btn btn-primary">На главный экран</button>
                     <button id="final-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
                 </div>
             </div>

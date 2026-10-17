@@ -113,12 +113,10 @@ def test_district_map_views_are_stable_inside_each_territory(page, server):
             state.gameData.difficulty = 'district';
             state.gameData.districtId = option.value;
             // Ни границы, ни расположение игровой панорамы не определяют preset.
-            state.gameData.districtBounds = null;
             state.actualPoint = [0, 0];
             resetMapForNewRound();
             const first = document.getElementById('map').dataset.mapLocation;
             state.actualPoint = [80, 150];
-            state.gameData.currentRound = 5;
             resetMapForNewRound();
             views[option.value] = {
                 first: JSON.parse(first),
@@ -877,26 +875,6 @@ def test_settings_have_styled_initial_render_without_javascript(browser, server)
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
     finally:
         context.close()
-
-
-def test_missing_settings_component_does_not_abort_other_controls(page, server):
-    """Несовместимый/опциональный блок не обрушает инициализацию соседних."""
-    page_errors = []
-    page.on('pageerror', lambda error: page_errors.append(str(error)))
-    page.add_init_script("""
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('difficulty-group')?.remove();
-        }, { once: true });
-    """)
-    page.goto(server)
-
-    page.get_by_text('1 мин', exact=True).click()
-    expect(page.get_by_role('radio', name='1 мин')).to_be_checked()
-    movement = page.get_by_role('switch')
-    movement.click()
-    expect(movement).not_to_be_checked()
-    expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
-    assert page_errors == []
 
 
 def test_full_game_flow(page, server):
