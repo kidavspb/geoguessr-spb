@@ -140,6 +140,36 @@ def test_admin_delete_tracks_requested_point_when_selection_changes(page, server
     expect(page.locator('#pi-coords')).to_contain_text('#2')
 
 
+def test_failed_guess_map_stays_retryable_in_next_round(page, server):
+    """Без карты ответить нельзя, поэтому повтор не должен пропадать."""
+    abort_v3 = lambda route: route.abort()  # noqa: E731
+    page.route('**/api-maps.yandex.ru/v3/**', abort_v3)
+
+    def short_round(route):
+        response = route.fetch()
+        data = response.json()
+        data['remaining_ms'] = 1500
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/ready', short_round)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    page.locator('#start-btn').click()
+    hint = page.locator('#map-hint')
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'), timeout=30000)
+    expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=15000)
+
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#current-round')).to_have_text('2')
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'))
+    expect(hint).to_have_class(re.compile('map-retry'))
+
+    page.unroute('**/api-maps.yandex.ru/v3/**', abort_v3)
+    hint.click()
+    expect(hint).to_have_text('Кликни по карте, чтобы отметить место', timeout=15000)
+
+
 @pytest.mark.parametrize('sdk', ['v2', 'v3'])
 def test_sdk_readiness_timeout_allows_a_fresh_attempt(page, server, sdk):
     page.goto(server)
