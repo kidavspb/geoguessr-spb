@@ -1184,7 +1184,7 @@ def test_standard_skip_limit_still_has_settings_action(page, server):
     """После предела поиска обычная игра тоже не остаётся без действий."""
     page.add_init_script('window.__ymapsEmptyLocateCount = 100')
     page.route('**/api/game/skip_location', lambda route: route.fulfill(
-        status=429,
+        status=409,
         content_type='application/json',
         body='{"error":"Серия поиска завершена","reason":"search_batch_exhausted"}',
     ))

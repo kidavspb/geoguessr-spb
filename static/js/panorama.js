@@ -310,7 +310,8 @@ async function prepareRound(initialLocation, task = null) {
         );
         if (!skipped.ok || !skipped.data) {
             if (isStaleLocation(skipped) && await resyncLocation()) continue;
-            if (skipped.status === 429 && skipped.data?.reason === 'search_batch_exhausted') {
+            // Сервер отвечает 409; 429 — от версии до 2026-10, пока идёт deploy.
+            if (skipped.data?.reason === 'search_batch_exhausted') {
                 return {
                     ok: false,
                     status: 'search_exhausted',

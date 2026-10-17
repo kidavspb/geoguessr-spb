@@ -10,7 +10,7 @@ def _exhaust(client, location):
         assert response.status_code == 200
         location = response.get_json()
     response = client.post('/api/game/skip_location', json=location)
-    assert response.status_code == 429
+    assert response.status_code == 409
     assert response.get_json()['reason'] == 'search_batch_exhausted'
     return location
 

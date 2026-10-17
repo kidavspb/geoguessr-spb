@@ -32,7 +32,7 @@ from game_logic import (
     calculate_score, parse_coords, parse_time_limit,
 )
 from pool import choose_round_candidates, add_verified_point, mark_point_failed
-from daily import DAILY_DIFFICULTY, today_msk, get_or_create_daily, daily_points
+from daily import DAILY_DIFFICULTY, MSK, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
 from districts import (
     DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DistrictDataError, district_map,
@@ -189,6 +189,17 @@ def _aware_utc(dt):
     if dt is None:
         return None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _msk_date(dt):
+    """Дата для игрока — по Москве: игра в 01:30 МСК относится к новому дню."""
+    return _aware_utc(dt).astimezone(MSK).strftime('%d.%m.%Y') if dt else None
+
+
+# Равный счёт: выше тот, кто набрал его раньше; id делает порядок полным.
+LEADERBOARD_ORDER = (
+    GameSession.total_score.desc(), GameSession.completed_at.asc(), GameSession.id.asc(),
+)
 
 
 DISTRICT_MODE = 'district'
@@ -935,7 +946,7 @@ def skip_location():
         return jsonify({
             'error': 'Серия поиска завершена',
             'reason': 'search_batch_exhausted',
-        }), 429
+        }), 409
 
     reason = str(data.get('reason') or 'no_coverage')[:30]
     excluded_coords = [
@@ -1335,7 +1346,7 @@ def daily_leaderboard():
     top = (GameSession.query
            .filter(GameSession.daily_date == date,
                    GameSession.completed_at.isnot(None))
-           .order_by(GameSession.total_score.desc())
+           .order_by(*LEADERBOARD_ORDER)
            .limit(10)
            .all())
     return jsonify({
@@ -1431,7 +1442,7 @@ def get_leaderboard():
         cutoff = utcnow().replace(tzinfo=None) - timedelta(days=days)
         query = query.filter(GameSession.completed_at >= cutoff)
 
-    top_games = query.order_by(GameSession.total_score.desc()).limit(LEADERBOARD_LIMIT).all()
+    top_games = query.order_by(*LEADERBOARD_ORDER).limit(LEADERBOARD_LIMIT).all()
 
     response = {
         'difficulty': difficulty if valid_difficulty else 'all',
@@ -1446,7 +1457,7 @@ def get_leaderboard():
                 **_territory_payload(game.difficulty, game.district_id),
                 'time_limit': game.time_limit,
                 'no_move': bool(game.no_move),
-                'date': game.completed_at.strftime('%d.%m.%Y') if game.completed_at else None
+                'date': _msk_date(game.completed_at),
             }
             for i, game in enumerate(top_games)
         ]
@@ -1496,7 +1507,7 @@ def admin_list_points():
             'dist_from_center_km': round(p.dist_from_center_km, 2),
             'district_id': p.district_id,
             'fail_count': p.fail_count or 0,
-            'created_at': p.created_at.strftime('%d.%m.%Y') if p.created_at else None,
+            'created_at': _msk_date(p.created_at),
         }
         for p in points
     ]})

@@ -90,7 +90,8 @@ def test_skip_limit_enforced_server_side(client, app_module):
         assert response.status_code == 200
         loc = response.get_json()
     over = client.post('/api/game/skip_location', json=round_body(loc))
-    assert over.status_code == 429
+    assert over.status_code == 409
+    assert over.get_json()['reason'] == 'search_batch_exhausted'
 
 
 def test_skip_retry_with_same_location_version_is_idempotent(client, app_module):
