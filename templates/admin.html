@@ -121,6 +121,12 @@
             const sources = Object.entries(s.round_sources || {})
                 .map(([name, count]) => `${sourceLabels[name] || name}: <strong>${count}</strong>`)
                 .join(' · ');
+            const search = Object.entries(s.panorama_by_source || {})
+                .map(([name, m]) => `${sourceLabels[name] || name}: ` +
+                    `найдено <strong>${Math.round(m.ready_rate * 100)}%</strong>` +
+                    (m.lookup_p50_ms != null ? `, поиск <strong>${(m.lookup_p50_ms / 1000).toFixed(1)} с</strong>` : '') +
+                    (m.attempts_avg != null ? `, попыток <strong>${m.attempts_avg}</strong>` : ''))
+                .join(' · ');
             block.innerHTML =
                 `🎮 Игр всего: <strong>${s.games_total}</strong> (доиграно ${s.games_completed_total})<br>` +
                 `📅 За 7 дней: начато <strong>${s.games_started_7d}</strong>, доиграно <strong>${s.games_completed_7d}</strong>` +
@@ -132,7 +138,8 @@
                       (s.panorama_failure_rate != null
                           ? `, ошибок <strong>${Math.round(s.panorama_failure_rate * 100)}%</strong>` : '')
                     : '⚡ Метрики панорам пока не накоплены') +
-                (sources ? `<br>🧭 Раунды: ${sources}` : '');
+                (sources ? `<br>🧭 Раунды: ${sources}` : '') +
+                (search ? `<br>🔎 Поиск панорам по источнику точки: ${search}` : '');
             block.classList.remove('hidden');
         }
 

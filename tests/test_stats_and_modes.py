@@ -201,6 +201,36 @@ def test_admin_stats(client):
     assert stats['completion_rate_7d'] == 1.0
 
 
+def test_admin_stats_compare_pool_and_exploration_search(client, app_module):
+    """Сколько стоит исследование новых мест по сравнению с точками пула."""
+    from models import GameRound, GameSession, db
+
+    with app_module.app.app_context():
+        game = GameSession(player_name='Метрики', current_round=0)
+        db.session.add(game)
+        db.session.flush()
+        rows = [
+            ('pool', 'ready', 400, 1),
+            ('pool_recovery', 'ready', 600, 1),
+            ('explore', 'ready', 3000, 3),
+            ('explore_recovery', 'no_coverage', 5000, 4),
+        ]
+        for number, (source, status, lookup_ms, attempts) in enumerate(rows, start=1):
+            db.session.add(GameRound(
+                session_id=game.id, round_number=number,
+                gen_latitude=59.9, gen_longitude=30.3, location_source=source,
+                panorama_status=status, panorama_lookup_ms=lookup_ms,
+                panorama_attempts=attempts,
+            ))
+        db.session.commit()
+
+    stats = client.get('/api/admin/stats', headers=ADMIN_HEADERS).get_json()
+    assert stats['panorama_by_source'] == {
+        'explore': {'rounds': 2, 'ready_rate': 0.5, 'lookup_p50_ms': 3000, 'attempts_avg': 3.5},
+        'pool': {'rounds': 2, 'ready_rate': 1.0, 'lookup_p50_ms': 400, 'attempts_avg': 1.0},
+    }
+
+
 def test_completion_rate_uses_the_same_started_cohort(client, app):
     from datetime import timedelta
     from models import GameSession, db, utcnow

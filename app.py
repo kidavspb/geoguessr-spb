@@ -1241,7 +1241,6 @@ def submit_guess():
     rnd.answered_at = utcnow()
 
     game.total_score = (game.total_score or 0) + score
-    game.rounds_played = (game.rounds_played or 0) + 1
     game.current_round = (game.current_round or 0) + 1
 
     is_game_over = game.current_round >= ROUNDS_PER_GAME
@@ -1291,7 +1290,6 @@ def get_results():
         'player_name': game.player_name,
         'total_score': game.total_score,
         'max_possible_score': ROUNDS_PER_GAME * MAX_SCORE_PER_ROUND,
-        'rounds_played': game.rounds_played,
         'time_limit': game.time_limit,
         'no_move': bool(game.no_move),
         'challenge_token': game.challenge_token if game.completed_at else None,
@@ -1581,6 +1579,24 @@ def admin_stats():
         if r.panorama_status not in ('ready', 'cancelled')
     )
 
+    # Цена поиска по исходному источнику точки: «explore_recovery» — раунд,
+    # начатый с новой точки. Показывает, во что обходится исследование мест.
+    by_source = {}
+    for r in metric_rounds:
+        by_source.setdefault((r.location_source or 'legacy').split('_')[0], []).append(r)
+
+    def search_summary(rows):
+        attempts = [r.panorama_attempts for r in rows if r.panorama_attempts is not None]
+        return {
+            'rounds': len(rows),
+            'ready_rate': round(sum(r.panorama_status == 'ready' for r in rows) / len(rows), 3),
+            'lookup_p50_ms': percentile(sorted(
+                r.panorama_lookup_ms for r in rows
+                if r.panorama_status == 'ready' and r.panorama_lookup_ms is not None
+            ), 0.50),
+            'attempts_avg': round(sum(attempts) / len(attempts), 2) if attempts else None,
+        }
+
     return jsonify({
         'games_total': total,
         'games_completed_total': completed_total,
@@ -1601,6 +1617,9 @@ def admin_stats():
         ),
         'round_sources': {str(key or 'legacy'): value
                           for key, value in source_counts.items()},
+        'panorama_by_source': {
+            source: search_summary(rows) for source, rows in sorted(by_source.items())
+        },
     })
 
 

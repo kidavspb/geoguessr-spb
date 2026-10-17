@@ -40,7 +40,7 @@ def test_continue_search_preserves_game_and_bounds_each_series(client, app, terr
         assert continued.get('district_id') == territory.get('district_id')
         with app.app_context():
             game = GameSession.query.one()
-            assert game.current_round == game.rounds_played == 1
+            assert game.current_round == 1
             assert game.total_score == result['score'] == 5000
             assert game.difficulty == territory['difficulty']
             assert game.district_id == territory.get('district_id')

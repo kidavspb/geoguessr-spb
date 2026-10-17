@@ -69,7 +69,7 @@ def test_concurrent_guesses_preserve_first_answer(client, app, overlapping_posts
     with app.app_context():
         game = GameSession.query.one()
         assert game.total_score == 5000
-        assert game.current_round == game.rounds_played == 1
+        assert game.current_round == 1
         assert db.session.get(GameRound, location['round_id']).guess_latitude == first['latitude']
 
 
