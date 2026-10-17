@@ -57,7 +57,8 @@ def overlapping_posts(app, client):
 
 def test_concurrent_guesses_preserve_first_answer(client, app, overlapping_posts):
     location = client.post('/api/game/start', json={}).get_json()['location']
-    first = {'round_id': location['round_id'], 'latitude': location['latitude'],
+    first = {'round_id': location['round_id'], 'location_version': 0,
+             'latitude': location['latitude'],
              'longitude': location['longitude']}
     second = {**first, 'latitude': first['latitude'] + 0.05}
     accepted, replayed = overlapping_posts(('/api/game/guess', first),

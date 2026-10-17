@@ -8,7 +8,7 @@ from models import GameSession, db
 
 
 @pytest.mark.parametrize('endpoint', [
-    'start', 'ready', 'skip_location', 'continue_search', 'set_actual_point', 'validate_panorama',
+    'start', 'ready', 'skip_location', 'continue_search', 'validate_panorama',
     'set_address', 'panorama_metric', 'guess',
 ])
 @pytest.mark.parametrize('body', ['[1]', 'true', '42', '"text"', 'null', '{broken'])

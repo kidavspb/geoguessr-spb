@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import game_logic
 import pool
+from helpers import guess_at_target, round_body
 
 
 def _play_full_game(client, name='Игрок', difficulty='center', extra=None):
@@ -17,8 +18,7 @@ def _play_full_game(client, name='Игрок', difficulty='center', extra=None):
     for _ in range(5):
         loc = client.get('/api/game/location').get_json()
         points.append((loc['latitude'], loc['longitude']))
-        client.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(client, loc)
     return points
 
 
@@ -41,11 +41,7 @@ def test_critical_round_locations_are_embedded_in_mutation_responses(client):
     assert started['location']['round'] == 1
     first = started['location']
 
-    result = client.post('/api/game/guess', json={
-        'round_id': first['round_id'],
-        'latitude': first['latitude'],
-        'longitude': first['longitude'],
-    }).get_json()
+    result = guess_at_target(client, first)
     assert result['next_location']['round'] == 2
     assert result['next_location']['round_id'] != first['round_id']
 
@@ -58,8 +54,7 @@ def test_replayed_cookie_cannot_replay_round(client):
 
     loc1 = client.get('/api/game/location').get_json()
     assert loc1['round'] == 1
-    client.post('/api/game/guess',
-                json={'latitude': loc1['latitude'], 'longitude': loc1['longitude']})
+    guess_at_target(client, loc1)
 
     # «Подсовываем» cookie, сохранённую до первого ответа
     client.set_cookie('session', old_cookie.value)
@@ -67,10 +62,21 @@ def test_replayed_cookie_cannot_replay_round(client):
     assert loc2['round'] == 2  # раунд 1 переиграть нельзя
 
 
-def test_guess_after_game_over_rejected(client):
+def test_sixth_answer_is_impossible_after_game_over(client, app):
     _play_full_game(client)
-    resp = client.post('/api/game/guess', json={'latitude': 59.9, 'longitude': 30.3})
-    assert resp.status_code == 400
+    results = client.get('/api/game/results').get_json()
+    assert client.get('/api/game/location').get_json()['game_over'] is True
+    # Повтор последнего ответа не начисляет очки второй раз.
+    from models import GameRound
+    with client.session_transaction() as sess:
+        game_id = sess['game_id']
+    with app.app_context():
+        fifth_id = GameRound.query.filter_by(session_id=game_id, round_number=5).one().id
+    replay = client.post('/api/game/guess', json={
+        'round_id': fifth_id, 'location_version': 0, 'latitude': 59.9, 'longitude': 30.3,
+    }).get_json()
+    assert replay['replayed'] is True
+    assert replay['total_score'] == results['total_score']
 
 
 # --------------------------------------------------------------------------
@@ -78,11 +84,12 @@ def test_guess_after_game_over_rejected(client):
 # --------------------------------------------------------------------------
 
 def test_skip_limit_enforced_server_side(client, app_module):
-    client.post('/api/game/start', json={'difficulty': 'medium'})
-    client.get('/api/game/location')
+    loc = client.post('/api/game/start', json={'difficulty': 'medium'}).get_json()['location']
     for _ in range(game_logic.MAX_SKIPS_PER_SEARCH_BATCH):
-        assert client.post('/api/game/skip_location').status_code == 200
-    over = client.post('/api/game/skip_location')
+        response = client.post('/api/game/skip_location', json=round_body(loc))
+        assert response.status_code == 200
+        loc = response.get_json()
+    over = client.post('/api/game/skip_location', json=round_body(loc))
     assert over.status_code == 429
 
 
@@ -122,31 +129,31 @@ def test_skip_retry_with_same_location_version_is_idempotent(client, app_module)
 # Пул проверенных точек
 # --------------------------------------------------------------------------
 
-def test_actual_point_feeds_verified_pool(client, app_module):
+def test_validated_panorama_feeds_verified_pool(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     loc = client.get('/api/game/location').get_json()
+    body = round_body(loc, latitude=loc['latitude'], longitude=loc['longitude'])
 
-    resp = client.post('/api/game/set_actual_point',
-                       json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
-    assert resp.get_json()['success'] is True
+    resp = client.post('/api/game/validate_panorama', json=body)
+    assert resp.get_json()['valid'] is True
 
     from models import VerifiedPoint
     with app_module.app.app_context():
         assert VerifiedPoint.query.count() == 1
 
     # Та же точка второй раз не дублируется (дедупликация ~10 м)
-    client.post('/api/game/set_actual_point',
-                json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+    client.post('/api/game/validate_panorama', json=body)
     with app_module.app.app_context():
         assert VerifiedPoint.query.count() == 1
 
 
-def test_rejected_actual_point_not_in_pool(client, app_module):
+def test_rejected_panorama_not_in_pool(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     loc = client.get('/api/game/location').get_json()
-    resp = client.post('/api/game/set_actual_point',
-                       json={'latitude': loc['latitude'], 'longitude': loc['longitude'] + 0.5})
-    assert resp.get_json()['success'] is False
+    resp = client.post('/api/game/validate_panorama', json=round_body(
+        loc, latitude=loc['latitude'], longitude=loc['longitude'] + 0.5,
+    ))
+    assert resp.get_json()['valid'] is False
 
     from models import VerifiedPoint
     with app_module.app.app_context():
@@ -154,20 +161,20 @@ def test_rejected_actual_point_not_in_pool(client, app_module):
 
 
 def test_guess_atomically_uses_panorama_point_and_grows_pool(client, app_module):
-    """Счёт и пул не зависят от порядка /set_actual_point и /guess."""
+    """Позиция панорамы приходит вместе с ответом и сразу пополняет пул."""
     from models import GameRound, VerifiedPoint
 
     client.post('/api/game/start', json={'difficulty': 'medium'})
     loc = client.get('/api/game/location').get_json()
     pano_lat = loc['latitude'] + 0.001
     pano_lon = loc['longitude']
-    response = client.post('/api/game/guess', json={
-        'round_id': loc['round_id'],
-        'latitude': pano_lat,
-        'longitude': pano_lon,
-        'panorama_latitude': pano_lat,
-        'panorama_longitude': pano_lon,
-    })
+    response = client.post('/api/game/guess', json=round_body(
+        loc,
+        latitude=pano_lat,
+        longitude=pano_lon,
+        panorama_latitude=pano_lat,
+        panorama_longitude=pano_lon,
+    ))
 
     assert response.status_code == 200
     data = response.get_json()
@@ -252,7 +259,7 @@ def test_time_limit_saved_and_validated(client):
 def test_late_guess_scores_zero(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
     loc = client.get('/api/game/location').get_json()
-    ready = client.post('/api/game/ready', json={'round_id': loc['round_id']})
+    ready = client.post('/api/game/ready', json=round_body(loc))
     assert ready.status_code == 200
     assert ready.get_json()['deadline_ms'] is not None
 
@@ -263,9 +270,7 @@ def test_late_guess_scores_zero(client, app_module):
         rnd.started_at = rnd.started_at - timedelta(seconds=300)
         db.session.commit()
 
-    result = client.post('/api/game/guess', json={
-        'latitude': loc['latitude'], 'longitude': loc['longitude']
-    }).get_json()
+    result = guess_at_target(client, loc)
     assert result['score'] == 0
     assert result['timed_out'] is True
 
@@ -274,11 +279,7 @@ def test_guess_retry_is_idempotent_and_stale_mutation_is_rejected(client):
     """Потерянный HTTP-ответ не двигает игру дважды и не портит новый раунд."""
     client.post('/api/game/start', json={'difficulty': 'center'})
     first = client.get('/api/game/location').get_json()
-    payload = {
-        'round_id': first['round_id'],
-        'latitude': first['latitude'],
-        'longitude': first['longitude'],
-    }
+    payload = round_body(first, latitude=first['latitude'], longitude=first['longitude'])
 
     original = client.post('/api/game/guess', json=payload)
     replay = client.post('/api/game/guess', json=payload)
@@ -289,11 +290,7 @@ def test_guess_retry_is_idempotent_and_stale_mutation_is_rejected(client):
 
     second = client.get('/api/game/location').get_json()
     assert second['round'] == 2
-    stale = client.post('/api/game/set_actual_point', json={
-        'round_id': first['round_id'],
-        'latitude': first['latitude'],
-        'longitude': first['longitude'],
-    })
+    stale = client.post('/api/game/validate_panorama', json=payload)
     assert stale.status_code == 409
 
 
@@ -304,6 +301,7 @@ def test_panorama_metric_is_saved_for_round(client, app_module):
     loc = client.get('/api/game/location').get_json()
     response = client.post('/api/game/panorama_metric', json={
         'round_id': loc['round_id'],
+        'location_version': loc['location_version'],
         'status': 'ready',
         'lookup_ms': 321,
         'ready_ms': 654,
@@ -319,9 +317,9 @@ def test_panorama_metric_is_saved_for_round(client, app_module):
 
 def test_timeout_round_without_guess(client):
     client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
-    client.get('/api/game/location')
+    first = client.get('/api/game/location').get_json()
 
-    result = client.post('/api/game/guess', json={'timed_out': True})
+    result = client.post('/api/game/guess', json=round_body(first, timed_out=True))
     assert result.status_code == 200
     data = result.get_json()
     assert data['score'] == 0
@@ -336,8 +334,10 @@ def test_timeout_round_without_guess(client):
 
 def test_guess_without_coords_and_without_timeout_rejected(client):
     client.post('/api/game/start', json={'difficulty': 'center'})
-    client.get('/api/game/location')
-    assert client.post('/api/game/guess', json={}).status_code == 400
+    first = client.get('/api/game/location').get_json()
+    response = client.post('/api/game/guess', json=round_body(first))
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'Некорректные координаты'
 
 
 # --------------------------------------------------------------------------
@@ -370,8 +370,7 @@ def test_challenge_full_flow(client, app):
     for _ in range(5):
         loc = friend.get('/api/game/location').get_json()
         friend_points.append((loc['latitude'], loc['longitude']))
-        friend.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(friend, loc)
 
     # Точки те же, что и у автора
     assert friend_points == author_points
@@ -403,9 +402,7 @@ def test_challenge_requires_completed_game(client, app):
 
 def test_results_hide_token_until_game_over(client):
     client.post('/api/game/start', json={'difficulty': 'center'})
-    loc = client.get('/api/game/location').get_json()
-    client.post('/api/game/guess',
-                json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+    guess_at_target(client, client.get('/api/game/location').get_json())
     results = client.get('/api/game/results').get_json()
     assert results['challenge_token'] is None
 
@@ -436,8 +433,9 @@ def test_player_stats(client, app):
     for _ in range(5):
         loc = second.get('/api/game/location').get_json()
         # Промахиваемся на ~3 км к северу — очки меньше максимума
-        second.post('/api/game/guess',
-                    json={'latitude': loc['latitude'] + 0.027, 'longitude': loc['longitude']})
+        second.post('/api/game/guess', json=round_body(
+            loc, latitude=loc['latitude'] + 0.027, longitude=loc['longitude'],
+        ))
 
     stats = client.get('/api/player/stats?name=Статистик').get_json()
     assert stats['games'] == 2
