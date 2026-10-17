@@ -4,17 +4,20 @@ import os
 import secrets
 import sqlite3
 import time
+import unicodedata
 from datetime import timedelta, timezone
 
 from flask import (Flask, g, render_template, jsonify, request, session,
                    send_file, send_from_directory)
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, HTTPException
 from dotenv import load_dotenv
 from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembic_stamp
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import event
+from alembic.script import ScriptDirectory
+from sqlalchemy import event, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import (db, GameSession, GameRound, VerifiedPoint, utcnow,
                     CURRENT_PANORAMA_RULES_VERSION)
@@ -43,7 +46,16 @@ def _env_bool(name, default=False):
 
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+# game_id в cookie — последовательное число, поэтому известный ключ подписи
+# позволил бы подделать cookie и играть за другого игрока. Без настоящего
+# ключа стартует только локальная отладка — со случайным ключом на процесс.
+_PLACEHOLDER_SECRET_KEYS = {'', 'your-secret-key-here', 'dev-secret-key-change-in-production'}
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+if SECRET_KEY.strip() in _PLACEHOLDER_SECRET_KEYS:
+    if not _env_bool('FLASK_DEBUG'):
+        raise RuntimeError('SECRET_KEY не задан: укажите случайный ключ в .env')
+    SECRET_KEY = secrets.token_hex(32)
+app.config['SECRET_KEY'] = SECRET_KEY
 # Брендинг переключается независимо от debug-режима: dev-сайт получает
 # экспериментальные иконки только при явном FAVICON_VARIANT=dev. Любое другое
 # значение безопасно оставляет production-набор.
@@ -69,6 +81,8 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 # mtime один worker мог отдавать закэшированный старый HTML уже с новой
 # версией CSS/JS, взятой context processor с диска.
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+# Все запросы API — короткие JSON; большее тело отклоняется до разбора.
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024
 
 # Безопасность cookie сессии.
 # На проде (HTTPS) держим Secure=True; для локальной разработки можно
@@ -91,7 +105,11 @@ ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
 METRIKA_ID = os.environ.get('METRIKA_ID', '')
 
 db.init_app(app)
-migrate = Migrate(app, db, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations'))
+MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
+migrate = Migrate(app, db, directory=MIGRATIONS_DIR)
+# Ревизия схемы, которую ожидает код этого процесса: миграции читаются при
+# импорте вместе с кодом, а не позже, когда deploy уже обновил файлы на диске.
+CODE_SCHEMA_REVISION = ScriptDirectory(MIGRATIONS_DIR).get_current_head()
 
 
 if database_uri.startswith('sqlite:'):
@@ -326,13 +344,22 @@ def _scoring_point(rnd):
     return rnd.gen_latitude, rnd.gen_longitude
 
 
+def _stale_location_error(message='Версия точки устарела'):
+    """Клиент отстал от сервера (например, потерял ответ на замену точки).
+
+    ``reason`` позволяет ему перечитать актуальную точку раунда, а не
+    показывать «проверьте соединение» на каждом повторе.
+    """
+    return jsonify({'error': message, 'reason': 'stale_location'}), 409
+
+
 def _location_version_error(data, rnd):
     """Защита от запоздавшего locate предыдущей версии того же раунда."""
     expected = _integer_field(data, 'location_version')
     if expected is None:
         return None
     if expected != (rnd.skips or 0):
-        return jsonify({'error': 'Версия точки устарела'}), 409
+        return _stale_location_error()
     return None
 
 
@@ -350,11 +377,21 @@ def _integer_field(data, name, *, minimum=0):
     return parsed
 
 
+def _player_name(value):
+    """Имя для лидерборда и журнала: одна строка без управляющих символов."""
+    name = ' '.join(str(value or '').split())
+    return ''.join(ch for ch in name if unicodedata.category(ch) != 'Cc')[:50]
+
+
 def _json_object():
     # Пустое тело сохраняет контракт start/skip старых клиентов.
     if not request.get_data():
         return {}
-    data = request.get_json(silent=True)
+    try:
+        data = request.get_json(silent=True)
+    except RecursionError:
+        # silent=True глушит только ошибки синтаксиса, а не глубину вложенности.
+        data = None
     if not isinstance(data, dict):
         raise BadRequest('Ожидается JSON-объект')
     return data
@@ -446,6 +483,27 @@ def bad_request_handler(error):
 def district_data_handler(error):
     app.logger.error('Ошибка dataset районов: %s', error)
     return jsonify({'error': 'Выбор района временно недоступен'}), 503
+
+
+API_ERROR_MESSAGES = {
+    404: 'Не найдено',
+    405: 'Метод не поддерживается',
+    413: 'Слишком большой запрос',
+    500: 'Ошибка сервера',
+}
+
+
+@app.errorhandler(HTTPException)
+def api_error_handler(error):
+    """Клиент API всегда получает JSON, в том числе на ошибки самого Flask.
+
+    Необработанное исключение Flask превращает в 500 и передаёт сюда,
+    предварительно записав traceback в журнал.
+    """
+    if not request.path.startswith('/api/'):
+        return error
+    message = API_ERROR_MESSAGES.get(error.code, error.description)
+    return jsonify({'error': message}), error.code
 
 
 @app.before_request
@@ -556,6 +614,27 @@ def index():
                            district_feature_enabled=True)
 
 
+@app.route('/healthz')
+def healthz():
+    """Проверка для deploy: БД отвечает и её схема совпадает с кодом процесса.
+
+    ``/`` не обращается к БД, поэтому сломанная миграция проходила бы его.
+    """
+    try:
+        db_revision = db.session.execute(
+            text('SELECT version_num FROM alembic_version')
+        ).scalar()
+    except SQLAlchemyError:
+        app.logger.exception('Healthcheck: база данных недоступна')
+        return jsonify({'status': 'error', 'error': 'database'}), 503
+    healthy = db_revision == CODE_SCHEMA_REVISION
+    return jsonify({
+        'status': 'ok' if healthy else 'error',
+        'db_revision': db_revision,
+        'code_revision': CODE_SCHEMA_REVISION,
+    }), 200 if healthy else 503
+
+
 @app.route('/favicon.ico')
 def favicon():
     """Фавиконка для запросов к корню сайта (браузеры/краулеры идут на /favicon.ico)."""
@@ -616,7 +695,7 @@ def start_game():
             'reason': 'client_outdated',
         }), 409
     try:
-        player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
+        player_name = _player_name(data.get('player_name')) or 'Аноним'
 
         source = None
         daily = None
@@ -746,11 +825,12 @@ def start_game():
             session['daily_game'] = {'date': daily.date.isoformat(),
                                      'game_id': game_session.id}
 
-        app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, '
-                        f'difficulty={difficulty}, time_limit={time_limit}, '
-                        f'district_id={district_id}, '
-                        f'daily={"да" if daily else "нет"}, '
-                        f'challenge={"да" if source else "нет"}')
+        app.logger.info(
+            'Игра начата: game_id=%s, player=%r, difficulty=%s, time_limit=%s, '
+            'district_id=%s, daily=%s, challenge=%s',
+            game_session.id, player_name, difficulty, time_limit, district_id,
+            'да' if daily else 'нет', 'да' if source else 'нет',
+        )
 
         response = {
             'game_id': game_session.id,
@@ -825,14 +905,19 @@ def round_ready():
         db.session.commit()
 
     started = _aware_utc(rnd.started_at)
-    deadline_ms = None
+    deadline_ms = remaining_ms = None
     if game.time_limit:
-        deadline_ms = int((started + timedelta(seconds=game.time_limit)).timestamp() * 1000)
+        deadline = started + timedelta(seconds=game.time_limit)
+        deadline_ms = int(deadline.timestamp() * 1000)
+        # Часы устройства могут расходиться с сервером на минуты: клиент
+        # отсчитывает этот остаток от своего времени, а не сравнивает epoch.
+        remaining_ms = max(0, int((deadline - utcnow()).total_seconds() * 1000))
     return jsonify({
         'success': True,
         'round_id': rnd.id,
         'started_at_ms': int(started.timestamp() * 1000),
         'deadline_ms': deadline_ms,
+        'remaining_ms': remaining_ms,
         'time_limit': game.time_limit,
     })
 
@@ -859,7 +944,7 @@ def skip_location():
             payload['replayed'] = True
             return jsonify(payload)
         if expected_version > current_version:
-            return jsonify({'error': 'Версия точки устарела'}), 409
+            return _stale_location_error()
 
     if rnd.started_at is not None:
         return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
@@ -971,7 +1056,7 @@ def continue_search():
         payload['replayed'] = True
         return jsonify(payload)
     if expected_batch != rnd.search_batch or expected_version != (rnd.skips or 0):
-        return jsonify({'error': 'Серия поиска или версия точки устарела'}), 409
+        return _stale_location_error('Серия поиска или версия точки устарела')
     if (rnd.skips or 0) < rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
         return jsonify({'error': 'Текущая серия поиска ещё не завершена'}), 409
 
@@ -1117,6 +1202,9 @@ def submit_guess():
     if rnd.answered_at is not None:
         # POST мог успешно сохраниться, а ответ — потеряться в сети. С round_id
         # повтор безопасен и возвращает тот же результат, не двигая игру снова.
+        # Он ничего не пишет, поэтому блокировку записи отпускаем до чтения
+        # статистики по всем раундам.
+        db.session.rollback()
         percentile = difficulty_percentile(*_scoring_point(rnd))
         return jsonify(_round_result_payload(
             game, rnd, replayed=True, percentile=percentile
@@ -1195,10 +1283,6 @@ def submit_guess():
 
         timed_out = client_timed_out or forced_timeout
 
-        # Фактическая сложность места по накопленной статистике промахов
-        # (None, пока раундов с этой точкой сыграно мало)
-        percentile = difficulty_percentile(actual_lat, actual_lon)
-
         rnd.guess_latitude = guess_lat
         rnd.guess_longitude = guess_lon
         rnd.distance_km = distance
@@ -1228,6 +1312,10 @@ def submit_guess():
         app.logger.exception('Ошибка при обработке догадки')
         return jsonify({'error': 'Ошибка сервера'}), 500
 
+    # Фактическая сложность места (None, пока данных мало). Запрос читает все
+    # раунды, поэтому выполняется после commit, когда блокировка записи уже
+    # отпущена; раунд игрока в ней учтён так же, как при повторе.
+    percentile = difficulty_percentile(actual_lat, actual_lon)
     return jsonify(_round_result_payload(game, rnd, percentile=percentile))
 
 
@@ -1360,7 +1448,7 @@ def challenge_info(token):
 @limiter.limit('30 per minute')
 def player_stats():
     """Статистика игрока по имени: сколько игр, лучший и средний счёт."""
-    name = (request.args.get('name') or '').strip()[:50]
+    name = _player_name(request.args.get('name'))
     if not name:
         return jsonify({'error': 'Не указано имя'}), 400
 

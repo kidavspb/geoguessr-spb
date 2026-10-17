@@ -119,6 +119,15 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         if radius is not None:
             query = query.filter(VerifiedPoint.dist_from_center_km <= radius)
 
+    if prefer_pool:
+        # Восстановление идёт сразу после неудачи. Точка, которая уже не нашла
+        # панораму и с тех пор не подтверждалась, иначе снова попала бы в тот же
+        # поиск (exclude знает только текущие точки раундов) и удалилась бы из
+        # пула за один раунд. Успешное подтверждение обнуляет счётчик.
+        query = query.filter(or_(
+            VerifiedPoint.fail_count.is_(None), VerifiedPoint.fail_count == 0,
+        ))
+
     excluded_coords = list(exclude or ())
     avoided_coords = list(avoid or ())
     pool = []

@@ -58,7 +58,7 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     def expired_deadline(route):
         response = route.fetch()
         data = response.json()
-        data['deadline_ms'] = 1
+        data['remaining_ms'] = 0
         route.fulfill(response=response, json=data)
 
     guesses = []
@@ -74,6 +74,39 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     page.wait_for_timeout(800)
     assert len(guesses) == 1
     assert guesses[0]['timed_out'] is True
+
+
+def test_answer_rejected_as_late_is_shown_as_timeout(page, server):
+    def late_answer(route):
+        response = route.fetch()
+        data = response.json()
+        data.update(timed_out=True, score=0)
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/guess', late_answer)
+    page.goto(server)
+    page.locator('#start-btn').click()
+    play_round(page)
+    expect(page.locator('#result-title')).to_have_text('Время вышло!')
+    expect(page.locator('#result-miss')).to_contain_text('после окончания времени')
+
+
+@pytest.mark.parametrize('clock_offset_ms', [90_000, -90_000])
+def test_round_timer_ignores_device_clock_offset(page, server, clock_offset_ms):
+    """Остаток считается от ответа сервера, а не от сравнения двух часов."""
+    page.add_init_script(f"""
+        const realNow = Date.now.bind(Date);
+        Date.now = () => realNow() + ({clock_offset_ms});
+    """)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    with page.expect_response('**/api/game/ready'):
+        page.locator('#start-btn').click()
+    # Несколько тиков таймера после применения ответа /ready.
+    page.wait_for_timeout(1000)
+
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#timer-value')).to_have_text(re.compile(r'^(1:00|0:5\d)$'))
 
 
 def test_admin_delete_tracks_requested_point_when_selection_changes(page, server):
@@ -105,6 +138,87 @@ def test_admin_delete_tracks_requested_point_when_selection_changes(page, server
     expect(page.locator('.admin-dot')).to_have_count(1)
     expect(page.locator('.admin-dot')).to_have_attribute('title', re.compile('#2'))
     expect(page.locator('#pi-coords')).to_contain_text('#2')
+
+
+def _start_district_game(page, server, district_id='petrogradsky'):
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option(district_id)
+    page.locator('#district-confirm-btn').click()
+    page.locator('#start-btn').click()
+
+
+def test_retry_recovers_after_lost_skip_responses(page, server):
+    """Сервер применил замену, но клиент не получил ответ: повтор синхронизирует версию."""
+    calls = {'validate': 0, 'skip': 0}
+
+    def validate(route):
+        calls['validate'] += 1
+        if calls['validate'] == 1:
+            return route.fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'valid': False, 'reason': 'outside_district'}))
+        route.fulfill(response=route.fetch())
+
+    def skip(route):
+        calls['skip'] += 1
+        response = route.fetch()  # сервер применяет замену
+        if calls['skip'] <= 2:    # попытка и повтор api.js теряют ответ
+            return route.abort()
+        route.fulfill(response=response)
+
+    page.route('**/api/game/validate_panorama', validate)
+    page.route('**/api/game/skip_location', skip)
+    _start_district_game(page, server)
+
+    retry = page.locator('#retry-panorama-btn')
+    expect(retry).to_be_visible(timeout=15000)
+    expect(page.locator('#back-to-district-btn')).to_be_visible()
+    retry.click()
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=15000)
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersActive') == 1
+
+
+def test_server_error_overlay_offers_settings(page, server):
+    page.route('**/api/game/validate_panorama', lambda route: route.fulfill(
+        status=503, content_type='application/json',
+        body=json.dumps({'error': 'Выбор района временно недоступен'})))
+    _start_district_game(page, server)
+
+    overlay = page.locator('#photo-overlay')
+    expect(overlay).to_contain_text('Выбор района временно недоступен', timeout=15000)
+    expect(page.locator('#retry-panorama-btn')).to_be_visible()
+    page.locator('#back-to-district-btn').click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+
+def test_failed_guess_map_stays_retryable_in_next_round(page, server):
+    """Без карты ответить нельзя, поэтому повтор не должен пропадать."""
+    abort_v3 = lambda route: route.abort()  # noqa: E731
+    page.route('**/api-maps.yandex.ru/v3/**', abort_v3)
+
+    def short_round(route):
+        response = route.fetch()
+        data = response.json()
+        data['remaining_ms'] = 1500
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/ready', short_round)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    page.locator('#start-btn').click()
+    hint = page.locator('#map-hint')
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'), timeout=30000)
+    expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=15000)
+
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#current-round')).to_have_text('2')
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'))
+    expect(hint).to_have_class(re.compile('map-retry'))
+
+    page.unroute('**/api-maps.yandex.ru/v3/**', abort_v3)
+    hint.click()
+    expect(hint).to_have_text('Кликни по карте, чтобы отметить место', timeout=15000)
 
 
 @pytest.mark.parametrize('sdk', ['v2', 'v3'])

@@ -1,0 +1,8 @@
+[Unit]
+Description=Notify about a failed GeoGuessr SPb deployment
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/geoguessr-deploy-notify

@@ -273,9 +273,10 @@ export function resetMapForNewRound() {
     state.guessCoords = null;
     document.getElementById('guess-btn').disabled = true;
 
-    // Возвращаем подсказку
+    // Возвращаем подсказку. Пока карты нет, на месте остаётся кнопка её
+    // повторной загрузки: без карты ответить нельзя.
     const hint = document.getElementById('map-hint');
-    if (hint) {
+    if (hint && state.map) {
         hint.textContent = 'Кликни по карте, чтобы отметить место';
         hint.classList.remove('hidden', 'map-retry');
         hint.onclick = null;
