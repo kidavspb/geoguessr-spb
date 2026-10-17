@@ -140,6 +140,57 @@ def test_admin_delete_tracks_requested_point_when_selection_changes(page, server
     expect(page.locator('#pi-coords')).to_contain_text('#2')
 
 
+def _start_district_game(page, server, district_id='petrogradsky'):
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option(district_id)
+    page.locator('#district-confirm-btn').click()
+    page.locator('#start-btn').click()
+
+
+def test_retry_recovers_after_lost_skip_responses(page, server):
+    """Сервер применил замену, но клиент не получил ответ: повтор синхронизирует версию."""
+    calls = {'validate': 0, 'skip': 0}
+
+    def validate(route):
+        calls['validate'] += 1
+        if calls['validate'] == 1:
+            return route.fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'valid': False, 'reason': 'outside_district'}))
+        route.fulfill(response=route.fetch())
+
+    def skip(route):
+        calls['skip'] += 1
+        response = route.fetch()  # сервер применяет замену
+        if calls['skip'] <= 2:    # попытка и повтор api.js теряют ответ
+            return route.abort()
+        route.fulfill(response=response)
+
+    page.route('**/api/game/validate_panorama', validate)
+    page.route('**/api/game/skip_location', skip)
+    _start_district_game(page, server)
+
+    retry = page.locator('#retry-panorama-btn')
+    expect(retry).to_be_visible(timeout=15000)
+    expect(page.locator('#back-to-district-btn')).to_be_visible()
+    retry.click()
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=15000)
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersActive') == 1
+
+
+def test_server_error_overlay_offers_settings(page, server):
+    page.route('**/api/game/validate_panorama', lambda route: route.fulfill(
+        status=503, content_type='application/json',
+        body=json.dumps({'error': 'Выбор района временно недоступен'})))
+    _start_district_game(page, server)
+
+    overlay = page.locator('#photo-overlay')
+    expect(overlay).to_contain_text('Выбор района временно недоступен', timeout=15000)
+    expect(page.locator('#retry-panorama-btn')).to_be_visible()
+    page.locator('#back-to-district-btn').click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+
 def test_failed_guess_map_stays_retryable_in_next_round(page, server):
     """Без карты ответить нельзя, поэтому повтор не должен пропадать."""
     abort_v3 = lambda route: route.abort()  # noqa: E731

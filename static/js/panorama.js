@@ -60,7 +60,9 @@ export function showLoadingOverlay(text, actions = {}) {
     clearTimeout(state.overlayTimer);
     const overlay = document.getElementById('photo-overlay');
     overlay.querySelector('span').textContent = text;
-    setOverlayActions(actions);
+    // Из любой ошибки раунда можно вернуться к настройкам без перезагрузки.
+    const recoverable = Boolean(actions.retry || actions.continueSearch);
+    setOverlayActions({ back: recoverable, ...actions });
     overlay.classList.remove('hidden');
 }
 
@@ -156,15 +158,37 @@ function metricFor(prepared, status, readyMs = null) {
  * попытку; после подтверждённого отсутствия сервер выдаёт точку восстановления
  * из пула. Сетевой сбой повторяется один раз на той же точке и не портит пул.
  */
+function skipsLeft(location) {
+    return Math.max(0,
+        (Number(location.max_location_skips) || 10) -
+        (Number(location.location_version) || 0)
+    );
+}
+
+function isStaleLocation(response) {
+    return response.status === 409 && response.data?.reason === 'stale_location';
+}
+
 async function prepareRound(initialLocation, task = null) {
     const started = performance.now();
     let location = initialLocation;
     let attempts = 0;
     let skips = 0;
-    const remainingSkips = Math.max(0,
-        (Number(initialLocation.max_location_skips) || 10) -
-        (Number(initialLocation.location_version) || 0)
-    );
+    let remainingSkips = skipsLeft(initialLocation);
+    let resyncs = 0;
+
+    // Сервер мог уже применить замену, ответ на которую потерялся: тогда
+    // версия точки у клиента устарела. Берём актуальную точку того же раунда.
+    const resyncLocation = async () => {
+        if (resyncs >= 2) return false;
+        resyncs++;
+        const current = await api.getLocation();
+        if (!current.ok || current.data?.round_id !== location.round_id) return false;
+        location = current.data;
+        remainingSkips = skipsLeft(location);
+        skips = 0;
+        return true;
+    };
 
     try {
         await ymapsV2Ready();
@@ -222,9 +246,11 @@ async function prepareRound(initialLocation, task = null) {
                         location.location_version,
                     );
                     if (!validation.ok || !validation.data) {
+                        if (isStaleLocation(validation) && await resyncLocation()) continue;
                         return {
                             ok: false,
                             status: validation.networkError ? 'network_error' : 'api_error',
+                            message: validation.data?.error,
                             location,
                             attempts,
                             lookupMs: Math.round(performance.now() - started)
@@ -291,6 +317,7 @@ async function prepareRound(initialLocation, task = null) {
             location.round_id, skipReason, location.location_version
         );
         if (!skipped.ok || !skipped.data) {
+            if (isStaleLocation(skipped) && await resyncLocation()) continue;
             if (skipped.status === 429 && skipped.data?.reason === 'search_batch_exhausted') {
                 return {
                     ok: false,
@@ -306,6 +333,7 @@ async function prepareRound(initialLocation, task = null) {
                 ok: false,
                 status: skipped.status === 429 ? 'rate_limited'
                     : skipped.networkError ? 'network_error' : 'api_error',
+                message: skipped.data?.error,
                 location,
                 attempts,
                 lookupMs: Math.round(performance.now() - started)
@@ -464,18 +492,22 @@ export async function loadPanorama(location, preloadTask = null) {
         const status = prepared ? prepared.status : 'api_error';
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
-            showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
+            showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.', { back: true });
         } else if (status === 'search_exhausted') {
             showLoadingOverlay(
                 'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',
-                { continueSearch: true, back: true }
+                { continueSearch: true }
             );
         } else if (status === 'rate_limited') {
             showLoadingOverlay('Поиск временно ограничен. Подождите минуту и повторите загрузку.',
-                               { retry: true, back: true });
-        } else {
+                               { retry: true });
+        } else if (status === 'network_error' || !prepared?.message) {
             showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
                                { retry: true });
+        } else {
+            // Ответ сервера (раунд устарел, район недоступен) честнее, чем
+            // «проверьте соединение».
+            showLoadingOverlay(prepared.message, { retry: true });
         }
         return { ok: false, status, location: prepared ? prepared.location : location };
     }

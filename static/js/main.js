@@ -680,6 +680,16 @@ async function continuePanoramaSearch() {
         if (isCurrent()) state.roundLoading = false;
     }
     if (!isCurrent()) return;
+    if (continued?.status === 409 && continued.data?.reason === 'stale_location') {
+        // Ответ на одну из замен потерялся: продолжаем с актуальной точки раунда.
+        const current = await api.getLocation();
+        if (!isCurrent()) return;
+        if (current.ok && current.data?.round_id === location.round_id) {
+            state.currentLocation = current.data;
+            loadCurrentLocation(current.data);
+            return;
+        }
+    }
     if (!continued?.ok || !continued.data) {
         // Сохраняем исходный номер серии: если ответ потерялся, повтор
         // continue_search вернёт уже выданное разрешение без нового лимита.

@@ -338,13 +338,22 @@ def _scoring_point(rnd):
     return rnd.gen_latitude, rnd.gen_longitude
 
 
+def _stale_location_error(message='Версия точки устарела'):
+    """Клиент отстал от сервера (например, потерял ответ на замену точки).
+
+    ``reason`` позволяет ему перечитать актуальную точку раунда, а не
+    показывать «проверьте соединение» на каждом повторе.
+    """
+    return jsonify({'error': message, 'reason': 'stale_location'}), 409
+
+
 def _location_version_error(data, rnd):
     """Защита от запоздавшего locate предыдущей версии того же раунда."""
     expected = _integer_field(data, 'location_version')
     if expected is None:
         return None
     if expected != (rnd.skips or 0):
-        return jsonify({'error': 'Версия точки устарела'}), 409
+        return _stale_location_error()
     return None
 
 
@@ -908,7 +917,7 @@ def skip_location():
             payload['replayed'] = True
             return jsonify(payload)
         if expected_version > current_version:
-            return jsonify({'error': 'Версия точки устарела'}), 409
+            return _stale_location_error()
 
     if rnd.started_at is not None:
         return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
@@ -1020,7 +1029,7 @@ def continue_search():
         payload['replayed'] = True
         return jsonify(payload)
     if expected_batch != rnd.search_batch or expected_version != (rnd.skips or 0):
-        return jsonify({'error': 'Серия поиска или версия точки устарела'}), 409
+        return _stale_location_error('Серия поиска или версия точки устарела')
     if (rnd.skips or 0) < rnd.search_batch * MAX_SKIPS_PER_SEARCH_BATCH:
         return jsonify({'error': 'Текущая серия поиска ещё не завершена'}), 409
 

@@ -135,6 +135,24 @@ def test_time_limit_boundary_includes_grace(client, app_module, elapsed, timed_o
     assert (result['score'] == 0) is timed_out
 
 
+@pytest.mark.parametrize('endpoint', ['validate_panorama', 'ready', 'guess', 'skip_location'])
+def test_stale_location_version_is_marked_for_resync(client, endpoint):
+    """Клиент, потерявший ответ на замену, должен понять, что надо перечитать точку."""
+    location = _start(client)
+    client.post('/api/game/skip_location', json={
+        'round_id': location['round_id'], 'location_version': 0, 'reason': 'no_coverage',
+    })
+    stale_version = 5 if endpoint == 'skip_location' else 0
+    response = client.post(f'/api/game/{endpoint}', json={
+        'round_id': location['round_id'],
+        'location_version': stale_version,
+        'latitude': location['latitude'],
+        'longitude': location['longitude'],
+    })
+    assert response.status_code == 409
+    assert response.get_json()['reason'] == 'stale_location'
+
+
 def test_location_after_last_round_reports_game_over(client):
     location = _start(client)
     for _ in range(game_logic.ROUNDS_PER_GAME):
