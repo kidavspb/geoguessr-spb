@@ -4,12 +4,13 @@ import os
 import secrets
 import sqlite3
 import time
+import unicodedata
 from datetime import timedelta, timezone
 
 from flask import (Flask, g, render_template, jsonify, request, session,
                    send_file, send_from_directory)
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, HTTPException
 from dotenv import load_dotenv
 from flask_migrate import Migrate, upgrade as _alembic_upgrade, stamp as _alembic_stamp
 from flask_limiter import Limiter
@@ -43,7 +44,16 @@ def _env_bool(name, default=False):
 
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+# game_id в cookie — последовательное число, поэтому известный ключ подписи
+# позволил бы подделать cookie и играть за другого игрока. Без настоящего
+# ключа стартует только локальная отладка — со случайным ключом на процесс.
+_PLACEHOLDER_SECRET_KEYS = {'', 'your-secret-key-here', 'dev-secret-key-change-in-production'}
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+if SECRET_KEY.strip() in _PLACEHOLDER_SECRET_KEYS:
+    if not _env_bool('FLASK_DEBUG'):
+        raise RuntimeError('SECRET_KEY не задан: укажите случайный ключ в .env')
+    SECRET_KEY = secrets.token_hex(32)
+app.config['SECRET_KEY'] = SECRET_KEY
 # Брендинг переключается независимо от debug-режима: dev-сайт получает
 # экспериментальные иконки только при явном FAVICON_VARIANT=dev. Любое другое
 # значение безопасно оставляет production-набор.
@@ -69,6 +79,8 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 # mtime один worker мог отдавать закэшированный старый HTML уже с новой
 # версией CSS/JS, взятой context processor с диска.
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+# Все запросы API — короткие JSON; большее тело отклоняется до разбора.
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024
 
 # Безопасность cookie сессии.
 # На проде (HTTPS) держим Secure=True; для локальной разработки можно
@@ -350,11 +362,21 @@ def _integer_field(data, name, *, minimum=0):
     return parsed
 
 
+def _player_name(value):
+    """Имя для лидерборда и журнала: одна строка без управляющих символов."""
+    name = ' '.join(str(value or '').split())
+    return ''.join(ch for ch in name if unicodedata.category(ch) != 'Cc')[:50]
+
+
 def _json_object():
     # Пустое тело сохраняет контракт start/skip старых клиентов.
     if not request.get_data():
         return {}
-    data = request.get_json(silent=True)
+    try:
+        data = request.get_json(silent=True)
+    except RecursionError:
+        # silent=True глушит только ошибки синтаксиса, а не глубину вложенности.
+        data = None
     if not isinstance(data, dict):
         raise BadRequest('Ожидается JSON-объект')
     return data
@@ -446,6 +468,27 @@ def bad_request_handler(error):
 def district_data_handler(error):
     app.logger.error('Ошибка dataset районов: %s', error)
     return jsonify({'error': 'Выбор района временно недоступен'}), 503
+
+
+API_ERROR_MESSAGES = {
+    404: 'Не найдено',
+    405: 'Метод не поддерживается',
+    413: 'Слишком большой запрос',
+    500: 'Ошибка сервера',
+}
+
+
+@app.errorhandler(HTTPException)
+def api_error_handler(error):
+    """Клиент API всегда получает JSON, в том числе на ошибки самого Flask.
+
+    Необработанное исключение Flask превращает в 500 и передаёт сюда,
+    предварительно записав traceback в журнал.
+    """
+    if not request.path.startswith('/api/'):
+        return error
+    message = API_ERROR_MESSAGES.get(error.code, error.description)
+    return jsonify({'error': message}), error.code
 
 
 @app.before_request
@@ -616,7 +659,7 @@ def start_game():
             'reason': 'client_outdated',
         }), 409
     try:
-        player_name = (str(data.get('player_name') or 'Аноним')).strip()[:50] or 'Аноним'
+        player_name = _player_name(data.get('player_name')) or 'Аноним'
 
         source = None
         daily = None
@@ -746,11 +789,12 @@ def start_game():
             session['daily_game'] = {'date': daily.date.isoformat(),
                                      'game_id': game_session.id}
 
-        app.logger.info(f'Игра начата: game_id={game_session.id}, player={player_name}, '
-                        f'difficulty={difficulty}, time_limit={time_limit}, '
-                        f'district_id={district_id}, '
-                        f'daily={"да" if daily else "нет"}, '
-                        f'challenge={"да" if source else "нет"}')
+        app.logger.info(
+            'Игра начата: game_id=%s, player=%r, difficulty=%s, time_limit=%s, '
+            'district_id=%s, daily=%s, challenge=%s',
+            game_session.id, player_name, difficulty, time_limit, district_id,
+            'да' if daily else 'нет', 'да' if source else 'нет',
+        )
 
         response = {
             'game_id': game_session.id,
@@ -1360,7 +1404,7 @@ def challenge_info(token):
 @limiter.limit('30 per minute')
 def player_stats():
     """Статистика игрока по имени: сколько игр, лучший и средний счёт."""
-    name = (request.args.get('name') or '').strip()[:50]
+    name = _player_name(request.args.get('name'))
     if not name:
         return jsonify({'error': 'Не указано имя'}), 400
 
