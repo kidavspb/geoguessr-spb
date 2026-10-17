@@ -188,10 +188,11 @@ git merge --ff-only origin/main
 
 ```bash
 # разработка
-
-venv/bin/flask db upgrade
-systemctl restart geoguessr.service
 venv/bin/pytest -q
+
+# только если задача включает развёртывание на DEV:
+AUTO_MIGRATE=false venv/bin/flask --app app.py db upgrade
+systemctl restart geoguessr.service
 
 git status
 git diff
