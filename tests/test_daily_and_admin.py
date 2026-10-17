@@ -122,6 +122,7 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
     from pool import mark_point_failed
     with app_module.app.app_context():
         mark_point_failed(lat, lon)
+        db.session.commit()
         assert VerifiedPoint.query.count() == 0
 
 

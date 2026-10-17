@@ -206,11 +206,12 @@ def test_choose_round_points_uses_pool(app, app_module, monkeypatch):
 
         # random() < POOL_USE_PROBABILITY всегда → каждая точка берётся из пула
         monkeypatch.setattr('random.random', lambda: 0.0)
-        points = pool.choose_round_points('center', 5)
+        points = pool.choose_round_candidates('center', 5)
 
     assert len(points) == 5
-    for p in points:
-        assert p in seeded
+    for lat, lon, source in points:
+        assert (lat, lon) in seeded
+        assert source == 'pool'
 
 
 def test_regular_games_keep_exploring_new_places(app, app_module, monkeypatch):
@@ -235,9 +236,9 @@ def test_regular_games_keep_exploring_new_places(app, app_module, monkeypatch):
 
 def test_choose_round_points_generates_when_pool_small(app, app_module):
     with app.app_context():
-        points = pool.choose_round_points('center', 5)
+        points = pool.choose_round_candidates('center', 5)
     assert len(points) == 5
-    for lat, lon in points:
+    for lat, lon, _source in points:
         assert game_logic.SPB_BOUNDS['lat_min'] <= lat <= game_logic.SPB_BOUNDS['lat_max']
 
 

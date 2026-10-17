@@ -27,7 +27,7 @@ def test_calculate_score_bounds():
     max_score = game_logic.MAX_SCORE_PER_ROUND
     assert game_logic.calculate_score(0) == max_score          # точно в цель
     assert game_logic.calculate_score(0.04) == max_score       # в пределах 50 м
-    assert game_logic.calculate_score(game_logic.MAX_DISTANCE_KM) == 0
+    assert game_logic.calculate_score(30) == 0
     assert game_logic.calculate_score(1000) == 0               # очень далеко
     mid = game_logic.calculate_score(3)
     assert 0 < mid < max_score
