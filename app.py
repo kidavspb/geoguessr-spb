@@ -1175,6 +1175,9 @@ def submit_guess():
     if rnd.answered_at is not None:
         # POST мог успешно сохраниться, а ответ — потеряться в сети. С round_id
         # повтор безопасен и возвращает тот же результат, не двигая игру снова.
+        # Он ничего не пишет, поэтому блокировку записи отпускаем до чтения
+        # статистики по всем раундам.
+        db.session.rollback()
         percentile = difficulty_percentile(*_scoring_point(rnd))
         return jsonify(_round_result_payload(
             game, rnd, replayed=True, percentile=percentile
@@ -1253,10 +1256,6 @@ def submit_guess():
 
         timed_out = client_timed_out or forced_timeout
 
-        # Фактическая сложность места по накопленной статистике промахов
-        # (None, пока раундов с этой точкой сыграно мало)
-        percentile = difficulty_percentile(actual_lat, actual_lon)
-
         rnd.guess_latitude = guess_lat
         rnd.guess_longitude = guess_lon
         rnd.distance_km = distance
@@ -1286,6 +1285,10 @@ def submit_guess():
         app.logger.exception('Ошибка при обработке догадки')
         return jsonify({'error': 'Ошибка сервера'}), 500
 
+    # Фактическая сложность места (None, пока данных мало). Запрос читает все
+    # раунды, поэтому выполняется после commit, когда блокировка записи уже
+    # отпущена; раунд игрока в ней учтён так же, как при повторе.
+    percentile = difficulty_percentile(actual_lat, actual_lon)
     return jsonify(_round_result_payload(game, rnd, percentile=percentile))
 
 

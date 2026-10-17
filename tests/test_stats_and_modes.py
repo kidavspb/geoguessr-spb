@@ -50,6 +50,60 @@ def test_difficulty_percentile(app, app_module):
 
 
 
+def _seed_easy_place_with_harder_background(app_module, lat, lon):
+    _seed_point_with_misses(app_module, lat, lon, [1.0] * 3)
+    for i in range(3):
+        _seed_point_with_misses(
+            app_module, lat + (i + 1) * 0.02, lon + 0.02, [2.0] * 3,
+        )
+
+
+def test_replayed_guess_returns_the_same_percentile(client, app_module):
+    location = client.post('/api/game/start', json={'difficulty': 'center'}).get_json()['location']
+    _seed_easy_place_with_harder_background(
+        app_module, location['latitude'], location['longitude'],
+    )
+    # Промах ~20 км делает место самым сложным, но только если раунд игрока
+    # учтён: до исправления первый ответ его не учитывал, а повтор — учитывал.
+    body = {
+        'round_id': location['round_id'],
+        'location_version': 0,
+        'latitude': location['latitude'] + 0.18,
+        'longitude': location['longitude'],
+        # Клиент всегда присылает позицию открытой панорамы вместе с ответом.
+        'panorama_latitude': location['latitude'],
+        'panorama_longitude': location['longitude'],
+    }
+    first = client.post('/api/game/guess', json=body).get_json()
+    replay = client.post('/api/game/guess', json=body).get_json()
+    assert replay['replayed'] is True
+    assert first['difficulty_percentile'] == replay['difficulty_percentile'] == 100
+
+
+def test_percentile_is_computed_without_holding_the_write_lock(client, app_module, monkeypatch):
+    """Полный GROUP BY по раундам не должен держать блокировку записи SQLite."""
+    from models import db
+
+    holds_write_lock = []
+
+    def spy(lat, lon):
+        raw = db.session.connection().connection.dbapi_connection
+        holds_write_lock.append(raw.in_transaction)
+        return None
+
+    monkeypatch.setattr(app_module, 'difficulty_percentile', spy)
+    location = client.post('/api/game/start', json={'difficulty': 'center'}).get_json()['location']
+    body = {
+        'round_id': location['round_id'],
+        'location_version': 0,
+        'latitude': location['latitude'],
+        'longitude': location['longitude'],
+    }
+    client.post('/api/game/guess', json=body)
+    client.post('/api/game/guess', json=body)  # повтор после потерянного ответа
+    assert holds_write_lock == [False, False]
+
+
 def test_guess_returns_difficulty_percentile(client, app_module):
     client.post('/api/game/start', json={'difficulty': 'center'})
     loc = client.get('/api/game/location').get_json()
