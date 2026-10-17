@@ -58,7 +58,7 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     def expired_deadline(route):
         response = route.fetch()
         data = response.json()
-        data['deadline_ms'] = 1
+        data['remaining_ms'] = 0
         route.fulfill(response=response, json=data)
 
     guesses = []
@@ -74,6 +74,39 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     page.wait_for_timeout(800)
     assert len(guesses) == 1
     assert guesses[0]['timed_out'] is True
+
+
+def test_answer_rejected_as_late_is_shown_as_timeout(page, server):
+    def late_answer(route):
+        response = route.fetch()
+        data = response.json()
+        data.update(timed_out=True, score=0)
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/guess', late_answer)
+    page.goto(server)
+    page.locator('#start-btn').click()
+    play_round(page)
+    expect(page.locator('#result-title')).to_have_text('Время вышло!')
+    expect(page.locator('#result-miss')).to_contain_text('после окончания времени')
+
+
+@pytest.mark.parametrize('clock_offset_ms', [90_000, -90_000])
+def test_round_timer_ignores_device_clock_offset(page, server, clock_offset_ms):
+    """Остаток считается от ответа сервера, а не от сравнения двух часов."""
+    page.add_init_script(f"""
+        const realNow = Date.now.bind(Date);
+        Date.now = () => realNow() + ({clock_offset_ms});
+    """)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    with page.expect_response('**/api/game/ready'):
+        page.locator('#start-btn').click()
+    # Несколько тиков таймера после применения ответа /ready.
+    page.wait_for_timeout(1000)
+
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#timer-value')).to_have_text(re.compile(r'^(1:00|0:5\d)$'))
 
 
 def test_admin_delete_tracks_requested_point_when_selection_changes(page, server):

@@ -92,6 +92,27 @@ def test_ready_deadline_is_started_plus_limit_and_stable(client):
     assert again['deadline_ms'] == first['deadline_ms']
 
 
+@pytest.mark.parametrize('elapsed, expected_remaining_s', [(0, 60), (25, 35), (90, 0)])
+def test_ready_reports_remaining_time(client, app_module, elapsed, expected_remaining_s):
+    """Клиент считает остаток своими часами, поэтому сервер отдаёт длительность."""
+    location = _start(client, time_limit=60)
+    body = {'round_id': location['round_id'], 'location_version': 0}
+    client.post('/api/game/ready', json=body)
+    if elapsed:
+        _shift_round_start(app_module, location['round_id'], elapsed)
+
+    remaining_ms = client.post('/api/game/ready', json=body).get_json()['remaining_ms']
+    assert abs(remaining_ms - expected_remaining_s * 1000) < 2000
+
+
+def test_ready_without_time_limit_has_no_remaining_time(client):
+    location = _start(client)
+    data = client.post('/api/game/ready', json={
+        'round_id': location['round_id'], 'location_version': 0,
+    }).get_json()
+    assert data['remaining_ms'] is None
+
+
 # Запас задан литералом: тест должен заметить изменение самой константы.
 @pytest.mark.parametrize('elapsed, timed_out', [
     (60 + 20 - 3, False),

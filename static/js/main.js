@@ -614,13 +614,16 @@ async function loadCurrentLocation(locationOverride = null) {
         startRoundTimer(loaded.deadlineMs);
         if (loaded.readyPromise) {
             loaded.readyPromise.then(ready => {
-                const serverDeadline = ready && ready.ok && ready.data
-                    ? ready.data.deadline_ms : null;
-                if (serverDeadline && state.roundInteractive && !state.guessSubmitting &&
+                // Остаток, а не серверный epoch: часы устройства могут
+                // отличаться от серверных на минуты.
+                const remainingMs = ready && ready.ok && ready.data
+                    ? ready.data.remaining_ms : null;
+                if (Number.isFinite(remainingMs) && state.roundInteractive &&
+                        !state.guessSubmitting &&
                         loaded.loadId === state.roundLoadId &&
                         state.currentRoundId === loaded.location.round_id &&
                         document.getElementById('game-screen').classList.contains('active')) {
-                    startRoundTimer(serverDeadline);
+                    startRoundTimer(Date.now() + remainingMs);
                 }
             });
         }
@@ -697,7 +700,7 @@ async function continuePanoramaSearch() {
 // Таймер раунда
 // --------------------------------------------------------------------------
 
-function startRoundTimer(serverDeadlineMs = null) {
+function startRoundTimer(deadlineMs = null) {
     stopRoundTimer();
     const chip = document.getElementById('timer-chip');
     if (!gameData.timeLimit) {
@@ -707,11 +710,11 @@ function startRoundTimer(serverDeadlineMs = null) {
         return;
     }
 
-    state.roundDeadline = serverDeadlineMs || (Date.now() + gameData.timeLimit * 1000);
+    state.roundDeadline = deadlineMs || (Date.now() + gameData.timeLimit * 1000);
     state.lastTimerSecond = null;
     chip.classList.remove('hidden', 'timer-low');
     state.roundTimerInterval = setInterval(updateTimerDisplay, 250);
-    // Уже истёкший серверный deadline может синхронно остановить интервал.
+    // Уже истёкший по ответу сервера остаток может синхронно остановить интервал.
     updateTimerDisplay();
 }
 
@@ -876,6 +879,10 @@ function showRoundResult(data) {
             : `${data.distance_km} км`;
         missBlock.innerHTML = 'Ты промахнулся на <span class="miss-distance" id="result-distance"></span> от точки съёмки';
         document.getElementById('result-distance').textContent = distanceText;
+        if (data.timed_out) {
+            // Сервер не засчитал ответ, пришедший после лимита и запаса.
+            missBlock.append(', но ответ пришёл после окончания времени');
+        }
     } else {
         missBlock.textContent = 'Время вышло — точка так и не была отмечена';
     }
@@ -887,7 +894,7 @@ function showRoundResult(data) {
 
     // Заголовок результата
     const title = document.getElementById('result-title');
-    if (data.timed_out && !data.guess) {
+    if (data.timed_out) {
         title.textContent = 'Время вышло!';
     } else if (data.score >= 4500) {
         title.textContent = 'В яблочко!';

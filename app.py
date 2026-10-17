@@ -869,14 +869,19 @@ def round_ready():
         db.session.commit()
 
     started = _aware_utc(rnd.started_at)
-    deadline_ms = None
+    deadline_ms = remaining_ms = None
     if game.time_limit:
-        deadline_ms = int((started + timedelta(seconds=game.time_limit)).timestamp() * 1000)
+        deadline = started + timedelta(seconds=game.time_limit)
+        deadline_ms = int(deadline.timestamp() * 1000)
+        # Часы устройства могут расходиться с сервером на минуты: клиент
+        # отсчитывает этот остаток от своего времени, а не сравнивает epoch.
+        remaining_ms = max(0, int((deadline - utcnow()).total_seconds() * 1000))
     return jsonify({
         'success': True,
         'round_id': rnd.id,
         'started_at_ms': int(started.timestamp() * 1000),
         'deadline_ms': deadline_ms,
+        'remaining_ms': remaining_ms,
         'time_limit': game.time_limit,
     })
 
