@@ -46,9 +46,9 @@ export const state = {
     resultRoundId: null,   // защита результата от запоздавшего геокодера
     leaderboardLoadId: 0, // быстрые фильтры не дают старому ответу перерисовать топ
 
-    gameData: {
-        totalRounds: 5,
-        totalScore: 0,
+    // Выбор игрока на стартовом экране; уходит в /start обычной игры.
+    // Вызов дня и челлендж его не меняют: их правила фиксированы сервером.
+    settings: {
         // Tagged union территории: districtId непустой только при district.
         difficulty: 'medium', // center, medium, hard, district
         standardDifficulty: 'medium', // позиция приглушённой шкалы при district
@@ -56,9 +56,22 @@ export const state = {
         districtName: null,
         timeLimit: 0,         // секунд на раунд, 0 — без лимита
         noMove: false,        // режим «без перемещения»
-        challengeToken: null, // токен челленджа из ссылки-вызова
-        daily: false          // игра — ежедневный вызов
     },
+
+    // Параметры текущей игры — из ответа /start.
+    game: {
+        totalRounds: 5,
+        totalScore: 0,
+        difficulty: 'medium',
+        districtId: null,
+        timeLimit: 0,
+        noMove: false,
+        daily: false,
+    },
+
+    challengeToken: null, // токен челленджа из ссылки-вызова
+    finalResults: null,   // итоги последней игры: к ним возвращается «Назад» из топа
+    leaderboardFromFinal: false,
 
     // Фильтры таблицы лидеров
     // Район сохраняется при смене режима/периода только внутри таблицы лидеров.

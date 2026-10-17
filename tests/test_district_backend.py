@@ -652,3 +652,17 @@ def test_legacy_hard_challenge_with_stored_outside_point_remains_playable(
         'panorama_longitude': outside_city[1],
     })
     assert guessed.status_code == 200
+
+
+def test_challenge_of_unavailable_district_is_marked(client, app):
+    from models import GameSession, db, utcnow
+    with app.app_context():
+        db.session.add(GameSession(
+            player_name='Автор', difficulty='district', district_id='removed-district',
+            current_round=5, completed_at=utcnow(), challenge_token='old-district-token',
+        ))
+        db.session.commit()
+
+    response = client.post('/api/game/start', json={'challenge_token': 'old-district-token'})
+    assert response.status_code == 409
+    assert response.get_json()['reason'] == 'challenge_district_unavailable'

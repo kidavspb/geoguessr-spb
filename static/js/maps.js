@@ -85,8 +85,8 @@ export function ymapsV3Ready() {
 
 /** Постоянный начальный вид территории, без привязки к ответу раунда. */
 function initialGuessMapLocation() {
-    const view = state.gameData.difficulty === 'district'
-        ? DISTRICT_MAP_VIEWS[state.gameData.districtId] : null;
+    const view = state.game.difficulty === 'district'
+        ? DISTRICT_MAP_VIEWS[state.game.districtId] : null;
     if (view) return { center: [...view.center], zoom: view.zoom };
     return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
 }

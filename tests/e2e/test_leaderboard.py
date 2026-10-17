@@ -206,6 +206,8 @@ def test_completed_district_game_opens_its_own_leaderboard(page, server):
             response.request, difficulty='district', district_id='kronshtadtsky')):
         page.locator('#lb-district-select').select_option('kronshtadtsky')
     page.locator('#back-btn').click()
+    expect(page.locator('#final-screen')).to_have_class(re.compile('active'))
+    page.locator('#home-btn').click()
     expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
     expect(page.locator('#territory-value')).to_have_text('Петроградский район')
     page.locator('#district-picker-btn').click()
@@ -248,7 +250,13 @@ def test_completed_game_opens_matching_leaderboard_and_home_keeps_all(page, serv
             .to_have_class(re.compile('active'))
     expect(page.locator('#leaderboard-table')).to_contain_text(player_name)
 
+    # «Назад» возвращает к итогам игры, а не теряет их.
     page.locator('#back-btn').click()
+    expect(page.locator('#final-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#rounds-summary .round-item')).to_have_count(5)
+    expect(page.locator('#challenge-btn')).to_be_visible()
+
+    page.locator('#home-btn').click()
     with page.expect_request(lambda request: _is_board(request)
                              and not _query(request.url)):
         page.locator('#show-leaderboard-btn').click()

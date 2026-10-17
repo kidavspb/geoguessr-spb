@@ -754,11 +754,17 @@ def start_game():
             GameSession.completed_at.isnot(None),
         ).first()
         if source is None:
-            return jsonify({'error': 'Челлендж не найден или игра ещё не завершена'}), 404
+            return jsonify({
+                'error': 'Челлендж не найден или игра ещё не завершена',
+                'reason': 'challenge_not_found',
+            }), 404
         difficulty = source.difficulty
         district_id = source.district_id if difficulty == DISTRICT_MODE else None
         if difficulty == DISTRICT_MODE and not is_valid_district_id(district_id):
-            return jsonify({'error': 'Район исходного челленджа больше недоступен'}), 409
+            return jsonify({
+                'error': 'Район исходного челленджа больше недоступен',
+                'reason': 'challenge_district_unavailable',
+            }), 409
         if difficulty == DISTRICT_MODE:
             district_map()
         time_limit = source.time_limit

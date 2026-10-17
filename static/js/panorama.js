@@ -537,8 +537,8 @@ export async function loadPanorama(location, preloadTask = null) {
             location: prepared.location,
             // Сеть не держит уже интерактивный экран. Клиент начинает отсчёт
             // от первого кадра, а Promise ниже уточнит его серверным временем.
-            deadlineMs: state.gameData.timeLimit
-                ? Date.now() + state.gameData.timeLimit * 1000 : null,
+            deadlineMs: state.game.timeLimit
+                ? Date.now() + state.game.timeLimit * 1000 : null,
             readyPromise,
             loadId,
             readyMs
@@ -555,7 +555,7 @@ export async function loadPanorama(location, preloadTask = null) {
 
 function startNoMoveWatchdog() {
     stopNoMoveWatchdog();
-    if (!state.gameData.noMove || !state.panoramaPlayer) return;
+    if (!state.game.noMove || !state.panoramaPlayer) return;
     if (state.panoramaPlayer.events) {
         state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
     }

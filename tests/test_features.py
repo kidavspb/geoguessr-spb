@@ -387,6 +387,7 @@ def test_challenge_unknown_token(client):
     assert client.get('/api/challenge/nope').status_code == 404
     resp = client.post('/api/game/start', json={'challenge_token': 'nope'})
     assert resp.status_code == 404
+    assert resp.get_json()['reason'] == 'challenge_not_found'
 
 
 def test_challenge_requires_completed_game(client, app):

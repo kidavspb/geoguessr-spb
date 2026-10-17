@@ -87,7 +87,7 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     standard = page.evaluate("""async () => {
         const { state, SPB_CENTER, DEFAULT_ZOOM } = await import('/static/js/state.js');
         const { resetMapForNewRound } = await import('/static/js/maps.js');
-        state.gameData.difficulty = 'medium';
+        state.game.difficulty = 'medium';
         resetMapForNewRound();
         return {
             actual: JSON.parse(document.getElementById('map').dataset.mapLocation),
@@ -110,8 +110,8 @@ def test_district_map_views_are_stable_inside_each_territory(page, server):
         const views = {};
         for (const option of document.querySelectorAll('#district-list option[value]')) {
             if (!option.value) continue;
-            state.gameData.difficulty = 'district';
-            state.gameData.districtId = option.value;
+            state.game.difficulty = 'district';
+            state.game.districtId = option.value;
             // Ни границы, ни расположение игровой панорамы не определяют preset.
             state.actualPoint = [0, 0];
             resetMapForNewRound();
