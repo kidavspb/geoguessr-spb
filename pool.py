@@ -1,6 +1,6 @@
 """Пул проверенных точек — мест, где панорама Яндекса точно существует.
 
-Пополняется из validate_panorama и guess (set_actual_point — старый API).
+Пополняется из validate_panorama и guess.
 Клиентские координаты ограничены серверной точкой и выбранной территорией;
 это базовая проверка, а не подтверждение панорамы независимым источником.
 """
@@ -28,7 +28,7 @@ POOL_MIN_SIZE = 15
 POOL_USE_PROBABILITY = 0.7
 # Максимальное расстояние точки пула от центра для прежних центральных режимов.
 # Hard отбирается отдельно по предвычисленному district_id.
-POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5, 'hard': None}
+POOL_RADIUS_KM = {'center': 3.0, 'medium': 6.5}
 # Исторический охват пула остаётся неизменным для center/medium.
 LEGACY_POOL_BOUNDS = {
     'lat_min': SPB_BOUNDS['lat_min'] - 0.01,
@@ -48,30 +48,21 @@ def _point_by_coords(lat, lon):
     ).first()
 
 
-def mark_point_failed(lat, lon, *, commit=True):
+def mark_point_failed(lat, lon):
     """Панорама у точки не нашлась: считаем неудачи, на пороге удаляем.
 
     Вызывается при перегенерации точки раунда — если исходная точка была
     из пула, значит панорама там пропала (Яндекс иногда убирает съёмку).
+    Изменение коммитит вызывающий вместе со сменой точки раунда.
     """
-    try:
-        point = _point_by_coords(lat, lon)
-        if point is None:
-            return
-        point.fail_count = (point.fail_count or 0) + 1
-        if point.fail_count >= POOL_MAX_FAILS:
-            db.session.delete(point)
-            logger.info('Точка пула удалена после %d неудач: %.5f, %.5f',
-                        POOL_MAX_FAILS, lat, lon)
-        if commit:
-            db.session.commit()
-    except SQLAlchemyError:
-        if not commit:
-            # Внешняя транзакция владеет также сменой точки и lock игры.
-            # Нельзя молча откатить её и продолжить skip без защиты от гонок.
-            raise
-        db.session.rollback()
-        logger.warning('Не удалось обновить статус точки пула', exc_info=True)
+    point = _point_by_coords(lat, lon)
+    if point is None:
+        return
+    point.fail_count = (point.fail_count or 0) + 1
+    if point.fail_count >= POOL_MAX_FAILS:
+        db.session.delete(point)
+        logger.info('Точка пула удалена после %d неудач: %.5f, %.5f',
+                    POOL_MAX_FAILS, lat, lon)
 
 
 def choose_round_candidates(difficulty, count, *, district_id=None,
@@ -195,12 +186,6 @@ def choose_round_candidates(difficulty, count, *, district_id=None,
         points.append((lat, lon, source))
         excluded_coords.append((lat, lon))
     return points
-
-
-def choose_round_points(difficulty, count, **kwargs):
-    """Координаты для общего набора daily, без диагностического source."""
-    return [(lat, lon) for lat, lon, _source in
-            choose_round_candidates(difficulty, count, **kwargs)]
 
 
 def add_verified_point(lat, lon):

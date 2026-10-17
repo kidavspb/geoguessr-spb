@@ -87,7 +87,7 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     standard = page.evaluate("""async () => {
         const { state, SPB_CENTER, DEFAULT_ZOOM } = await import('/static/js/state.js');
         const { resetMapForNewRound } = await import('/static/js/maps.js');
-        state.gameData.difficulty = 'medium';
+        state.game.difficulty = 'medium';
         resetMapForNewRound();
         return {
             actual: JSON.parse(document.getElementById('map').dataset.mapLocation),
@@ -110,15 +110,13 @@ def test_district_map_views_are_stable_inside_each_territory(page, server):
         const views = {};
         for (const option of document.querySelectorAll('#district-list option[value]')) {
             if (!option.value) continue;
-            state.gameData.difficulty = 'district';
-            state.gameData.districtId = option.value;
+            state.game.difficulty = 'district';
+            state.game.districtId = option.value;
             // Ни границы, ни расположение игровой панорамы не определяют preset.
-            state.gameData.districtBounds = null;
             state.actualPoint = [0, 0];
             resetMapForNewRound();
             const first = document.getElementById('map').dataset.mapLocation;
             state.actualPoint = [80, 150];
-            state.gameData.currentRound = 5;
             resetMapForNewRound();
             views[option.value] = {
                 first: JSON.parse(first),
@@ -879,32 +877,12 @@ def test_settings_have_styled_initial_render_without_javascript(browser, server)
         context.close()
 
 
-def test_missing_settings_component_does_not_abort_other_controls(page, server):
-    """Несовместимый/опциональный блок не обрушает инициализацию соседних."""
-    page_errors = []
-    page.on('pageerror', lambda error: page_errors.append(str(error)))
-    page.add_init_script("""
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('difficulty-group')?.remove();
-        }, { once: true });
-    """)
-    page.goto(server)
-
-    page.get_by_text('1 мин', exact=True).click()
-    expect(page.get_by_role('radio', name='1 мин')).to_be_checked()
-    movement = page.get_by_role('switch')
-    movement.click()
-    expect(movement).not_to_be_checked()
-    expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
-    assert page_errors == []
-
-
 def test_full_game_flow(page, server):
     # Первый location приходит прямо из /start, последующие — из ответа guess.
     # Отдельные GET больше не нужны; их появление означает потерю prefetch-задачи.
     location_requests = []
     page.on('request', lambda req: location_requests.append(req.url)
-            if '/api/game/location' in req.url and 'peek' not in req.url else None)
+            if '/api/game/location' in req.url else None)
 
     page.goto(server)
     expect(page).to_have_title(re.compile('Петербургский следопыт'))
@@ -1206,7 +1184,7 @@ def test_standard_skip_limit_still_has_settings_action(page, server):
     """После предела поиска обычная игра тоже не остаётся без действий."""
     page.add_init_script('window.__ymapsEmptyLocateCount = 100')
     page.route('**/api/game/skip_location', lambda route: route.fulfill(
-        status=429,
+        status=409,
         content_type='application/json',
         body='{"error":"Серия поиска завершена","reason":"search_batch_exhausted"}',
     ))

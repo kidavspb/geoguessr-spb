@@ -3,13 +3,12 @@ import random
 import pytest
 from shapely import coverage_union_all
 from shapely.geometry import MultiPolygon, Point, Polygon
-from shapely.prepared import prep
 
 import districts
 from districts import (
-    CityTerritory,
     DISTRICT_IDS,
     District,
+    Territory,
     city_territory,
     district_for_point,
     district_map,
@@ -20,10 +19,14 @@ from districts import (
 )
 
 
+def _parts(geometry):
+    return tuple(geometry.geoms) if hasattr(geometry, 'geoms') else (geometry,)
+
+
 def test_public_spatial_helpers_are_boundary_inclusive_and_exclude_holes():
     district = district_map()['krasnoselsky']
     polygon_with_hole = next(
-        polygon for polygon in district.components if polygon.interiors
+        polygon for polygon in _parts(district.geometry) if polygon.interiors
     )
 
     outer_boundary = Point(polygon_with_hole.exterior.coords[0])
@@ -47,11 +50,12 @@ def test_city_territory_is_cached_union_with_disconnected_islands_and_hole():
     assert territory is city_territory()
     assert territory.geometry.equals(expected)
     assert territory.geometry.geom_type == 'MultiPolygon'
-    assert len(territory.components) == 17
-    assert sum(len(component.interiors) for component in territory.components) == 1
+    components = _parts(territory.geometry)
+    assert len(components) == 17
+    assert sum(len(component.interiors) for component in components) == 1
 
     # Даже самые маленькие disconnected-компоненты derived union не теряются.
-    for component in territory.components:
+    for component in components:
         representative = component.representative_point()
         assert point_in_city(representative.y, representative.x)
 
@@ -81,10 +85,7 @@ def test_classifier_has_stable_semantics_for_boundary_and_unassigned_points():
                 yield from coordinate_points(part)
         elif hasattr(geometry, 'coords'):
             for longitude, latitude in geometry.coords:
-                # Match the classifier cache key exactly; canonical vertices
-                # have at most six decimal places, so this keeps them on the
-                # shared boundary instead of testing a near-boundary float.
-                yield Point(round(longitude, 7), round(latitude, 7))
+                yield Point(longitude, latitude)
 
     for index, first_id in enumerate(DISTRICT_IDS):
         for second_id in DISTRICT_IDS[index + 1:]:
@@ -139,15 +140,7 @@ def test_multipolygon_sampling_weights_components_by_polygon_area(monkeypatch):
     square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
     triangle = Polygon([(3, 0), (5, 0), (3, 1)])
     geometry = MultiPolygon([square, triangle])
-    synthetic = District(
-        id='synthetic',
-        name='Synthetic',
-        osm_relation_id='0',
-        geometry=geometry,
-        prepared=prep(geometry),
-        components=(square, triangle),
-        component_areas=(square.area, triangle.area),
-    )
+    synthetic = District(geometry=geometry, id='synthetic', name='Synthetic')
     monkeypatch.setattr(districts, 'district_map', lambda: {'synthetic': synthetic})
     monkeypatch.setattr(districts, 'random', random.Random(20260901))
 
@@ -165,12 +158,7 @@ def test_city_sampling_weights_components_by_polygon_area(monkeypatch):
     square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
     triangle = Polygon([(3, 0), (5, 0), (3, 1)])
     geometry = MultiPolygon([square, triangle])
-    synthetic = CityTerritory(
-        geometry=geometry,
-        prepared=prep(geometry),
-        components=(square, triangle),
-        component_areas=(square.area, triangle.area),
-    )
+    synthetic = Territory(geometry=geometry)
     monkeypatch.setattr(districts, 'city_territory', lambda: synthetic)
     monkeypatch.setattr(districts, 'random', random.Random(20260903))
 
@@ -187,3 +175,18 @@ def test_city_sampling_weights_components_by_polygon_area(monkeypatch):
 def test_unknown_district_cannot_be_sampled():
     with pytest.raises(ValueError, match='district id'):
         generate_district_point('unknown-district')
+
+
+def test_every_shared_vertex_belongs_to_the_first_district_in_order():
+    """Точка на общей границе стабильно относится к первому району списка."""
+    loaded = district_map()
+    checked = 0
+    for district in loaded.values():
+        for part in _parts(district.geometry):
+            for longitude, latitude in part.exterior.coords:
+                point = Point(longitude, latitude)
+                owners = [d for d in DISTRICT_IDS if loaded[d].geometry.covers(point)]
+                if len(owners) > 1:
+                    assert district_for_point(latitude, longitude) == owners[0]
+                    checked += 1
+    assert checked > 1000

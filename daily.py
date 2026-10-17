@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from models import db, DailyChallenge
 from game_logic import ROUNDS_PER_GAME
-from pool import choose_round_points
+from pool import choose_round_candidates
 
 MSK = timezone(timedelta(hours=3))
 
@@ -35,8 +35,9 @@ def get_or_create_daily():
     # Общий набор не должен расходиться после индивидуальных skip у игроков.
     # Когда в пуле есть хотя бы пять точек, берём только подтверждённые. В
     # самом начале жизни проекта сохраняется безопасный случайный фолбэк.
-    points = choose_round_points(DAILY_DIFFICULTY, ROUNDS_PER_GAME,
-                                 pool_only=True)
+    points = [(lat, lon) for lat, lon, _source in choose_round_candidates(
+        DAILY_DIFFICULTY, ROUNDS_PER_GAME, pool_only=True,
+    )]
     challenge = DailyChallenge(date=date, points_json=json.dumps(points))
     try:
         db.session.add(challenge)

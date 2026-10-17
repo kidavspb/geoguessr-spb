@@ -282,3 +282,26 @@ def test_outdated_tab_gets_reload_message_before_starting_game(page, server):
     expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
     assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 1
+
+
+def test_challenge_survives_failed_info_and_unknown_token_returns_settings(page, server):
+    """Сбой GET /api/challenge не отменяет челлендж; 404 при старте — отменяет."""
+    page.route('**/api/challenge/**', lambda route: route.fulfill(
+        status=503, content_type='application/json', body='{"error": "Сервер занят"}'))
+    page.goto(f'{server}/?challenge=missing-token')
+    banner = page.locator('#challenge-banner')
+    expect(banner).to_contain_text('те же')
+    expect(page.locator('#difficulty-group')).to_be_hidden()
+
+    with page.expect_request('**/api/game/start') as first_start:
+        page.locator('#start-btn').click()
+    assert first_start.value.post_data_json['challenge_token'] == 'missing-token'
+    # Сервер не знает токен: показываем это и возвращаем обычные настройки.
+    expect(banner).to_contain_text('Челлендж не найден')
+    expect(page.locator('#difficulty-group')).to_be_visible()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+    with page.expect_request('**/api/game/start') as second_start:
+        page.locator('#start-btn').click()
+    assert second_start.value.post_data_json['challenge_token'] is None
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))

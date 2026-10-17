@@ -59,6 +59,7 @@ def test_direct_api_keeps_current_rules_without_browser_capability(
     # Отсутствующий или нулевой capability не отменяет обязательный preflight.
     ready = client.post('/api/game/ready', json={
         'round_id': result['location']['round_id'],
+        'location_version': result['location']['location_version'],
     })
     assert ready.status_code == 409
     assert ready.get_json()['reason'] == 'panorama_not_validated'

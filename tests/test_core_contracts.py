@@ -153,6 +153,89 @@ def test_stale_location_version_is_marked_for_resync(client, endpoint):
     assert response.get_json()['reason'] == 'stale_location'
 
 
+ROUND_ENDPOINTS = ['guess', 'ready', 'skip_location', 'validate_panorama',
+                   'continue_search', 'set_address', 'panorama_metric']
+
+
+@pytest.mark.parametrize('endpoint', ROUND_ENDPOINTS)
+def test_round_id_is_required(client, endpoint):
+    location = _start(client)
+    response = client.post(f'/api/game/{endpoint}', json={
+        'location_version': 0, 'search_batch': 1, 'address': 'Невский пр., 1',
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Нужно поле round_id'}
+
+
+@pytest.mark.parametrize('endpoint', [e for e in ROUND_ENDPOINTS if e != 'set_address'])
+def test_location_version_is_required(client, endpoint):
+    """Без версии повтор запроса нельзя отличить от нового — запрос отклоняется."""
+    location = _start(client)
+    response = client.post(f'/api/game/{endpoint}', json={
+        'round_id': location['round_id'], 'search_batch': 1,
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Нужно поле location_version'}
+    current = client.get('/api/game/location').get_json()
+    assert (current['round'], current['location_version']) == (1, 0)
+
+
+def test_post_without_json_body_is_rejected(client):
+    response = client.post('/api/game/start')
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Ожидается JSON-объект'}
+
+
+def test_removed_set_actual_point_endpoint_is_gone(client):
+    location = _start(client)
+    response = client.post('/api/game/set_actual_point', json={
+        'round_id': location['round_id'], 'location_version': 0,
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 404
+
+
+def _completed_game(app_module, name, score, completed_at, **fields):
+    from models import GameSession, db
+    with app_module.app.app_context():
+        db.session.add(GameSession(
+            player_name=name, total_score=score, difficulty='medium',
+            current_round=5, completed_at=completed_at, **fields,
+        ))
+        db.session.commit()
+
+
+def test_leaderboard_ties_keep_the_earliest_finish_first(client, app_module):
+    from datetime import datetime
+    _completed_game(app_module, 'Поздний', 20000, datetime(2026, 10, 10, 12, 0))
+    _completed_game(app_module, 'Ранний', 20000, datetime(2026, 10, 9, 12, 0))
+    _completed_game(app_module, 'Лидер', 21000, datetime(2026, 10, 11, 12, 0))
+
+    names = [row['player_name'] for row in client.get('/api/leaderboard').get_json()['leaderboard']]
+    assert names == ['Лидер', 'Ранний', 'Поздний']
+
+
+def test_daily_leaderboard_ties_keep_the_earliest_finish_first(client, app_module):
+    from datetime import datetime
+    from daily import today_msk
+    today = today_msk()
+    _completed_game(app_module, 'Поздний', 20000, datetime(2026, 10, 10, 12, 0), daily_date=today)
+    _completed_game(app_module, 'Ранний', 20000, datetime(2026, 10, 10, 9, 0), daily_date=today)
+
+    rows = client.get('/api/daily/leaderboard').get_json()['leaderboard']
+    assert [row['player_name'] for row in rows] == ['Ранний', 'Поздний']
+
+
+def test_leaderboard_date_is_moscow_date(client, app_module):
+    from datetime import datetime
+    # 22:30 UTC = 01:30 следующего дня по Москве.
+    _completed_game(app_module, 'Полуночник', 15000, datetime(2026, 10, 17, 22, 30))
+    row = client.get('/api/leaderboard').get_json()['leaderboard'][0]
+    assert row['date'] == '18.10.2026'
+
+
 def test_location_after_last_round_reports_game_over(client):
     location = _start(client)
     for _ in range(game_logic.ROUNDS_PER_GAME):

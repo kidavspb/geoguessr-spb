@@ -8,8 +8,6 @@ import random
 # Константы игры
 ROUNDS_PER_GAME = 5
 MAX_SCORE_PER_ROUND = 5000
-# Расстояние, начиная с которого раунд даёт ноль очков.
-MAX_DISTANCE_KM = 30
 
 # Число автоматических замен до паузы: следующую серию открывает игрок.
 # После /ready смена уже показанной точки запрещена независимо от лимита.
@@ -103,12 +101,13 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 
 def calculate_score(distance_km):
-    """Очки за раунд: максимум в пределах 50 м, дальше — экспоненциальный спад."""
+    """Очки за раунд: максимум в пределах 50 м, дальше — экспоненциальный спад.
+
+    Ноль получается сам собой примерно с 25,5 км (5000·e^(−d/3) < 1).
+    """
     if distance_km <= 0.05:
         return MAX_SCORE_PER_ROUND
-    if distance_km >= MAX_DISTANCE_KM:
-        return 0
-    return max(0, int(MAX_SCORE_PER_ROUND * math.exp(-distance_km / 3)))
+    return int(MAX_SCORE_PER_ROUND * math.exp(-distance_km / 3))
 
 
 def parse_coords(data):

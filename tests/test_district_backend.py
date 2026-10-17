@@ -26,6 +26,7 @@ def _finish_district_game(client):
         assert _validate_location(client, location).get_json() == {'valid': True}
         result = client.post('/api/game/guess', json={
             'round_id': location['round_id'],
+            'location_version': location['location_version'],
             'latitude': location['latitude'],
             'longitude': location['longitude'],
             'panorama_latitude': location['latitude'],
@@ -60,8 +61,6 @@ def test_start_accepts_valid_district_and_generates_all_rounds_inside(client, ap
     assert body['difficulty'] == 'district'
     assert body['district_id'] == 'petrogradsky'
     assert body['district_name'] == 'Петроградский район'
-    from districts import district_map
-    assert body['district_bounds'] == list(district_map()['petrogradsky'].bounds)
     assert body['difficulty_name'] == 'Петроградский район'
     assert body['location']['district_id'] == 'petrogradsky'
 
@@ -140,6 +139,7 @@ def test_duplicate_panorama_is_replaced_without_poisoning_pool(
     assert validated.get_json() == {'valid': True}
     guessed = client.post('/api/game/guess', json={
         'round_id': first['round_id'],
+        'location_version': first['location_version'],
         'latitude': panorama[0], 'longitude': panorama[1],
         'panorama_latitude': panorama[0],
         'panorama_longitude': panorama[1],
@@ -200,6 +200,7 @@ def test_duplicate_recovery_prefers_distant_verified_point_in_same_district(
     }).get_json() == {'valid': True}
     assert client.post('/api/game/guess', json={
         'round_id': first['round_id'],
+        'location_version': first['location_version'],
         'latitude': played[0], 'longitude': played[1],
         'panorama_latitude': played[0], 'panorama_longitude': played[1],
     }).status_code == 200
@@ -273,10 +274,12 @@ def test_district_recovery_can_use_verified_point_reserved_for_future_round(
     first = client.get('/api/game/location').get_json()
     assert client.post('/api/game/validate_panorama', json={
         'round_id': first['round_id'],
+        'location_version': first['location_version'],
         'latitude': played[0], 'longitude': played[1],
     }).get_json() == {'valid': True}
     assert client.post('/api/game/guess', json={
         'round_id': first['round_id'],
+        'location_version': first['location_version'],
         'latitude': played[0], 'longitude': played[1],
         'panorama_latitude': played[0], 'panorama_longitude': played[1],
     }).status_code == 200
@@ -376,7 +379,9 @@ def test_validate_panorama_rejects_neighbouring_district_before_ready(client, ap
         rnd.gen_latitude, rnd.gen_longitude = inside
         app_module.db.session.commit()
 
-    not_ready = client.post('/api/game/ready', json={'round_id': location['round_id']})
+    not_ready = client.post('/api/game/ready', json={
+        'round_id': location['round_id'], 'location_version': 0,
+    })
     assert not_ready.status_code == 409
     assert not_ready.get_json()['reason'] == 'panorama_not_validated'
 
@@ -394,6 +399,7 @@ def test_validate_panorama_rejects_neighbouring_district_before_ready(client, ap
     assert accepted.get_json() == {'valid': True}
     assert client.post('/api/game/ready', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
     }).status_code == 200
 
 
@@ -438,6 +444,7 @@ def test_guess_rechecks_district_and_keeps_prevalidated_point(client, app_module
     })
     rejected = client.post('/api/game/guess', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
         'latitude': inside[0], 'longitude': inside[1],
         'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
     })
@@ -467,7 +474,9 @@ def test_hard_preflight_ready_and_guess_enforce_exact_city(client, app_module):
         rnd.gen_latitude, rnd.gen_longitude = inside
         app_module.db.session.commit()
 
-    not_ready = client.post('/api/game/ready', json={'round_id': location['round_id']})
+    not_ready = client.post('/api/game/ready', json={
+        'round_id': location['round_id'], 'location_version': 0,
+    })
     assert not_ready.status_code == 409
     assert not_ready.get_json()['reason'] == 'panorama_not_validated'
 
@@ -485,10 +494,12 @@ def test_hard_preflight_ready_and_guess_enforce_exact_city(client, app_module):
     assert accepted.get_json() == {'valid': True}
     assert client.post('/api/game/ready', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
     }).status_code == 200
 
     rejected_guess = client.post('/api/game/guess', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
         'latitude': inside[0], 'longitude': inside[1],
         'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
     })
@@ -576,6 +587,7 @@ def test_district_challenge_results_and_leaderboard_keep_metadata(client, app):
         assert location['district_id'] == 'petrogradsky'
         friend.post('/api/game/guess', json={
             'round_id': location['round_id'],
+            'location_version': location['location_version'],
             'latitude': location['latitude'], 'longitude': location['longitude'],
         })
     assert friend_points == [
@@ -630,11 +642,27 @@ def test_legacy_hard_challenge_with_stored_outside_point_remains_playable(
     assert location['requires_spatial_validation'] is False
     assert client.post('/api/game/ready', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
     }).status_code == 200
     guessed = client.post('/api/game/guess', json={
         'round_id': location['round_id'],
+        'location_version': location['location_version'],
         'latitude': outside_city[0], 'longitude': outside_city[1],
         'panorama_latitude': outside_city[0],
         'panorama_longitude': outside_city[1],
     })
     assert guessed.status_code == 200
+
+
+def test_challenge_of_unavailable_district_is_marked(client, app):
+    from models import GameSession, db, utcnow
+    with app.app_context():
+        db.session.add(GameSession(
+            player_name='Автор', difficulty='district', district_id='removed-district',
+            current_round=5, completed_at=utcnow(), challenge_token='old-district-token',
+        ))
+        db.session.commit()
+
+    response = client.post('/api/game/start', json={'challenge_token': 'old-district-token'})
+    assert response.status_code == 409
+    assert response.get_json()['reason'] == 'challenge_district_unavailable'

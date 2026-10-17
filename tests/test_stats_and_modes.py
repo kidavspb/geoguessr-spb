@@ -1,5 +1,6 @@
 """Тесты статистики сложности мест, режима «без перемещения»,
-предзагрузки (?peek=1) и админ-сводки."""
+отложенного старта таймера и админ-сводки."""
+from helpers import guess_at_target, round_body
 
 ADMIN_HEADERS = {'X-Admin-Key': 'test-admin-key'}
 
@@ -120,11 +121,8 @@ def test_guess_returns_difficulty_percentile(client, app_module):
             [0.5] * 3,
         )
 
-    client.post('/api/game/set_actual_point',
-                json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
-    result = client.post('/api/game/guess', json={
-        'latitude': loc['latitude'], 'longitude': loc['longitude']
-    }).get_json()
+    result = guess_at_target(client, loc, panorama_latitude=loc['latitude'],
+                             panorama_longitude=loc['longitude'])
     assert result['difficulty_percentile'] == 100
 
 
@@ -143,8 +141,7 @@ def test_no_move_flag_flows_to_challenge_and_leaderboard(client, app):
     for _ in range(5):
         loc = client.get('/api/game/location').get_json()
         assert loc['no_move'] is True
-        client.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(client, loc)
 
     token = client.get('/api/game/results').get_json()['challenge_token']
 
@@ -168,21 +165,18 @@ def test_no_move_flag_flows_to_challenge_and_leaderboard(client, app):
 def test_location_does_not_start_timer_until_panorama_ready(client, app_module):
     from models import GameRound
 
-    client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
-
-    peek = client.get('/api/game/location?peek=1')
-    assert peek.status_code == 200
+    started = client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
     with app_module.app.app_context():
         rnd = GameRound.query.filter_by(round_number=1).order_by(GameRound.id.desc()).first()
         assert rnd.started_at is None  # таймер ещё не пошёл
 
     normal = client.get('/api/game/location').get_json()
-    assert normal['latitude'] == peek.get_json()['latitude']
+    assert normal['latitude'] == started.get_json()['location']['latitude']
     with app_module.app.app_context():
         rnd = GameRound.query.filter_by(round_number=1).order_by(GameRound.id.desc()).first()
         assert rnd.started_at is None
 
-    ready = client.post('/api/game/ready', json={'round_id': normal['round_id']})
+    ready = client.post('/api/game/ready', json=round_body(normal))
     assert ready.status_code == 200
     assert ready.get_json()['deadline_ms'] is not None
     with app_module.app.app_context():
@@ -199,14 +193,42 @@ def test_admin_stats(client):
 
     client.post('/api/game/start', json={'player_name': 'Игрок'})
     for _ in range(5):
-        loc = client.get('/api/game/location').get_json()
-        client.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(client, client.get('/api/game/location').get_json())
 
     stats = client.get('/api/admin/stats', headers=ADMIN_HEADERS).get_json()
     assert stats['games_total'] == 1
     assert stats['games_completed_7d'] == 1
     assert stats['completion_rate_7d'] == 1.0
+
+
+def test_admin_stats_compare_pool_and_exploration_search(client, app_module):
+    """Сколько стоит исследование новых мест по сравнению с точками пула."""
+    from models import GameRound, GameSession, db
+
+    with app_module.app.app_context():
+        game = GameSession(player_name='Метрики', current_round=0)
+        db.session.add(game)
+        db.session.flush()
+        rows = [
+            ('pool', 'ready', 400, 1),
+            ('pool_recovery', 'ready', 600, 1),
+            ('explore', 'ready', 3000, 3),
+            ('explore_recovery', 'no_coverage', 5000, 4),
+        ]
+        for number, (source, status, lookup_ms, attempts) in enumerate(rows, start=1):
+            db.session.add(GameRound(
+                session_id=game.id, round_number=number,
+                gen_latitude=59.9, gen_longitude=30.3, location_source=source,
+                panorama_status=status, panorama_lookup_ms=lookup_ms,
+                panorama_attempts=attempts,
+            ))
+        db.session.commit()
+
+    stats = client.get('/api/admin/stats', headers=ADMIN_HEADERS).get_json()
+    assert stats['panorama_by_source'] == {
+        'explore': {'rounds': 2, 'ready_rate': 0.5, 'lookup_p50_ms': 3000, 'attempts_avg': 3.5},
+        'pool': {'rounds': 2, 'ready_rate': 1.0, 'lookup_p50_ms': 400, 'attempts_avg': 1.0},
+    }
 
 
 def test_completion_rate_uses_the_same_started_cohort(client, app):
