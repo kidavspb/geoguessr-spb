@@ -83,11 +83,12 @@ PROD всегда должен работать из `main`.
 Автоматический deployment обновляет только приложение:
 
 1. читает `origin/main`;
-2. обновляет рабочую копию;
+2. делает бэкап SQLite;
 3. обновляет Python-зависимости;
-4. применяет Alembic-миграции;
-5. перезапускает `geoguessr.service`;
-6. выполняет healthcheck.
+4. обновляет рабочую копию;
+5. применяет Alembic-миграции;
+6. перезапускает `geoguessr.service`;
+7. выполняет healthcheck через `/healthz`.
 
 Apache, systemd unit-файлы, deploy-скрипт, `.env`, firewall, SSH, пакеты ОС и другие настройки
 PROD автоматически из Git не применяются. Такие изменения администратор выполняет вручную.
@@ -317,13 +318,17 @@ Deploy должен быть консервативным: при неожида
 6. Прочитать SHA последнего успешного deployment и текущий HEAD.
 7. Если origin/main совпадает с marker, потребовать также HEAD == marker и завершиться без изменений.
 8. Проверить непрерывную fast-forward-цепочку marker → HEAD → origin/main.
-9. Обновить main через fast-forward.
-10. Установить requirements.txt.
-11. Выполнить flask db upgrade.
-12. Перезапустить geoguessr.service.
-13. Выполнить healthcheck с несколькими попытками.
-14. Только после успешного healthcheck записать новый deployed SHA.
+9. Сделать бэкап SQLite (один на пару HEAD → origin/main; повторы попытки копий не плодят).
+10. Установить requirements.txt из нового commit (до обновления checkout).
+11. Обновить main через fast-forward.
+12. Выполнить flask db upgrade.
+13. Перезапустить geoguessr.service.
+14. Выполнить healthcheck /healthz с несколькими попытками.
+15. Только после успешного healthcheck записать новый deployed SHA.
 ```
+
+Если шаг 11 или 12 завершился ошибкой, checkout возвращается к HEAD, который
+исполняет работающий процесс (раздел 14).
 
 ### Lock
 
@@ -342,6 +347,8 @@ Deploy должен быть консервативным: при неожида
 При грязном working tree deploy прекращается.
 
 Deploy-скрипт не должен автоматически выполнять `git reset --hard` для исправления неизвестного состояния.
+Единственное исключение — возврат к HEAD, проверенному в начале того же запуска, если шаг
+между fast-forward и restart завершился ошибкой (раздел 14).
 
 Нормальное обновление:
 
@@ -384,11 +391,9 @@ Marker обновляется **только после успешного healt
 
 ## 12. Dependencies, migrations и restart
 
-Dependencies:
-
-```bash
-venv/bin/pip install -r requirements.txt
-```
+Dependencies ставятся из `requirements.txt` нового commit **до** fast-forward
+(через `git show <origin_sha>:requirements.txt`): долгий `pip install` не растягивает
+окно, в котором старый процесс отдаёт новые шаблоны и статику с диска.
 
 На PROD не устанавливается `requirements-dev.txt`.
 
@@ -398,7 +403,8 @@ venv/bin/pip install -r requirements.txt
 venv/bin/flask db upgrade
 ```
 
-`AUTO_MIGRATE=false` можно оставить: миграция выполняется явным шагом deployment.
+Скрипт запускает миграцию с `AUTO_MIGRATE=false` независимо от `.env`; на PROD
+в `.env` тоже стоит `AUTO_MIGRATE=false`.
 
 После успешных подготовительных шагов:
 
@@ -413,8 +419,12 @@ systemctl restart geoguessr.service
 После restart выполнить несколько попыток локального запроса:
 
 ```bash
-curl --fail --silent --show-error http://127.0.0.1:8000/
+curl --fail --silent --show-error http://127.0.0.1:8000/healthz
 ```
+
+`/healthz` отвечает 200, только если БД доступна и ревизия `alembic_version`
+совпадает с head миграций кода процесса; иначе 503. Главная страница `/` для
+этого не годится: без `?challenge=` она не обращается к БД.
 
 Нужно учитывать короткое время запуска Gunicorn: между попытками должна быть небольшая задержка.
 
@@ -424,15 +434,36 @@ curl --fail --silent --show-error http://127.0.0.1:8000/
 
 ## 14. Ошибка deployment и rollback
 
-Автоматический rollback не выполнять.
+Автоматический rollback после restart не выполнять.
 
 Причина — database migrations: после `flask db upgrade` старый код не обязательно совместим с новой схемой БД.
 
 При ошибке:
 
 - `deployed-sha` не обновляется;
-- ошибка записывается в journal;
-- автоматический откат кода или БД не выполняется.
+- ошибка записывается в journal, а `OnFailure=` запускает `geoguessr-deploy-failed.service`
+  (сообщение в Telegram, если настроен `/etc/geoguessr-deploy/notify.env`, не чаще раза в час);
+- если ошибка случилась между fast-forward и restart (обычно — упавшая миграция),
+  checkout возвращается к HEAD, который исполняет работающий процесс. Процесс новый
+  код не загружал, поэтому совместимость с БД не меняется, а шаблоны и статика на
+  диске снова соответствуют работающему Python;
+- после restart откат кода не выполняется, откат БД не выполняется никогда.
+
+Бэкапы: `/var/backups/geoguessr/<время>-<HEAD>-<origin>.db` (права 0600, хранятся
+последние 30). Путь к рабочей БД скрипт берёт из `DATABASE_URL` в `.env`
+(по умолчанию — `instance/geoguessr_spb.db`). Восстановление — вручную, при
+остановленных timer и приложении:
+
+```bash
+systemctl stop geoguessr-deploy.timer geoguessr.service
+cd /root/geoguessr-spb/instance
+cp /var/backups/geoguessr/<файл>.db geoguessr_spb.db
+rm -f geoguessr_spb.db-wal geoguessr_spb.db-shm
+systemctl start geoguessr.service
+```
+
+Если код в checkout новее схемы восстановленной БД, перед запуском приложения
+выполнить `AUTO_MIGRATE=false venv/bin/flask --app app.py db upgrade`.
 
 Восстановление выполняет администратор вручную.
 
@@ -497,7 +528,9 @@ deploy/
 └── systemd/
     ├── geoguessr-deploy.sh
     ├── geoguessr-deploy.service
-    └── geoguessr-deploy.timer
+    ├── geoguessr-deploy.timer
+    ├── geoguessr-deploy-failed.service
+    └── geoguessr-deploy-notify.sh
 ```
 
 Файлы `deploy/systemd/*` являются source-of-truth/templates.
@@ -584,6 +617,8 @@ healthcheck завершились ошибкой, не продолжать у�
 cd /root/geoguessr-spb
 install -m 0755 deploy/systemd/geoguessr-deploy.sh \
   /usr/local/sbin/geoguessr-deploy
+install -m 0755 deploy/systemd/geoguessr-deploy-notify.sh \
+  /usr/local/sbin/geoguessr-deploy-notify
 ```
 
 ### 17.5. Создать state directory и marker
@@ -607,6 +642,8 @@ install -m 0644 deploy/systemd/geoguessr-deploy.service \
   /etc/systemd/system/geoguessr-deploy.service
 install -m 0644 deploy/systemd/geoguessr-deploy.timer \
   /etc/systemd/system/geoguessr-deploy.timer
+install -m 0644 deploy/systemd/geoguessr-deploy-failed.service \
+  /etc/systemd/system/geoguessr-deploy-failed.service
 ```
 
 Затем:
@@ -629,6 +666,40 @@ journalctl -u geoguessr-deploy.service -n 100
 systemctl enable --now geoguessr-deploy.timer
 systemctl list-timers geoguessr-deploy.timer
 ```
+
+### 17.8. Обновить установленные deploy-файлы
+
+Когда изменение `deploy/systemd/*` дошло до `main` и PROD уже стоит на нём
+(`deployed-sha` равен `origin/main`), установить новые копии:
+
+```bash
+cd /root/geoguessr-spb
+bash -n deploy/systemd/geoguessr-deploy.sh
+install -m 0755 deploy/systemd/geoguessr-deploy.sh /usr/local/sbin/geoguessr-deploy
+install -m 0755 deploy/systemd/geoguessr-deploy-notify.sh /usr/local/sbin/geoguessr-deploy-notify
+install -m 0644 deploy/systemd/geoguessr-deploy.service /etc/systemd/system/geoguessr-deploy.service
+install -m 0644 deploy/systemd/geoguessr-deploy-failed.service /etc/systemd/system/geoguessr-deploy-failed.service
+systemctl daemon-reload
+systemctl start geoguessr-deploy.service
+journalctl -u geoguessr-deploy.service -n 20 --no-pager
+curl -s http://127.0.0.1:8000/healthz
+```
+
+Ожидается `no new version` и `"status":"ok"`.
+
+Оповещения в Telegram (необязательно): создать бота у @BotFather и записать
+
+```bash
+install -d -m 0700 /etc/geoguessr-deploy
+cat > /etc/geoguessr-deploy/notify.env <<'EOF'
+TELEGRAM_BOT_TOKEN=<токен бота>
+TELEGRAM_CHAT_ID=<id чата>
+EOF
+chmod 0600 /etc/geoguessr-deploy/notify.env
+```
+
+Проверка без ожидания реального сбоя: `systemctl start geoguessr-deploy-failed.service`.
+Без этого файла сбой только пишется в journal.
 
 ---
 

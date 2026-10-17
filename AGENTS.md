@@ -151,16 +151,22 @@ Git. На DEV `AUTO_MIGRATE=false`, поэтому миграции примен
 Production deployment состоит из:
 
 - `deploy/systemd/geoguessr-deploy.timer` — периодический запуск;
-- `geoguessr-deploy.service` — oneshot;
+- `geoguessr-deploy.service` — oneshot с `OnFailure=geoguessr-deploy-failed.service`;
 - установленной копии `geoguessr-deploy.sh` в
-  `/usr/local/sbin/geoguessr-deploy`.
+  `/usr/local/sbin/geoguessr-deploy`;
+- `geoguessr-deploy-notify.sh` в `/usr/local/sbin/geoguessr-deploy-notify` —
+  сообщение в Telegram о неудаче, если настроен `/etc/geoguessr-deploy/notify.env`.
 
 Deploy-скрипт консервативен: берёт `flock`, проверяет `main`, expected origin и
-чистый working tree, допускает только fast-forward, ставит `requirements.txt`,
-делает `flask db upgrade`, перезапускает приложение, проверяет
-`http://127.0.0.1:8000/` и только затем обновляет marker успешного релиза в
-`/var/lib/geoguessr-deploy/deployed-sha`. Если шаг упал, marker не меняется и
-следующий timer повторит попытку. Автоматического rollback кода или БД нет.
+чистый working tree, допускает только fast-forward. Затем делает бэкап SQLite в
+`/var/backups/geoguessr` (один на попытку релиза, хранятся 30), ставит
+`requirements.txt` новой версии, обновляет checkout, делает `flask db upgrade`,
+перезапускает приложение, проверяет `http://127.0.0.1:8000/healthz` (БД отвечает
+и её ревизия совпадает с кодом) и только затем обновляет marker успешного релиза
+в `/var/lib/geoguessr-deploy/deployed-sha`. Если шаг упал, marker не меняется и
+следующий timer повторит попытку. Если упал шаг до restart, checkout
+возвращается к commit работающего процесса; после restart автоматического
+отката кода нет, отката БД нет никогда.
 
 Важно: файлы `deploy/apache/*` и `deploy/systemd/*` в Git — эталоны. Их merge
 сам по себе не меняет Apache, systemd units или установленный deploy-скрипт на
