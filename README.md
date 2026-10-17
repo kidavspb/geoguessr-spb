@@ -277,7 +277,6 @@ geoguessr-spb/
 | POST | `/api/game/validate_panorama` | Проверить фактическую панораму до показа: границы района/города, расстояние и отсутствие повторов |
 | POST | `/api/game/skip_location` | Сменить точку; `location_version` делает сетевой повтор идемпотентным |
 | POST | `/api/game/continue_search` | Разрешить ещё 10 замен до появления панорамы; обязательны `round_id`, `location_version`, `search_batch`; повтор не открывает лишнюю серию |
-| POST | `/api/game/set_actual_point` | Совместимый endpoint для старых клиентов |
 | POST | `/api/game/guess` | Идемпотентно отправить догадку с `round_id`; возвращает следующую локацию |
 | POST | `/api/game/set_address` | Best-effort сохранить асинхронно найденный адрес |
 | POST | `/api/game/panorama_metric` | Записать время поиска/появления и статус панорамы |

@@ -904,7 +904,7 @@ def test_full_game_flow(page, server):
     # Отдельные GET больше не нужны; их появление означает потерю prefetch-задачи.
     location_requests = []
     page.on('request', lambda req: location_requests.append(req.url)
-            if '/api/game/location' in req.url and 'peek' not in req.url else None)
+            if '/api/game/location' in req.url else None)
 
     page.goto(server)
     expect(page).to_have_title(re.compile('Петербургский следопыт'))

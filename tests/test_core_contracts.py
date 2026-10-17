@@ -153,6 +153,50 @@ def test_stale_location_version_is_marked_for_resync(client, endpoint):
     assert response.get_json()['reason'] == 'stale_location'
 
 
+ROUND_ENDPOINTS = ['guess', 'ready', 'skip_location', 'validate_panorama',
+                   'continue_search', 'set_address', 'panorama_metric']
+
+
+@pytest.mark.parametrize('endpoint', ROUND_ENDPOINTS)
+def test_round_id_is_required(client, endpoint):
+    location = _start(client)
+    response = client.post(f'/api/game/{endpoint}', json={
+        'location_version': 0, 'search_batch': 1, 'address': 'Невский пр., 1',
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Нужно поле round_id'}
+
+
+@pytest.mark.parametrize('endpoint', [e for e in ROUND_ENDPOINTS if e != 'set_address'])
+def test_location_version_is_required(client, endpoint):
+    """Без версии повтор запроса нельзя отличить от нового — запрос отклоняется."""
+    location = _start(client)
+    response = client.post(f'/api/game/{endpoint}', json={
+        'round_id': location['round_id'], 'search_batch': 1,
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Нужно поле location_version'}
+    current = client.get('/api/game/location').get_json()
+    assert (current['round'], current['location_version']) == (1, 0)
+
+
+def test_post_without_json_body_is_rejected(client):
+    response = client.post('/api/game/start')
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Ожидается JSON-объект'}
+
+
+def test_removed_set_actual_point_endpoint_is_gone(client):
+    location = _start(client)
+    response = client.post('/api/game/set_actual_point', json={
+        'round_id': location['round_id'], 'location_version': 0,
+        'latitude': location['latitude'], 'longitude': location['longitude'],
+    })
+    assert response.status_code == 404
+
+
 def test_location_after_last_round_reports_game_over(client):
     location = _start(client)
     for _ in range(game_logic.ROUNDS_PER_GAME):

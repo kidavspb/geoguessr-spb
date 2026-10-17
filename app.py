@@ -261,10 +261,7 @@ def _requires_spatial_validation(game):
 
 
 def _load_active_round():
-    """Игра и строка её текущего раунда, либо (None, None, ответ-ошибка).
-
-    Общая проверка для location / skip / set_actual_point / guess.
-    """
+    """Игра и строка её текущего раунда, либо (None, None, ответ-ошибка)."""
     game = _current_game()
     if game is None:
         return None, None, (jsonify({'error': 'Игра не начата'}), 400)
@@ -309,18 +306,13 @@ def _location_payload(game, rnd):
 def _round_from_payload(data, *, allow_answered=False, require_active=True):
     """Раунд из тела запроса с защитой от запоздавших сетевых ответов.
 
-    Старые клиенты без ``round_id`` временно поддерживаются через текущий
-    активный раунд. Новый фронтенд всегда передаёт id, поэтому повтор запроса
-    никогда не сможет случайно изменить следующий раунд.
+    ``round_id`` обязателен: повтор запроса никогда не изменит другой раунд.
     """
     game = _current_game(lock=True)
     if game is None:
         return None, None, (jsonify({'error': 'Игра не начата'}), 400)
 
     round_id = _integer_field(data, 'round_id', minimum=1)
-    if round_id is None:
-        return _load_active_round()
-
     rnd = db.session.get(GameRound, round_id)
     if rnd is None or rnd.session_id != game.id:
         return None, None, (jsonify({'error': 'Раунд устарел или не найден'}), 409)
@@ -356,17 +348,16 @@ def _stale_location_error(message='Версия точки устарела'):
 def _location_version_error(data, rnd):
     """Защита от запоздавшего locate предыдущей версии того же раунда."""
     expected = _integer_field(data, 'location_version')
-    if expected is None:
-        return None
     if expected != (rnd.skips or 0):
         return _stale_location_error()
     return None
 
 
 def _integer_field(data, name, *, minimum=0):
+    """Обязательное целое поле запроса (id раунда, версия точки, серия)."""
     value = data.get(name)
     if value in (None, ''):
-        return None  # старые клиенты ещё могут не передавать id/версию
+        raise BadRequest(f'Нужно поле {name}')
     try:
         parsed = int(value)
     except (TypeError, ValueError, OverflowError):
@@ -384,9 +375,6 @@ def _player_name(value):
 
 
 def _json_object():
-    # Пустое тело сохраняет контракт start/skip старых клиентов.
-    if not request.get_data():
-        return {}
     try:
         data = request.get_json(silent=True)
     except RecursionError:
@@ -876,7 +864,6 @@ def get_current_location():
 
     # Выдача координат больше не запускает таймер: медленное соединение не
     # должно съедать игровое время. Клиент вызовет /ready после открытия Player.
-    # Параметр ?peek=1 оставлен для совместимости со старым фронтендом.
     return jsonify(_location_payload(game, rnd))
 
 
@@ -935,16 +922,15 @@ def skip_location():
         return error
 
     expected_version = _integer_field(data, 'location_version')
-    if expected_version is not None:
-        current_version = rnd.skips or 0
-        if expected_version < current_version:
-            # Первый POST уже сработал, но ответ потерялся: возвращаем тот же
-            # новый кандидат и не расходуем ещё один skip.
-            payload = _location_payload(game, rnd)
-            payload['replayed'] = True
-            return jsonify(payload)
-        if expected_version > current_version:
-            return _stale_location_error()
+    current_version = rnd.skips or 0
+    if expected_version < current_version:
+        # Первый POST уже сработал, но ответ потерялся: возвращаем тот же
+        # новый кандидат и не расходуем ещё один skip.
+        payload = _location_payload(game, rnd)
+        payload['replayed'] = True
+        return jsonify(payload)
+    if expected_version > current_version:
+        return _stale_location_error()
 
     if rnd.started_at is not None:
         return jsonify({'error': 'Панорама уже показана', 'reason': 'round_started'}), 409
@@ -1038,11 +1024,8 @@ def skip_location():
 def continue_search():
     """Разрешить следующую серию поиска, сохранив раунд и версию точки."""
     data = _json_object()
-    round_id = _integer_field(data, 'round_id', minimum=1)
     expected_batch = _integer_field(data, 'search_batch', minimum=1)
     expected_version = _integer_field(data, 'location_version')
-    if None in (round_id, expected_batch, expected_version):
-        return jsonify({'error': 'Нужны round_id, search_batch и location_version'}), 400
     game, rnd, error = _round_from_payload(data)
     if error:
         return error
@@ -1063,45 +1046,6 @@ def continue_search():
     rnd.search_batch += 1
     db.session.commit()
     return jsonify(_location_payload(game, rnd))
-
-
-@app.route('/api/game/set_actual_point', methods=['POST'])
-def set_actual_point():
-    """Сохранить реальные координаты найденной панорамы.
-
-    Endpoint оставлен для старых клиентов; новый frontend делает тот же
-    authoritative preflight через /validate_panorama до создания Player.
-    """
-    data = _json_object()
-    game, rnd, error = _round_from_payload(data)
-    if error:
-        return error
-    version_error = _location_version_error(data, rnd)
-    if version_error:
-        return version_error
-
-    coords = parse_coords(data)
-    if coords is None:
-        return jsonify({'error': 'Некорректные координаты'}), 400
-    lat, lon = coords
-
-    reason, drift = _panorama_rejection_reason(game, rnd, lat, lon)
-    if reason is not None:
-        app.logger.warning(
-            'Отклонена actual_point: reason=%s, drift=%.2f км '
-            '(round=%s, game_id=%s)',
-            reason, drift, rnd.round_number, game.id,
-        )
-        return jsonify({'success': False, 'reason': reason}), 200
-
-    rnd.actual_latitude = lat
-    rnd.actual_longitude = lon
-    db.session.commit()
-
-    # Панорама подтверждена — пополняем пул проверенных точек
-    add_verified_point(lat, lon)
-
-    return jsonify({'success': True})
 
 
 @app.route('/api/game/validate_panorama', methods=['POST'])
@@ -1220,8 +1164,7 @@ def submit_guess():
         return jsonify({'error': 'Некорректные координаты'}), 400
 
     try:
-        # Точные координаты открытой съёмки приходят вместе с догадкой. Это
-        # убирает гонку между отдельным best-effort /set_actual_point и /guess:
+        # Точные координаты открытой съёмки приходят вместе с догадкой:
         # результат всегда считается по той панораме, которую видел игрок.
         panorama_coords = parse_coords({
             'latitude': data.get('panorama_latitude'),
@@ -1258,11 +1201,6 @@ def submit_guess():
             }), 409
 
         actual_lat, actual_lon = _scoring_point(rnd)
-
-        # Совместимость со вкладкой, открытой до обновления фронтенда: новый
-        # клиент всегда вызывает /ready, старому не даём застрять навсегда.
-        if game.time_limit and rnd.started_at is None:
-            rnd.started_at = utcnow()
 
         # Серверная проверка таймера: опоздавший ответ получает 0 очков
         # (запас — на сетевые задержки и загрузку панорамы).
