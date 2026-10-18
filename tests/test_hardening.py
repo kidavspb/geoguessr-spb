@@ -73,3 +73,34 @@ def test_app_refuses_to_start_without_real_secret_key(tmp_path, secret):
 def test_local_debug_starts_with_random_secret_key(tmp_path):
     result = _import_app(tmp_path, SECRET_KEY='', FLASK_DEBUG='true')
     assert result.returncode == 0, result.stderr
+
+
+def test_client_reports_unavailable_maps_sdk_to_the_log(client, caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        response = client.post('/api/client/sdk_unavailable', json={'sdk': 'v2'},
+                               headers={'User-Agent': 'TestBrowser/1.0'})
+    assert response.status_code == 204
+    assert any('SDK Яндекса' in record.getMessage() and 'v2' in record.getMessage()
+               and 'TestBrowser/1.0' in record.getMessage() for record in caplog.records)
+
+
+def test_sdk_report_ignores_unknown_sdk_names(client, caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        response = client.post('/api/client/sdk_unavailable', json={'sdk': '<script>'})
+    assert response.status_code == 204
+    assert '<script>' not in caplog.text
+
+
+def test_panorama_metric_accepts_sdk_unavailable(client, app_module):
+    from helpers import round_body
+    from models import GameRound
+    location = client.post('/api/game/start', json={}).get_json()['location']
+    response = client.post('/api/game/panorama_metric', json=round_body(
+        location, status='sdk_unavailable', lookup_ms=12, attempts=0,
+    ))
+    assert response.status_code == 200
+    with app_module.app.app_context():
+        rnd = app_module.db.session.get(GameRound, location['round_id'])
+        assert rnd.panorama_status == 'sdk_unavailable'

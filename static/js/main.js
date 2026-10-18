@@ -8,7 +8,7 @@ import { api } from './api.js';
 import {
     loadPanorama, prefetchNextRound, discardPreloaded, returnToPanoStart,
     showResultPano, destroyResultPano, destroyPanoramaPlayer,
-    openPanoModal, closePanoModal, clientReverseGeocode,
+    openPanoModal, closePanoModal, clientReverseGeocode, ymapsV2Ready,
     scheduleLoadingOverlay, showLoadingOverlay
 } from './panorama.js';
 import {
@@ -388,20 +388,30 @@ function leaveChallengeMode(message = null) {
 /**
  * Предупреждение, если Яндекс.Карты не загрузились
  */
+const PANORAMAS_UNAVAILABLE =
+    '⚠️ Панорамы Яндекса сейчас недоступны — игру начать не получится. Попробуйте позже.';
+
 function checkYandexMapsAPI() {
     setTimeout(() => {
         const errors = window.yandexMapsLoadErrors || {};
-        if (errors.v2 || errors.v3) {
-            console.error('Один из API Яндекс.Карт не загрузился');
-            const startBtn = document.getElementById('start-btn');
-            if (startBtn && !document.querySelector('.api-warning')) {
-                const warning = document.createElement('div');
-                warning.className = 'api-warning';
-                warning.textContent = '⚠️ Карты пока не загрузились. Можно попробовать начать — приложение повторит подключение.';
-                startBtn.parentElement.insertBefore(warning, startBtn);
-            }
+        if (errors.v2) {
+            showMapsWarning(PANORAMAS_UNAVAILABLE);
+        } else if (errors.v3) {
+            showMapsWarning('⚠️ Карта Яндекса пока не загрузилась — в игре её можно будет загрузить повторно.');
         }
     }, 10000);
+}
+
+/** Предупреждение над кнопкой «Начать» о недоступных сервисах Яндекса. */
+function showMapsWarning(text) {
+    let warning = document.querySelector('.api-warning');
+    if (!warning) {
+        const startBtn = document.getElementById('start-btn');
+        warning = document.createElement('div');
+        warning.className = 'api-warning';
+        startBtn.parentElement.insertBefore(warning, startBtn);
+    }
+    warning.textContent = text;
 }
 
 /**
@@ -422,6 +432,17 @@ async function startGame(opts = {}) {
     }
 
     try {
+        // Без SDK панорам игру не сыграть: не создаём её на сервере и честно
+        // говорим почему. ymapsV2Ready сам пробует перезагрузить упавший SDK.
+        try {
+            await ymapsV2Ready();
+        } catch (error) {
+            showMapsWarning(PANORAMAS_UNAVAILABLE);
+            api.reportSdkUnavailable('v2');
+            return;
+        }
+        document.querySelector('.api-warning')?.remove();
+
         const { ok, status, data } = await api.startGame({
             player_name: playerName,
             difficulty: settings.difficulty,
@@ -515,7 +536,9 @@ async function initGuessMapWithRecovery() {
         hint.classList.remove('hidden');
         hint.classList.add('map-retry');
         hint.onclick = () => initGuessMapWithRecovery();
-        showToast('Панорама работает; карту выбора можно повторно загрузить отдельно');
+        if (state.roundInteractive) {
+            showToast('Панорама работает; карту выбора можно повторно загрузить отдельно');
+        }
     }
 }
 
