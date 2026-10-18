@@ -140,6 +140,43 @@ def test_admin_delete_tracks_requested_point_when_selection_changes(page, server
     expect(page.locator('#pi-coords')).to_contain_text('#2')
 
 
+def test_admin_stats_are_readable_cards_and_tables(page, server):
+    page.route('**/api/admin/points', lambda route: route.fulfill(json={'points': [
+        {'id': 7, 'latitude': 59.93, 'longitude': 30.31, 'fail_count': 1,
+         'dist_from_center_km': 1.2, 'district_id': 'tsentralny', 'created_at': '17.10.2026'},
+    ]}))
+    page.route('**/api/admin/stats', lambda route: route.fulfill(json={
+        'games_total': 120, 'games_completed_total': 80, 'games_started_7d': 30,
+        'games_completed_7d': 21, 'completion_rate_7d': 0.7, 'daily_players_today': 5,
+        'panorama_samples': 400, 'panorama_ready_p50_ms': 1800, 'panorama_ready_p95_ms': 5200,
+        'panorama_failure_rate': 0.04,
+        'round_sources': {'pool': 50, 'explore': 20, 'explore_recovery': 9},
+        'panorama_by_source': {
+            'explore': {'rounds': 29, 'ready_rate': 0.69, 'lookup_p50_ms': 3100, 'attempts_avg': 2.4},
+            'pool': {'rounds': 50, 'ready_rate': 0.98, 'lookup_p50_ms': 600, 'attempts_avg': 1.0},
+        },
+        'pool_points_by_district': {'tsentralny': 40, 'kurortny': 2},
+    }))
+    page.goto(server + '/admin')
+    page.locator('#admin-key').fill('test-admin-key')
+    page.locator('#load-btn').click()
+
+    expect(page.locator('#kpi-games .kpi')).to_have_count(4)
+    expect(page.locator('#kpi-games')).to_contain_text('21 · 70%')
+    expect(page.locator('#kpi-panorama')).to_contain_text('1.8 с')
+    search_rows = page.locator('#search-table tr')
+    expect(search_rows).to_have_count(3)  # заголовок + пул + новые места
+    expect(search_rows.nth(1)).to_contain_text('новые места')
+    expect(search_rows.nth(1)).to_contain_text('3.1 с')
+    page.locator('summary', has_text='Пул по районам').click()
+    expect(page.locator('#districts-table td.low')).to_have_text('2')
+    expect(page.locator('#districts-table')).to_contain_text('Курортный район')
+
+    page.locator('.admin-dot').click()
+    expect(page.locator('#pi-meta')).to_contain_text('Центральный район')
+    expect(page.locator('#pool-stats')).to_have_text('точек: 1 · с неудачами: 1')
+
+
 def _start_district_game(page, server, district_id='petrogradsky'):
     page.goto(server)
     page.locator('#district-picker-btn').click()

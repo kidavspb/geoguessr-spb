@@ -35,7 +35,7 @@ from pool import choose_round_candidates, add_verified_point, mark_point_failed
 from daily import DAILY_DIFFICULTY, MSK, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
 from districts import (
-    DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DistrictDataError, district_map,
+    DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DISTRICT_NAMES, DistrictDataError, district_map,
     district_name, is_valid_district_id, point_in_city, point_in_district,
 )
 
@@ -1492,7 +1492,8 @@ def admin_page():
     """Страница модерации пула точек (карта всех проверенных панорам)."""
     if not ADMIN_KEY:
         return 'Не найдено', 404
-    return render_template('admin.html', yandex_api_key=YANDEX_MAPS_API_KEY)
+    return render_template('admin.html', yandex_api_key=YANDEX_MAPS_API_KEY,
+                           district_names=DISTRICT_NAMES)
 
 
 @app.route('/api/admin/points', methods=['GET'])
