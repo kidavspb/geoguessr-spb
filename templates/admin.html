@@ -8,71 +8,149 @@
     <link rel="icon" href="{{ url_for('static', filename=favicon_asset('favicon.svg')) }}?v={{ asset_version }}" type="image/svg+xml">
     <script src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"></script>
     <style>
+        :root {
+            --navy: #231c62; --cream: #fdfae4; --line: #e4e0cd; --muted: #6f6b94;
+            --ok: #6ab946; --warn: #ffc629; --danger: #e93d32; --link: #2656aa;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; color: var(--navy); }
         #admin-map { position: fixed; inset: 0; }
         .panel {
             position: fixed; top: 1rem; left: 1rem; z-index: 10;
-            width: 320px; max-height: calc(100vh - 2rem); overflow: auto;
-            background: #fff; border-radius: 16px; padding: 1rem 1.25rem;
-            box-shadow: 0 10px 30px rgba(35, 28, 98, 0.25);
-            color: #231c62; font-size: 0.9rem;
+            width: min(380px, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto;
+            background: #fff; border-radius: 16px; padding: 1rem 1.25rem 1.25rem;
+            box-shadow: 0 10px 30px rgba(35, 28, 98, 0.25); font-size: 0.9rem;
         }
-        .panel h1 { font-size: 1.1rem; margin-bottom: 0.75rem; }
-        .panel input {
-            width: 100%; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
-            border: 2px solid #e4e0cd; border-radius: 8px; font-size: 0.9rem;
+        .panel-head {
+            display: flex; flex-wrap: wrap; align-items: baseline;
+            justify-content: space-between; gap: 0.25rem 0.5rem;
         }
-        .panel button {
+        h1 { font-size: 1.15rem; white-space: nowrap; }
+        h2 {
+            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--muted); margin: 1rem 0 0.5rem;
+        }
+        .auth { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+        .auth input {
+            flex: 1; min-width: 0; padding: 0.5rem 0.75rem;
+            border: 2px solid var(--line); border-radius: 8px; font-size: 0.9rem;
+        }
+        button {
             padding: 0.5rem 1rem; border: none; border-radius: 999px;
-            background: #231c62; color: #fdfae4; font-weight: 600; cursor: pointer;
+            background: var(--navy); color: var(--cream); font-weight: 600; cursor: pointer;
         }
-        .panel button.danger { background: #e93d32; color: #fff; }
-        .panel .muted { color: #6f6b94; font-size: 0.8rem; margin: 0.5rem 0; }
-        .panel a { color: #2656aa; }
-        #point-info { border-top: 1px solid #e4e0cd; margin-top: 0.75rem; padding-top: 0.75rem; }
+        button.danger { background: var(--danger); color: #fff; }
+        .muted { color: var(--muted); font-size: 0.8rem; }
+        #auth-status:empty { display: none; }
+        #auth-status { margin-top: 0.5rem; }
+        a { color: var(--link); }
+        .card {
+            border: 1px solid var(--line); border-radius: 12px;
+            padding: 0.75rem; margin-top: 0.75rem;
+        }
+        .card p + p { margin-top: 0.35rem; }
+        .legend { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        .legend span::before {
+            content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+            margin-right: 0.35rem; vertical-align: -1px; background: var(--dot);
+        }
+        .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+        .kpis.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .kpi { background: #f6f4ea; border-radius: 10px; padding: 0.55rem 0.65rem; }
+        .kpi-value { display: block; font-size: 1.25rem; font-weight: 700; line-height: 1.2; }
+        .kpi-label { display: block; font-size: 0.75rem; color: var(--muted); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        th, td { padding: 0.35rem 0.25rem; text-align: right; border-bottom: 1px solid var(--line); }
+        th:first-child, td:first-child { text-align: left; }
+        th { font-weight: 600; color: var(--muted); font-size: 0.75rem; }
+        tr:last-child td { border-bottom: none; }
+        td.low { color: var(--danger); font-weight: 600; }
+        details { margin-top: 0.75rem; }
+        summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+        details table { margin-top: 0.4rem; }
         .hidden { display: none !important; }
         .admin-dot {
             width: 14px; height: 14px; border-radius: 50%;
-            background: #6ab946; border: 2px solid #fff; cursor: pointer;
+            background: var(--ok); border: 2px solid #fff; cursor: pointer;
             box-shadow: 0 1px 4px rgba(0,0,0,0.4);
             transform: translate(-50%, -50%);
         }
-        .admin-dot.failing { background: #ffc629; }
-        .admin-dot.selected { background: #e93d32; width: 18px; height: 18px; }
+        .admin-dot.failing { background: var(--warn); }
+        .admin-dot.selected { background: var(--danger); width: 18px; height: 18px; }
     </style>
 </head>
 <body>
     <div id="admin-map"></div>
 
-    <div class="panel">
-        <h1>🛠 Пул точек</h1>
-        <div>
-            <input type="password" id="admin-key" placeholder="Ключ модератора">
-            <button id="load-btn">Загрузить точки</button>
-            <p class="muted" id="auth-status"></p>
+    <aside class="panel">
+        <div class="panel-head">
+            <h1>🛠 Модерация</h1>
+            <span class="muted" id="pool-stats"></span>
         </div>
-        <p class="muted" id="pool-stats"></p>
-        <div id="game-stats" class="hidden" style="border-top: 1px solid #e4e0cd; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; line-height: 1.7;"></div>
-        <div id="point-info" class="hidden">
+        <form class="auth" id="auth-form">
+            <input type="password" id="admin-key" placeholder="Ключ модератора" autocomplete="current-password">
+            <button id="load-btn" type="submit">Загрузить</button>
+        </form>
+        <p class="muted" id="auth-status"></p>
+        <div class="legend muted">
+            <span style="--dot: var(--ok)">точка пула</span>
+            <span style="--dot: var(--warn)">были неудачи</span>
+            <span style="--dot: var(--danger)">выбрана</span>
+        </div>
+
+        <section id="point-info" class="card hidden">
             <p><strong id="pi-coords"></strong></p>
             <p class="muted" id="pi-meta"></p>
             <p><a id="pi-pano-link" href="#" target="_blank" rel="noopener">Открыть панораму в Я.Картах ↗</a></p>
-            <p style="margin-top: 0.5rem;">
-                <button class="danger" id="pi-delete">Удалить из пула</button>
-            </p>
-        </div>
-    </div>
+            <p><button class="danger" id="pi-delete" type="button">Удалить из пула</button></p>
+        </section>
+
+        <section id="game-stats" class="hidden">
+            <h2>Игры</h2>
+            <div class="kpis" id="kpi-games"></div>
+            <h2>Загрузка панорам</h2>
+            <div class="kpis three" id="kpi-panorama"></div>
+            <h2>Поиск панорам по источнику точки</h2>
+            <div id="search-table"></div>
+            <details>
+                <summary>Сыгранные раунды по источнику</summary>
+                <div id="sources-table"></div>
+            </details>
+            <details>
+                <summary>Пул по районам</summary>
+                <div id="districts-table"></div>
+            </details>
+        </section>
+    </aside>
 
     <script>
+        const DISTRICT_NAMES = {{ district_names | tojson }};
+        const SOURCE_LABELS = {
+            pool: 'пул', explore: 'новые места', daily: 'вызов дня', challenge: 'челлендж',
+            legacy: 'старые раунды',
+            pool_recovery: 'пул → замена', explore_recovery: 'новые → замена',
+            daily_recovery: 'вызов дня → замена', challenge_recovery: 'челлендж → замена',
+        };
+
         let map = null;
         let markers = new Map(); // id -> {marker, el, point}
         let selectedId = null;
 
         const keyInput = document.getElementById('admin-key');
-        keyInput.value = localStorage.getItem('adminKey') || '';
+        const status = document.getElementById('auth-status');
 
-        document.getElementById('load-btn').addEventListener('click', loadPoints);
+        // localStorage может быть недоступен (приватный режим) — это не ошибка страницы.
+        const storage = {
+            get() { try { return localStorage.getItem('adminKey') || ''; } catch (e) { return ''; } },
+            set(value) { try { localStorage.setItem('adminKey', value); } catch (e) { /* без запоминания */ } },
+            clear() { try { localStorage.removeItem('adminKey'); } catch (e) { /* нечего чистить */ } },
+        };
+        keyInput.value = storage.get();
+
+        document.getElementById('auth-form').addEventListener('submit', event => {
+            event.preventDefault();
+            loadPoints();
+        });
         document.getElementById('pi-delete').addEventListener('click', deleteSelected);
 
         async function initMap() {
@@ -84,67 +162,116 @@
             map.addChild(new YMapDefaultSchemeLayer());
             map.addChild(new YMapDefaultFeaturesLayer());
         }
+        const mapReady = initMap();
+
+        async function adminFetch(url, options = {}) {
+            try {
+                return await fetch(url, {
+                    ...options,
+                    headers: { 'X-Admin-Key': keyInput.value.trim(), ...(options.headers || {}) },
+                });
+            } catch (error) {
+                return null;
+            }
+        }
 
         async function loadPoints() {
             const key = keyInput.value.trim();
-            const status = document.getElementById('auth-status');
             if (!key) { status.textContent = 'Введи ключ.'; return; }
+            status.textContent = 'Загрузка…';
 
-            const response = await fetch('/api/admin/points', {
-                headers: { 'X-Admin-Key': key }
-            });
+            const response = await adminFetch('/api/admin/points');
+            if (!response) { status.textContent = 'Нет соединения с сервером.'; return; }
             if (!response.ok) {
+                if (response.status === 403) storage.clear();
                 status.textContent = response.status === 403 ? 'Неверный ключ.' : 'Ошибка загрузки.';
                 return;
             }
-            localStorage.setItem('adminKey', key);
+            storage.set(key);
             status.textContent = '';
 
             const data = await response.json();
+            await mapReady;
             renderPoints(data.points);
-            loadGameStats(key);
+            loadGameStats();
         }
 
-        async function loadGameStats(key) {
-            const response = await fetch('/api/admin/stats', {
-                headers: { 'X-Admin-Key': key }
+        function element(tag, className = '', text = '') {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== '') node.textContent = text;
+            return node;
+        }
+
+        function kpi(value, label) {
+            const card = element('div', 'kpi');
+            card.append(element('span', 'kpi-value', value), element('span', 'kpi-label', label));
+            return card;
+        }
+
+        function table(headers, rows) {
+            const result = element('table');
+            const head = element('tr');
+            headers.forEach(title => head.append(element('th', '', title)));
+            result.append(head);
+            rows.forEach(cells => {
+                const row = element('tr');
+                cells.forEach(cell => {
+                    const [text, className] = Array.isArray(cell) ? cell : [cell, ''];
+                    row.append(element('td', className, String(text)));
+                });
+                result.append(row);
             });
-            if (!response.ok) return;
+            return result;
+        }
+
+        const seconds = ms => ms == null ? '—' : `${(ms / 1000).toFixed(1)} с`;
+        const percent = share => share == null ? '—' : `${Math.round(share * 100)}%`;
+
+        async function loadGameStats() {
+            const section = document.getElementById('game-stats');
+            const response = await adminFetch('/api/admin/stats');
+            if (!response || !response.ok) {
+                section.classList.add('hidden');
+                return;
+            }
             const s = await response.json();
-            const block = document.getElementById('game-stats');
-            const sourceLabels = {
-                pool: 'пул', explore: 'новые', pool_recovery: 'пул → замена',
-                explore_recovery: 'новые → замена', daily: 'вызов дня',
-                daily_recovery: 'вызов дня → замена', challenge: 'челлендж',
-                challenge_recovery: 'челлендж → замена', legacy: 'старые'
-            };
-            const sources = Object.entries(s.round_sources || {})
-                .map(([name, count]) => `${sourceLabels[name] || name}: <strong>${count}</strong>`)
-                .join(' · ');
-            const search = Object.entries(s.panorama_by_source || {})
-                .map(([name, m]) => `${sourceLabels[name] || name}: ` +
-                    `найдено <strong>${Math.round(m.ready_rate * 100)}%</strong>` +
-                    (m.lookup_p50_ms != null ? `, поиск <strong>${(m.lookup_p50_ms / 1000).toFixed(1)} с</strong>` : '') +
-                    (m.attempts_avg != null ? `, попыток <strong>${m.attempts_avg}</strong>` : ''))
-                .join(' · ');
-            block.innerHTML =
-                `🎮 Игр всего: <strong>${s.games_total}</strong> (доиграно ${s.games_completed_total})<br>` +
-                `📅 За 7 дней: начато <strong>${s.games_started_7d}</strong>, доиграно <strong>${s.games_completed_7d}</strong>` +
-                (s.completion_rate_7d != null ? ` (${Math.round(s.completion_rate_7d * 100)}%)` : '') + `<br>` +
-                `🗓 Вызов дня сегодня: <strong>${s.daily_players_today}</strong> игроков<br>` +
-                (s.panorama_ready_p50_ms != null
-                    ? `⚡ Панорама: p50 <strong>${(s.panorama_ready_p50_ms / 1000).toFixed(1)} с</strong>, ` +
-                      `p95 <strong>${(s.panorama_ready_p95_ms / 1000).toFixed(1)} с</strong>` +
-                      (s.panorama_failure_rate != null
-                          ? `, ошибок <strong>${Math.round(s.panorama_failure_rate * 100)}%</strong>` : '')
-                    : '⚡ Метрики панорам пока не накоплены') +
-                (sources ? `<br>🧭 Раунды: ${sources}` : '') +
-                (search ? `<br>🔎 Поиск панорам по источнику точки: ${search}` : '');
-            block.classList.remove('hidden');
+
+            document.getElementById('kpi-games').replaceChildren(
+                kpi(s.games_total, `игр всего, доиграно ${s.games_completed_total}`),
+                kpi(s.games_started_7d, 'начато за 7 дней'),
+                kpi(`${s.games_completed_7d} · ${percent(s.completion_rate_7d)}`, 'доиграно за 7 дней'),
+                kpi(s.daily_players_today, 'сыграли вызов дня сегодня'),
+            );
+            document.getElementById('kpi-panorama').replaceChildren(
+                kpi(seconds(s.panorama_ready_p50_ms), 'медиана до кадра'),
+                kpi(seconds(s.panorama_ready_p95_ms), '95% загрузок быстрее'),
+                kpi(percent(s.panorama_failure_rate), `сбоев из ${s.panorama_samples}`),
+            );
+
+            const search = Object.entries(s.panorama_by_source || {});
+            document.getElementById('search-table').replaceChildren(search.length
+                ? table(['Источник', 'Раундов', 'Найдено', 'Поиск', 'Попыток'], search.map(([name, m]) => [
+                    SOURCE_LABELS[name] || name, m.rounds, percent(m.ready_rate),
+                    seconds(m.lookup_p50_ms), m.attempts_avg ?? '—',
+                ]))
+                : element('p', 'muted', 'Метрики поиска пока не накоплены.'));
+
+            const sources = Object.entries(s.round_sources || {}).sort((a, b) => b[1] - a[1]);
+            document.getElementById('sources-table').replaceChildren(
+                table(['Источник', 'Раундов'], sources.map(([name, count]) => [
+                    SOURCE_LABELS[name] || name, count,
+                ])));
+
+            const districts = Object.entries(s.pool_points_by_district || {}).sort((a, b) => a[1] - b[1]);
+            document.getElementById('districts-table').replaceChildren(
+                table(['Район', 'Точек'], districts.map(([id, count]) => [
+                    DISTRICT_NAMES[id] || id, [count, count < 5 ? 'low' : ''],
+                ])));
+            section.classList.remove('hidden');
         }
 
         function renderPoints(points) {
-            // Убираем старые маркеры
             markers.forEach(({ marker }) => map.removeChild(marker));
             markers.clear();
             selectPoint(null);
@@ -159,10 +286,13 @@
                 map.addChild(marker);
                 markers.set(p.id, { marker, el, point: p });
             });
+            updatePoolStats();
+        }
 
-            const failing = points.filter(p => p.fail_count > 0).length;
+        function updatePoolStats() {
+            const failing = [...markers.values()].filter(({ point }) => point.fail_count > 0).length;
             document.getElementById('pool-stats').textContent =
-                `Точек в пуле: ${points.length}` + (failing ? ` (с неудачами: ${failing})` : '');
+                `точек: ${markers.size}` + (failing ? ` · с неудачами: ${failing}` : '');
         }
 
         function selectPoint(id) {
@@ -179,9 +309,13 @@
             el.classList.add('selected');
             document.getElementById('pi-coords').textContent =
                 `#${point.id} · ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`;
-            document.getElementById('pi-meta').textContent =
-                `${point.dist_from_center_km} км от центра · неудач: ${point.fail_count}` +
-                (point.created_at ? ` · добавлена ${point.created_at}` : '');
+            const district = point.district_id ? DISTRICT_NAMES[point.district_id] : null;
+            document.getElementById('pi-meta').textContent = [
+                district || 'вне районов',
+                `${point.dist_from_center_km} км от центра`,
+                `неудач: ${point.fail_count}`,
+                point.created_at ? `добавлена ${point.created_at}` : null,
+            ].filter(Boolean).join(' · ');
             document.getElementById('pi-pano-link').href =
                 `https://yandex.ru/maps/?panorama%5Bpoint%5D=${point.longitude},${point.latitude}`;
             info.classList.remove('hidden');
@@ -191,22 +325,19 @@
             if (selectedId === null) return;
             const pointId = selectedId;
             if (!confirm('Удалить точку #' + pointId + ' из пула?')) return;
-            const response = await fetch('/api/admin/points/' + pointId, {
-                method: 'DELETE',
-                headers: { 'X-Admin-Key': keyInput.value.trim() }
-            });
-            if (response.ok) {
+            const response = await adminFetch('/api/admin/points/' + pointId, { method: 'DELETE' });
+            if (response && response.ok) {
                 const entry = markers.get(pointId);
                 if (entry) map.removeChild(entry.marker);
                 markers.delete(pointId);
                 if (selectedId === pointId) selectPoint(null);
-                document.getElementById('pool-stats').textContent = `Точек в пуле: ${markers.size}`;
+                updatePoolStats();
             } else {
                 alert('Не удалось удалить точку.');
             }
         }
 
-        initMap().then(() => {
+        mapReady.then(() => {
             if (keyInput.value) loadPoints();
         });
     </script>
