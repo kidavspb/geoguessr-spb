@@ -311,9 +311,7 @@ geoguessr-spb/
 неизбежно получает координату, возле которой должен открыть панораму, поэтому
 скрипт может набрать максимум очков.
 
-## 📄 Лицензия
-
-MIT License
+## 📄 Данные OpenStreetMap
 
 Геометрия в `data/spb_districts.geojson` произведена из OpenStreetMap и
 распространяется отдельно на условиях ODbL 1.0: © OpenStreetMap contributors.
