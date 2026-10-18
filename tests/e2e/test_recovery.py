@@ -342,3 +342,34 @@ def test_challenge_survives_failed_info_and_unknown_token_returns_settings(page,
         page.locator('#start-btn').click()
     assert second_start.value.post_data_json['challenge_token'] is None
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+
+
+def _block_panorama_sdk(route):
+    route.fulfill(status=403, content_type='application/json',
+                  body='{"statusCode":403,"error":"Forbidden","message":"Limit is exceeded"}')
+
+
+def test_start_is_blocked_honestly_while_panorama_sdk_is_unavailable(page, server):
+    """Исчерпанный лимит Яндекса: игра не создаётся, причина названа честно."""
+    page.route('**/api-maps.yandex.ru/2.1/**', _block_panorama_sdk)
+    starts, reports = [], []
+    page.on('request', lambda request: starts.append(request.url)
+            if request.url.endswith('/api/game/start') else None)
+    page.on('request', lambda request: reports.append(request.post_data_json)
+            if request.url.endswith('/api/client/sdk_unavailable') else None)
+    page.goto(server)
+
+    page.locator('#start-btn').click()
+    warning = page.locator('.api-warning')
+    expect(warning).to_contain_text('Панорамы Яндекса сейчас недоступны')
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#start-btn')).to_be_enabled()
+    assert starts == []
+    assert reports == [{'sdk': 'v2'}]
+
+    # Сервис вернулся: следующий «Начать» сам перезагружает SDK и запускает игру.
+    page.unroute('**/api-maps.yandex.ru/2.1/**', _block_panorama_sdk)
+    page.locator('#start-btn').click()
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    expect(warning).to_have_count(0)
+    assert len(starts) == 1

@@ -1118,6 +1118,21 @@ def set_round_address():
     return jsonify({'success': True})
 
 
+@app.route('/api/client/sdk_unavailable', methods=['POST'])
+@limiter.limit('10 per minute')
+def client_sdk_unavailable():
+    """Браузер не смог загрузить SDK Яндекса (исчерпан лимит ключа, сбой сервиса).
+
+    Сам сервер этого не видит: без отчёта клиента такая авария заметна
+    только по жалобам игроков.
+    """
+    data = _json_object()
+    sdk = data.get('sdk') if data.get('sdk') in ('v2', 'v3') else 'unknown'
+    app.logger.warning('У клиента не загрузился SDK Яндекса %s (UA=%r)',
+                       sdk, request.user_agent.string[:120])
+    return '', 204
+
+
 @app.route('/api/game/panorama_metric', methods=['POST'])
 @limiter.limit('120 per minute')
 def panorama_metric():
@@ -1140,7 +1155,8 @@ def panorama_metric():
 
     status = str(data.get('status') or '')[:24]
     allowed_statuses = {'ready', 'no_coverage', 'search_exhausted', 'rate_limited',
-                        'network_error', 'unsupported', 'api_error', 'cancelled'}
+                        'network_error', 'unsupported', 'api_error', 'cancelled',
+                        'sdk_unavailable'}
     rnd.panorama_lookup_ms = bounded_int('lookup_ms', 120_000)
     rnd.panorama_ready_ms = bounded_int('ready_ms', 180_000)
     rnd.panorama_attempts = bounded_int('attempts', 20)

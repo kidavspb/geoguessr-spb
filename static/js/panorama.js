@@ -190,7 +190,7 @@ async function prepareRound(initialLocation, task = null) {
         await ymapsV2Ready();
     } catch (error) {
         return {
-            ok: false, status: 'api_error', error, location,
+            ok: false, status: 'sdk_unavailable', error, location,
             attempts, lookupMs: Math.round(performance.now() - started)
         };
     }
@@ -478,6 +478,12 @@ export async function loadPanorama(location, preloadTask = null) {
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
             showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.', { back: true });
+        } else if (status === 'sdk_unavailable') {
+            // Соединение с нами в порядке: Яндекс не отдал SDK (например,
+            // исчерпан лимит ключа). Сам браузер причину ответа не видит.
+            api.reportSdkUnavailable('v2');
+            showLoadingOverlay('Сервис панорам Яндекса сейчас недоступен. Попробуйте позже.',
+                               { retry: true });
         } else if (status === 'search_exhausted') {
             showLoadingOverlay(
                 'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',

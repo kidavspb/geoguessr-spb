@@ -103,6 +103,9 @@ export const api = {
     panoramaMetric: payload =>
         post('/api/game/panorama_metric', payload),
 
+    reportSdkUnavailable: sdk =>
+        post('/api/client/sdk_unavailable', { sdk }),
+
     results: () => request('/api/game/results', {}, { retries: 1 }),
 
     challengeInfo: token =>
