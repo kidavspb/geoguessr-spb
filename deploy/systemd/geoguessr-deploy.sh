@@ -11,16 +11,60 @@ readonly EXPECTED_ORIGIN='https://github.com/kidavspb/geoguessr-spb.git'
 readonly STATE_DIR='/var/lib/geoguessr-deploy'
 readonly MARKER_FILE="$STATE_DIR/deployed-sha"
 readonly LOCK_FILE='/run/lock/geoguessr-deploy.lock'
-readonly HEALTH_URL='http://127.0.0.1:8000/'
+readonly BACKUP_DIR='/var/backups/geoguessr'
+readonly BACKUP_KEEP=30
+readonly HEALTH_URL='http://127.0.0.1:8000/healthz'
 readonly HEALTH_ATTEMPTS=20
 readonly HEALTH_DELAY_SECONDS=1
 readonly HEALTH_TIMEOUT_SECONDS=5
 
 stage='initialization'
 marker_tmp=''
+requirements_tmp=''
+backup_tmp=''
+current_sha=''
+checkout_updated=false
+service_restarted=false
 
 log() {
     printf 'geoguessr-deploy: %s\n' "$*"
+}
+
+# Консистентная копия живой SQLite (WAL) через backup API, а не cp файла.
+# Код приложения не импортируется: после неудачного restart checkout может
+# содержать сломанную версию, а бэкап не должен мешать её исправить.
+# Копия пишется во временный файл и переименовывается только целиком.
+backup_database() {
+    backup_tmp="$1.partial"
+    "$VENV_DIR/bin/python" - "$APP_DIR" "$backup_tmp" <<'PY'
+import pathlib
+import sqlite3
+import sys
+
+from dotenv import dotenv_values
+from sqlalchemy.engine import make_url
+
+app_dir = pathlib.Path(sys.argv[1])
+# Та же логика, что в app.py и Flask-SQLAlchemy: DATABASE_URL из .env,
+# относительный путь SQLite — внутри instance/.
+url = make_url(dotenv_values(app_dir / '.env').get('DATABASE_URL')
+               or 'sqlite:///geoguessr_spb.db')
+if url.get_backend_name() != 'sqlite' or not url.database:
+    sys.exit(f'backup supports only file SQLite, got {url.render_as_string()}')
+path = pathlib.Path(url.database)
+if not path.is_absolute():
+    path = app_dir / 'instance' / path
+# mode=rw не создаёт пустую БД, если путь вдруг указывает не туда.
+source = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True)
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
+target.close()
+source.close()
+PY
+    chmod 0600 "$backup_tmp"
+    mv -f -- "$backup_tmp" "$1"
+    backup_tmp=''
 }
 
 on_exit() {
@@ -28,8 +72,25 @@ on_exit() {
     if [[ -n "$marker_tmp" && -e "$marker_tmp" ]]; then
         rm -f -- "$marker_tmp"
     fi
+    if [[ -n "$requirements_tmp" && -e "$requirements_tmp" ]]; then
+        rm -f -- "$requirements_tmp"
+    fi
+    if [[ -n "$backup_tmp" && -e "$backup_tmp" ]]; then
+        rm -f -- "$backup_tmp"
+    fi
     if (( exit_code != 0 )); then
         log "ERROR stage=$stage exit=$exit_code"
+        # Работающий процесс ещё исполняет прежний commit, а шаблоны и статика
+        # отдаются с диска. Возвращаем checkout к этому commit, чтобы до
+        # следующей попытки сайт не отдавал новый фронтенд старому backend.
+        # После restart откат кода не выполняется: схема БД уже могла измениться.
+        if [[ "$checkout_updated" == true && "$service_restarted" != true ]]; then
+            if git -C "$APP_DIR" reset --hard --quiet "$current_sha"; then
+                log "checkout returned to running commit $current_sha"
+            else
+                log "WARNING: could not return checkout to $current_sha"
+            fi
+        fi
     fi
 }
 trap on_exit EXIT
@@ -117,22 +178,45 @@ if ! git merge-base --is-ancestor "$current_sha" "$origin_sha"; then
     exit 1
 fi
 
+# Повторы неудачного deploy (каждые ~2 минуты) не делают новых копий: иначе
+# ротация вытеснила бы снимок, снятый до первой попытки.
+stage='backup'
+install -d -m 0700 "$BACKUP_DIR"
+attempt_id="${current_sha:0:12}-${origin_sha:0:12}"
+existing_backup=$(find "$BACKUP_DIR" -maxdepth 1 -name "*-$attempt_id.db" -print -quit)
+if [[ -n "$existing_backup" ]]; then
+    log "database backup for this attempt already exists: $existing_backup"
+else
+    backup_file="$BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$attempt_id.db"
+    backup_database "$backup_file"
+    log "database backup: $backup_file"
+fi
+find "$BACKUP_DIR" -maxdepth 1 -name '*.db' -type f -printf '%T@ %p\n' \
+    | sort -rn | tail -n +"$((BACKUP_KEEP + 1))" | cut -d' ' -f2- \
+    | xargs -r rm -f --
+
+# Зависимости новой версии ставятся до обновления checkout: долгий pip не
+# растягивает окно, в котором старый процесс отдаёт новые шаблоны с диска.
+stage='dependencies'
+requirements_tmp=$(mktemp)
+git show "$origin_sha:requirements.txt" > "$requirements_tmp"
+"$VENV_DIR/bin/pip" install --disable-pip-version-check \
+    --requirement "$requirements_tmp"
+
 stage='fast-forward'
 log "deploying $origin_sha"
+checkout_updated=true
 git merge --ff-only "$origin_sha"
 if [[ "$(git rev-parse HEAD)" != "$origin_sha" ]]; then
     log 'HEAD does not match fetched origin/main after merge'
     exit 1
 fi
 
-stage='dependencies'
-"$VENV_DIR/bin/pip" install --disable-pip-version-check \
-    --requirement "$APP_DIR/requirements.txt"
-
 stage='migrations'
-"$VENV_DIR/bin/flask" --app app.py db upgrade
+AUTO_MIGRATE=false "$VENV_DIR/bin/flask" --app app.py db upgrade
 
 stage='restart'
+service_restarted=true
 systemctl restart "$APP_SERVICE"
 
 stage='healthcheck'

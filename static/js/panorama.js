@@ -3,7 +3,7 @@
  * следующего раунда и дешёвый прогрев низкодетализированных тайлов.
  */
 import { state } from './state.js';
-import { showToast } from './utils.js';
+import { delay, showToast } from './utils.js';
 import { api } from './api.js';
 import { reloadFailedScript, withTimeout } from './sdk.js';
 
@@ -21,10 +21,6 @@ const NETWORK_RETRY_DELAY_MS = 300;
 const MAX_WARM_TILES = 8;
 
 let v2ReadyPromise = null;
-
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function distanceKm(lat1, lon1, lat2, lon2) {
     const toRad = value => value * Math.PI / 180;
@@ -60,7 +56,9 @@ export function showLoadingOverlay(text, actions = {}) {
     clearTimeout(state.overlayTimer);
     const overlay = document.getElementById('photo-overlay');
     overlay.querySelector('span').textContent = text;
-    setOverlayActions(actions);
+    // Из любой ошибки раунда можно вернуться к настройкам без перезагрузки.
+    const recoverable = Boolean(actions.retry || actions.continueSearch);
+    setOverlayActions({ back: recoverable, ...actions });
     overlay.classList.remove('hidden');
 }
 
@@ -123,7 +121,7 @@ export function ymapsV2Ready() {
  * Один locate уже ищет ближайшую панораму вокруг координаты. Пустой успешный
  * ответ и транспортная ошибка принципиально различаются.
  */
-export async function locatePanorama(latitude, longitude) {
+async function locatePanorama(latitude, longitude) {
     try {
         const result = await withTimeout(
             ymaps.panorama.locate([latitude, longitude]),
@@ -156,21 +154,43 @@ function metricFor(prepared, status, readyMs = null) {
  * попытку; после подтверждённого отсутствия сервер выдаёт точку восстановления
  * из пула. Сетевой сбой повторяется один раз на той же точке и не портит пул.
  */
+function skipsLeft(location) {
+    return Math.max(0,
+        (Number(location.max_location_skips) || 10) -
+        (Number(location.location_version) || 0)
+    );
+}
+
+function isStaleLocation(response) {
+    return response.status === 409 && response.data?.reason === 'stale_location';
+}
+
 async function prepareRound(initialLocation, task = null) {
     const started = performance.now();
     let location = initialLocation;
     let attempts = 0;
     let skips = 0;
-    const remainingSkips = Math.max(0,
-        (Number(initialLocation.max_location_skips) || 10) -
-        (Number(initialLocation.location_version) || 0)
-    );
+    let remainingSkips = skipsLeft(initialLocation);
+    let resyncs = 0;
+
+    // Сервер мог уже применить замену, ответ на которую потерялся: тогда
+    // версия точки у клиента устарела. Берём актуальную точку того же раунда.
+    const resyncLocation = async () => {
+        if (resyncs >= 2) return false;
+        resyncs++;
+        const current = await api.getLocation();
+        if (!current.ok || current.data?.round_id !== location.round_id) return false;
+        location = current.data;
+        remainingSkips = skipsLeft(location);
+        skips = 0;
+        return true;
+    };
 
     try {
         await ymapsV2Ready();
     } catch (error) {
         return {
-            ok: false, status: 'api_error', error, location,
+            ok: false, status: 'sdk_unavailable', error, location,
             attempts, lookupMs: Math.round(performance.now() - started)
         };
     }
@@ -208,13 +228,9 @@ async function prepareRound(initialLocation, task = null) {
             );
             const maxDrift = Number(location.max_panorama_drift_km) || 1;
             if (drift <= maxDrift) {
-                const districtId = location.district_id ||
-                    (state.gameData.difficulty === 'district'
-                        ? state.gameData.districtId : null);
-                const needsPreflight = Boolean(
-                    districtId || location.requires_spatial_validation || location.round > 1
-                );
-                if (needsPreflight) {
+                // Сервер требует проверку для районов и точной границы города;
+                // со второго раунда она ещё и отсекает повтор панорамы.
+                if (location.requires_spatial_validation || location.round > 1) {
                     const validation = await api.validatePanorama(
                         location.round_id,
                         position[0],
@@ -222,9 +238,11 @@ async function prepareRound(initialLocation, task = null) {
                         location.location_version,
                     );
                     if (!validation.ok || !validation.data) {
+                        if (isStaleLocation(validation) && await resyncLocation()) continue;
                         return {
                             ok: false,
                             status: validation.networkError ? 'network_error' : 'api_error',
+                            message: validation.data?.error,
                             location,
                             attempts,
                             lookupMs: Math.round(performance.now() - started)
@@ -291,7 +309,9 @@ async function prepareRound(initialLocation, task = null) {
             location.round_id, skipReason, location.location_version
         );
         if (!skipped.ok || !skipped.data) {
-            if (skipped.status === 429 && skipped.data?.reason === 'search_batch_exhausted') {
+            if (isStaleLocation(skipped) && await resyncLocation()) continue;
+            // Сервер отвечает 409; 429 — от версии до 2026-10, пока идёт deploy.
+            if (skipped.data?.reason === 'search_batch_exhausted') {
                 return {
                     ok: false,
                     status: 'search_exhausted',
@@ -306,6 +326,7 @@ async function prepareRound(initialLocation, task = null) {
                 ok: false,
                 status: skipped.status === 429 ? 'rate_limited'
                     : skipped.networkError ? 'network_error' : 'api_error',
+                message: skipped.data?.error,
                 location,
                 attempts,
                 lookupMs: Math.round(performance.now() - started)
@@ -405,25 +426,17 @@ export function discardPreloaded(preloaded) {
 }
 
 async function openPlayer(container, panorama, options) {
-    if (panorama && typeof panorama.createPlayer === 'function') {
-        const opening = Promise.resolve(panorama.createPlayer(container, options));
-        try {
-            return await withTimeout(
-                opening,
-                PLAYER_OPEN_TIMEOUT_MS,
-                'Таймаут открытия панорамы'
-            );
-        } catch (error) {
-            // Promise API Яндекса нельзя отменить. Если он всё же завершится
-            // после нашего таймаута, сразу освободим запоздавший WebGL Player.
-            opening.then(player => {
-                try { player.destroy(); } catch (destroyError) { /* уже закрыт */ }
-            }).catch(() => {});
-            throw error;
-        }
+    const opening = Promise.resolve(panorama.createPlayer(container, options));
+    try {
+        return await withTimeout(opening, PLAYER_OPEN_TIMEOUT_MS, 'Таймаут открытия панорамы');
+    } catch (error) {
+        // Promise API Яндекса нельзя отменить. Если он всё же завершится
+        // после нашего таймаута, сразу освободим запоздавший WebGL Player.
+        opening.then(player => {
+            try { player.destroy(); } catch (destroyError) { /* уже закрыт */ }
+        }).catch(() => {});
+        throw error;
     }
-    // Заглушка E2E и старые реализации API не имеют Panorama.createPlayer.
-    return new ymaps.panorama.Player(container, panorama, options);
 }
 
 function nextPaint() {
@@ -464,18 +477,28 @@ export async function loadPanorama(location, preloadTask = null) {
         const status = prepared ? prepared.status : 'api_error';
         metricFor(prepared || { location, attempts: 0, lookupMs: 0 }, status);
         if (status === 'unsupported') {
-            showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.');
+            showLoadingOverlay('Этот браузер не поддерживает панорамы Яндекса.', { back: true });
+        } else if (status === 'sdk_unavailable') {
+            // Соединение с нами в порядке: Яндекс не отдал SDK (например,
+            // исчерпан лимит ключа). Сам браузер причину ответа не видит.
+            api.reportSdkUnavailable('v2');
+            showLoadingOverlay('Сервис панорам Яндекса сейчас недоступен. Попробуйте позже.',
+                               { retry: true });
         } else if (status === 'search_exhausted') {
             showLoadingOverlay(
                 'Панорама пока не найдена. Можно продолжить поиск в этом раунде — набранные очки сохранятся.',
-                { continueSearch: true, back: true }
+                { continueSearch: true }
             );
         } else if (status === 'rate_limited') {
             showLoadingOverlay('Поиск временно ограничен. Подождите минуту и повторите загрузку.',
-                               { retry: true, back: true });
-        } else {
+                               { retry: true });
+        } else if (status === 'network_error' || !prepared?.message) {
             showLoadingOverlay('Панорама пока не загрузилась. Проверьте соединение.',
                                { retry: true });
+        } else {
+            // Ответ сервера (раунд устарел, район недоступен) честнее, чем
+            // «проверьте соединение».
+            showLoadingOverlay(prepared.message, { retry: true });
         }
         return { ok: false, status, location: prepared ? prepared.location : location };
     }
@@ -520,8 +543,8 @@ export async function loadPanorama(location, preloadTask = null) {
             location: prepared.location,
             // Сеть не держит уже интерактивный экран. Клиент начинает отсчёт
             // от первого кадра, а Promise ниже уточнит его серверным временем.
-            deadlineMs: state.gameData.timeLimit
-                ? Date.now() + state.gameData.timeLimit * 1000 : null,
+            deadlineMs: state.game.timeLimit
+                ? Date.now() + state.game.timeLimit * 1000 : null,
             readyPromise,
             loadId,
             readyMs
@@ -538,7 +561,7 @@ export async function loadPanorama(location, preloadTask = null) {
 
 function startNoMoveWatchdog() {
     stopNoMoveWatchdog();
-    if (!state.gameData.noMove || !state.panoramaPlayer) return;
+    if (!state.game.noMove || !state.panoramaPlayer) return;
     if (state.panoramaPlayer.events) {
         state.panoramaPlayer.events.add('panoramachange', enforceNoMove);
     }

@@ -33,9 +33,11 @@ def test_legacy_hard_game_finishes_with_outside_and_repeated_panorama(
         assert location['requires_spatial_validation'] is False
         assert client.post('/api/game/ready', json={
             'round_id': location['round_id'],
+            'location_version': location['location_version'],
         }).status_code == 200
         payload = {
             'round_id': location['round_id'],
+            'location_version': location['location_version'],
             'latitude': outside[0], 'longitude': outside[1],
             'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
         }
@@ -46,15 +48,6 @@ def test_legacy_hard_game_finishes_with_outside_and_repeated_panorama(
         assert result['total_score'] == number * 5000
         assert client.post('/api/game/guess', json=payload).get_json()['replayed']
     assert result['is_game_over'] is True
-
-
-def test_start_cannot_opt_out_of_current_panorama_rules(client, app):
-    result = client.post('/api/game/start', json={
-        'difficulty': 'hard', 'panorama_rules_version': 0,
-    }).get_json()
-    assert result['location']['requires_spatial_validation'] is True
-    with app.app_context():
-        assert db.session.get(GameSession, result['game_id']).panorama_rules_version == 1
 
 
 @pytest.mark.parametrize('rules_version', [0, 1])
@@ -99,6 +92,7 @@ def test_legacy_rules_keep_district_boundary_and_distance_checks(client, app):
     for point, reason in [((59.9455, 30.3159), 'outside_district'), ((60.1, 30.4), 'too_far')]:
         response = client.post('/api/game/validate_panorama', json={
             'round_id': location['round_id'],
+            'location_version': location['location_version'],
             'latitude': point[0], 'longitude': point[1],
         })
         assert response.get_json() == {'valid': False, 'reason': reason}

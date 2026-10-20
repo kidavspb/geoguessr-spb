@@ -2,6 +2,7 @@
 Description=Deploy GeoGuessr SPb from origin/main
 Wants=network-online.target
 After=network-online.target
+OnFailure=geoguessr-deploy-failed.service
 
 [Service]
 Type=oneshot

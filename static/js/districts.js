@@ -455,7 +455,7 @@ function handleMapPointerEnd(event) {
         if (panMoved) suppressSyntheticMapClick();
         panGesture = null;
     }
-    document.getElementById('district-map')?.classList.remove('is-panning');
+    document.getElementById('district-map').classList.remove('is-panning');
 }
 
 function handleMapClickCapture(event) {
@@ -718,12 +718,12 @@ export function closeDistrictPicker({ restoreFocus = true } = {}) {
     pinchGesture = null;
     touchMapOwned = false;
     suppressMapClicksUntil = 0;
-    document.getElementById('district-map')?.classList.remove('is-panning');
+    document.getElementById('district-map').classList.remove('is-panning');
     showScreen('start-screen');
     if (restoreFocus) {
         // На низком мобильном viewport action может быть ниже fold. Обычный
         // focus возвращает пользователя и логически, и визуально к источнику.
-        document.getElementById('district-picker-btn')?.focus();
+        document.getElementById('district-picker-btn').focus();
     }
 }
 
@@ -738,11 +738,6 @@ export function initDistrictPicker({ onConfirm }) {
         map: document.getElementById('district-map'),
         reset: document.getElementById('district-map-reset'),
     };
-    if (Object.values(controls).some(control => !control)) {
-        console.warn('District picker markup is missing or incompatible');
-        return false;
-    }
-
     initialized = true;
     confirmSelection = onConfirm;
     initMapInteractions(controls.map, controls.reset);

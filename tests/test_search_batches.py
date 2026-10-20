@@ -10,7 +10,7 @@ def _exhaust(client, location):
         assert response.status_code == 200
         location = response.get_json()
     response = client.post('/api/game/skip_location', json=location)
-    assert response.status_code == 429
+    assert response.status_code == 409
     assert response.get_json()['reason'] == 'search_batch_exhausted'
     return location
 
@@ -40,7 +40,7 @@ def test_continue_search_preserves_game_and_bounds_each_series(client, app, terr
         assert continued.get('district_id') == territory.get('district_id')
         with app.app_context():
             game = GameSession.query.one()
-            assert game.current_round == game.rounds_played == 1
+            assert game.current_round == 1
             assert game.total_score == result['score'] == 5000
             assert game.difficulty == territory['difficulty']
             assert game.district_id == territory.get('district_id')

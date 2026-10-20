@@ -58,7 +58,7 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     def expired_deadline(route):
         response = route.fetch()
         data = response.json()
-        data['deadline_ms'] = 1
+        data['remaining_ms'] = 0
         route.fulfill(response=response, json=data)
 
     guesses = []
@@ -74,6 +74,39 @@ def test_expired_ready_deadline_submits_timeout_only_once(page, server):
     page.wait_for_timeout(800)
     assert len(guesses) == 1
     assert guesses[0]['timed_out'] is True
+
+
+def test_answer_rejected_as_late_is_shown_as_timeout(page, server):
+    def late_answer(route):
+        response = route.fetch()
+        data = response.json()
+        data.update(timed_out=True, score=0)
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/guess', late_answer)
+    page.goto(server)
+    page.locator('#start-btn').click()
+    play_round(page)
+    expect(page.locator('#result-title')).to_have_text('Время вышло!')
+    expect(page.locator('#result-miss')).to_contain_text('после окончания времени')
+
+
+@pytest.mark.parametrize('clock_offset_ms', [90_000, -90_000])
+def test_round_timer_ignores_device_clock_offset(page, server, clock_offset_ms):
+    """Остаток считается от ответа сервера, а не от сравнения двух часов."""
+    page.add_init_script(f"""
+        const realNow = Date.now.bind(Date);
+        Date.now = () => realNow() + ({clock_offset_ms});
+    """)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    with page.expect_response('**/api/game/ready'):
+        page.locator('#start-btn').click()
+    # Несколько тиков таймера после применения ответа /ready.
+    page.wait_for_timeout(1000)
+
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#timer-value')).to_have_text(re.compile(r'^(1:00|0:5\d)$'))
 
 
 def test_admin_delete_tracks_requested_point_when_selection_changes(page, server):
@@ -105,6 +138,124 @@ def test_admin_delete_tracks_requested_point_when_selection_changes(page, server
     expect(page.locator('.admin-dot')).to_have_count(1)
     expect(page.locator('.admin-dot')).to_have_attribute('title', re.compile('#2'))
     expect(page.locator('#pi-coords')).to_contain_text('#2')
+
+
+def test_admin_stats_are_readable_cards_and_tables(page, server):
+    page.route('**/api/admin/points', lambda route: route.fulfill(json={'points': [
+        {'id': 7, 'latitude': 59.93, 'longitude': 30.31, 'fail_count': 1,
+         'dist_from_center_km': 1.2, 'district_id': 'tsentralny', 'created_at': '17.10.2026'},
+    ]}))
+    page.route('**/api/admin/stats', lambda route: route.fulfill(json={
+        'games_total': 120, 'games_completed_total': 80, 'games_started_7d': 30,
+        'games_completed_7d': 21, 'completion_rate_7d': 0.7, 'daily_players_today': 5,
+        'panorama_samples': 400, 'panorama_ready_p50_ms': 1800, 'panorama_ready_p95_ms': 5200,
+        'panorama_failure_rate': 0.04,
+        'round_sources': {'pool': 50, 'explore': 20, 'explore_recovery': 9},
+        'panorama_by_source': {
+            'explore': {'rounds': 29, 'ready_rate': 0.69, 'lookup_p50_ms': 3100, 'attempts_avg': 2.4},
+            'pool': {'rounds': 50, 'ready_rate': 0.98, 'lookup_p50_ms': 600, 'attempts_avg': 1.0},
+        },
+        'pool_points_by_district': {'tsentralny': 40, 'kurortny': 2},
+    }))
+    page.goto(server + '/admin')
+    page.locator('#admin-key').fill('test-admin-key')
+    page.locator('#load-btn').click()
+
+    expect(page.locator('#kpi-games .kpi')).to_have_count(4)
+    expect(page.locator('#kpi-games')).to_contain_text('21 · 70%')
+    expect(page.locator('#kpi-panorama')).to_contain_text('1.8 с')
+    search_rows = page.locator('#search-table tr')
+    expect(search_rows).to_have_count(3)  # заголовок + пул + новые места
+    expect(search_rows.nth(1)).to_contain_text('новые места')
+    expect(search_rows.nth(1)).to_contain_text('3.1 с')
+    page.locator('summary', has_text='Пул по районам').click()
+    expect(page.locator('#districts-table td.low')).to_have_text('2')
+    expect(page.locator('#districts-table')).to_contain_text('Курортный район')
+
+    page.locator('.admin-dot').click()
+    expect(page.locator('#pi-meta')).to_contain_text('Центральный район')
+    expect(page.locator('#pool-stats')).to_have_text('точек: 1 · с неудачами: 1')
+
+
+def _start_district_game(page, server, district_id='petrogradsky'):
+    page.goto(server)
+    page.locator('#district-picker-btn').click()
+    page.locator('#district-list').select_option(district_id)
+    page.locator('#district-confirm-btn').click()
+    page.locator('#start-btn').click()
+
+
+def test_retry_recovers_after_lost_skip_responses(page, server):
+    """Сервер применил замену, но клиент не получил ответ: повтор синхронизирует версию."""
+    calls = {'validate': 0, 'skip': 0}
+
+    def validate(route):
+        calls['validate'] += 1
+        if calls['validate'] == 1:
+            return route.fulfill(status=200, content_type='application/json',
+                                 body=json.dumps({'valid': False, 'reason': 'outside_district'}))
+        route.fulfill(response=route.fetch())
+
+    def skip(route):
+        calls['skip'] += 1
+        response = route.fetch()  # сервер применяет замену
+        if calls['skip'] <= 2:    # попытка и повтор api.js теряют ответ
+            return route.abort()
+        route.fulfill(response=response)
+
+    page.route('**/api/game/validate_panorama', validate)
+    page.route('**/api/game/skip_location', skip)
+    _start_district_game(page, server)
+
+    retry = page.locator('#retry-panorama-btn')
+    expect(retry).to_be_visible(timeout=15000)
+    expect(page.locator('#back-to-district-btn')).to_be_visible()
+    retry.click()
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=15000)
+    assert page.evaluate('window.__ymapsStats.panoramaPlayersActive') == 1
+
+
+def test_server_error_overlay_offers_settings(page, server):
+    page.route('**/api/game/validate_panorama', lambda route: route.fulfill(
+        status=503, content_type='application/json',
+        body=json.dumps({'error': 'Выбор района временно недоступен'})))
+    _start_district_game(page, server)
+
+    overlay = page.locator('#photo-overlay')
+    expect(overlay).to_contain_text('Выбор района временно недоступен', timeout=15000)
+    expect(page.locator('#retry-panorama-btn')).to_be_visible()
+    page.locator('#back-to-district-btn').click()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+
+def test_failed_guess_map_stays_retryable_in_next_round(page, server):
+    """Без карты ответить нельзя, поэтому повтор не должен пропадать."""
+    abort_v3 = lambda route: route.abort()  # noqa: E731
+    page.route('**/api-maps.yandex.ru/v3/**', abort_v3)
+
+    def short_round(route):
+        response = route.fetch()
+        data = response.json()
+        data['remaining_ms'] = 1500
+        route.fulfill(response=response, json=data)
+
+    page.route('**/api/game/ready', short_round)
+    page.goto(server)
+    page.get_by_text('1 мин', exact=True).click()
+    page.locator('#start-btn').click()
+    hint = page.locator('#map-hint')
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'), timeout=30000)
+    expect(page.locator('#result-screen')).to_have_class(re.compile('active'), timeout=15000)
+
+    page.locator('#next-round-btn').click()
+    expect(page.locator('#current-round')).to_have_text('2')
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    expect(hint).to_have_text(re.compile('Карта не загрузилась'))
+    expect(hint).to_have_class(re.compile('map-retry'))
+
+    page.unroute('**/api-maps.yandex.ru/v3/**', abort_v3)
+    hint.click()
+    expect(hint).to_have_text('Кликни по карте, чтобы отметить место', timeout=15000)
 
 
 @pytest.mark.parametrize('sdk', ['v2', 'v3'])
@@ -168,3 +319,57 @@ def test_outdated_tab_gets_reload_message_before_starting_game(page, server):
     expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
     assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 1
+
+
+def test_challenge_survives_failed_info_and_unknown_token_returns_settings(page, server):
+    """Сбой GET /api/challenge не отменяет челлендж; 404 при старте — отменяет."""
+    page.route('**/api/challenge/**', lambda route: route.fulfill(
+        status=503, content_type='application/json', body='{"error": "Сервер занят"}'))
+    page.goto(f'{server}/?challenge=missing-token')
+    banner = page.locator('#challenge-banner')
+    expect(banner).to_contain_text('те же')
+    expect(page.locator('#difficulty-group')).to_be_hidden()
+
+    with page.expect_request('**/api/game/start') as first_start:
+        page.locator('#start-btn').click()
+    assert first_start.value.post_data_json['challenge_token'] == 'missing-token'
+    # Сервер не знает токен: показываем это и возвращаем обычные настройки.
+    expect(banner).to_contain_text('Челлендж не найден')
+    expect(page.locator('#difficulty-group')).to_be_visible()
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+
+    with page.expect_request('**/api/game/start') as second_start:
+        page.locator('#start-btn').click()
+    assert second_start.value.post_data_json['challenge_token'] is None
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+
+
+def _block_panorama_sdk(route):
+    route.fulfill(status=403, content_type='application/json',
+                  body='{"statusCode":403,"error":"Forbidden","message":"Limit is exceeded"}')
+
+
+def test_start_is_blocked_honestly_while_panorama_sdk_is_unavailable(page, server):
+    """Исчерпанный лимит Яндекса: игра не создаётся, причина названа честно."""
+    page.route('**/api-maps.yandex.ru/2.1/**', _block_panorama_sdk)
+    starts, reports = [], []
+    page.on('request', lambda request: starts.append(request.url)
+            if request.url.endswith('/api/game/start') else None)
+    page.on('request', lambda request: reports.append(request.post_data_json)
+            if request.url.endswith('/api/client/sdk_unavailable') else None)
+    page.goto(server)
+
+    page.locator('#start-btn').click()
+    warning = page.locator('.api-warning')
+    expect(warning).to_contain_text('Панорамы Яндекса сейчас недоступны')
+    expect(page.locator('#start-screen')).to_have_class(re.compile('active'))
+    expect(page.locator('#start-btn')).to_be_enabled()
+    assert starts == []
+    assert reports == [{'sdk': 'v2'}]
+
+    # Сервис вернулся: следующий «Начать» сам перезагружает SDK и запускает игру.
+    page.unroute('**/api-maps.yandex.ru/2.1/**', _block_panorama_sdk)
+    page.locator('#start-btn').click()
+    expect(page.locator('#game-screen')).to_have_class(re.compile('active'))
+    expect(warning).to_have_count(0)
+    assert len(starts) == 1

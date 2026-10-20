@@ -14,6 +14,10 @@ export function plural(n, forms) {
     return forms[2];
 }
 
+export function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Экранирование HTML
  */

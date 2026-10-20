@@ -87,7 +87,7 @@ def test_guess_map_starts_at_district_and_resets_each_round(page, server, distri
     standard = page.evaluate("""async () => {
         const { state, SPB_CENTER, DEFAULT_ZOOM } = await import('/static/js/state.js');
         const { resetMapForNewRound } = await import('/static/js/maps.js');
-        state.gameData.difficulty = 'medium';
+        state.game.difficulty = 'medium';
         resetMapForNewRound();
         return {
             actual: JSON.parse(document.getElementById('map').dataset.mapLocation),
@@ -110,15 +110,13 @@ def test_district_map_views_are_stable_inside_each_territory(page, server):
         const views = {};
         for (const option of document.querySelectorAll('#district-list option[value]')) {
             if (!option.value) continue;
-            state.gameData.difficulty = 'district';
-            state.gameData.districtId = option.value;
+            state.game.difficulty = 'district';
+            state.game.districtId = option.value;
             // Ни границы, ни расположение игровой панорамы не определяют preset.
-            state.gameData.districtBounds = null;
             state.actualPoint = [0, 0];
             resetMapForNewRound();
             const first = document.getElementById('map').dataset.mapLocation;
             state.actualPoint = [80, 150];
-            state.gameData.currentRound = 5;
             resetMapForNewRound();
             views[option.value] = {
                 first: JSON.parse(first),
@@ -879,32 +877,12 @@ def test_settings_have_styled_initial_render_without_javascript(browser, server)
         context.close()
 
 
-def test_missing_settings_component_does_not_abort_other_controls(page, server):
-    """Несовместимый/опциональный блок не обрушает инициализацию соседних."""
-    page_errors = []
-    page.on('pageerror', lambda error: page_errors.append(str(error)))
-    page.add_init_script("""
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('difficulty-group')?.remove();
-        }, { once: true });
-    """)
-    page.goto(server)
-
-    page.get_by_text('1 мин', exact=True).click()
-    expect(page.get_by_role('radio', name='1 мин')).to_be_checked()
-    movement = page.get_by_role('switch')
-    movement.click()
-    expect(movement).not_to_be_checked()
-    expect(page.locator('#movement-title')).to_have_text('Нельзя перемещаться')
-    assert page_errors == []
-
-
 def test_full_game_flow(page, server):
     # Первый location приходит прямо из /start, последующие — из ответа guess.
     # Отдельные GET больше не нужны; их появление означает потерю prefetch-задачи.
     location_requests = []
     page.on('request', lambda req: location_requests.append(req.url)
-            if '/api/game/location' in req.url and 'peek' not in req.url else None)
+            if '/api/game/location' in req.url else None)
 
     page.goto(server)
     expect(page).to_have_title(re.compile('Петербургский следопыт'))
@@ -964,6 +942,24 @@ def test_no_move_round_and_map_toggle(page, server):
     page.locator('#start-btn').click()
     expect(page.locator('#game-screen')).to_have_class(re.compile('active'), timeout=10000)
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+
+    # Переход SDK реально меняет позицию: no-move должен вернуть исходную
+    # съёмку, сохранив единственный Player.
+    player = page.evaluate_handle("async () => (await import('/static/js/state.js')).state.panoramaPlayer")
+    before_move = player.evaluate("""async player => {
+        const position = player.getPanorama().getPosition().slice(0, 2);
+        await player.moveTo([position[0] + 0.005, position[1]]);
+        return {position, playersCreated: window.__ymapsStats.panoramaPlayersCreated};
+    }""")
+    # Предикат синхронный: Promise(false) тоже truthy для polling Playwright.
+    page.wait_for_function("""({player, position}) => {
+        return player.getPanorama().getPosition().slice(0, 2)
+            .every((coordinate, index) => coordinate === position[index]);
+    }""", arg={'player': player, 'position': before_move['position']}, timeout=5000)
+    player.dispose()
+    expect(page.locator('#toast')).to_be_visible()
+    expect(page.locator('#toast')).to_contain_text('ходить нельзя')
 
     # На мобильных раунд начинается со свёрнутой картой: первым делом игрок
     # осматривается, и панорама сразу на весь экран
@@ -976,6 +972,9 @@ def test_no_move_round_and_map_toggle(page, server):
     expect(page.locator('#map-panel')).to_have_class(re.compile('collapsed'))
     page.locator('#map-handle').click()
 
+    stats = page.evaluate('window.__ymapsStats')
+    assert stats['panoramaPlayersCreated'] == before_move['playersCreated']
+    assert stats['panoramaPlayersActive'] == 1
     _play_round(page)
     expect(page.locator('#result-score')).to_be_visible()
 
@@ -1185,7 +1184,7 @@ def test_standard_skip_limit_still_has_settings_action(page, server):
     """После предела поиска обычная игра тоже не остаётся без действий."""
     page.add_init_script('window.__ymapsEmptyLocateCount = 100')
     page.route('**/api/game/skip_location', lambda route: route.fulfill(
-        status=429,
+        status=409,
         content_type='application/json',
         body='{"error":"Серия поиска завершена","reason":"search_batch_exhausted"}',
     ))
@@ -1364,67 +1363,18 @@ def test_panorama_outside_district_is_replaced_before_player(page, server):
     assert stats['panoramaPlayersCreated'] == 1
 
 
-def test_duplicate_panorama_in_next_round_is_replaced_before_player(page, server):
-    """Повтор уже сыгранной панорамы не показывается во втором раунде."""
-    round_ids = []
-    rejected_duplicate = False
-    skip_payloads = []
-
-    def validate_route(route):
-        nonlocal rejected_duplicate
-        round_id = route.request.post_data_json['round_id']
-        if round_id not in round_ids:
-            round_ids.append(round_id)
-        if len(round_ids) == 2 and not rejected_duplicate:
-            rejected_duplicate = True
-            route.fulfill(
-                status=200,
-                content_type='application/json',
-                body='{"valid":false,"reason":"duplicate_panorama"}',
-            )
-        else:
-            route.continue_()
-
-    page.route('**/api/game/validate_panorama', validate_route)
-    page.on('request', lambda request: skip_payloads.append(request.post_data_json)
-            if request.url.endswith('/api/game/skip_location') else None)
-    page.goto(server)
-    page.locator('#district-picker-btn').click()
-    page.locator('#district-list').select_option('petrogradsky')
-    page.get_by_role('button', name='Выбрать район').click()
-    page.locator('#start-btn').click()
-
-    _play_round(page)
-    page.locator('#next-round-btn').click()
-    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
-    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
-
-    assert rejected_duplicate
-    assert len(round_ids) == 2
-    assert [payload['reason'] for payload in skip_payloads] == ['duplicate_panorama']
-    assert page.evaluate('window.__ymapsStats.locateCalls') == 3
-    # Игроку создали Player только для первого и заменённого второго раундов.
-    assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
-    location = page.evaluate("""async () => {
-        const { state } = await import('/static/js/state.js');
-        return state.currentLocation;
-    }""")
-    assert location['round'] == 2
-    assert location['location_version'] == 1
-
-
 def test_district_keeps_searching_after_five_duplicate_panoramas(page, server):
     """Несколько повторов подряд не запирают игрока перед вторым раундом."""
-    first_round_id = None
+    round_ids = []
     duplicate_count = 0
     skip_reasons = []
 
     def validate_route(route):
-        nonlocal first_round_id, duplicate_count
+        nonlocal duplicate_count
         round_id = route.request.post_data_json['round_id']
-        if first_round_id is None:
-            first_round_id = round_id
-        if round_id != first_round_id and duplicate_count < 5:
+        if round_id not in round_ids:
+            round_ids.append(round_id)
+        if round_id != round_ids[0] and duplicate_count < 5:
             duplicate_count += 1
             route.fulfill(
                 status=200,
@@ -1450,9 +1400,17 @@ def test_district_keeps_searching_after_five_duplicate_panoramas(page, server):
     expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
 
     assert duplicate_count == 5
+    assert len(round_ids) == 2
     assert skip_reasons == ['duplicate_panorama'] * 5
     assert page.evaluate('window.__ymapsStats.locateCalls') == 7
     assert page.evaluate('window.__ymapsStats.panoramaPlayersCreated') == 2
+    location = page.evaluate("""async () => {
+        const { state } = await import('/static/js/state.js');
+        return state.currentLocation;
+    }""")
+    assert location['round_id'] == round_ids[1]
+    assert location['round'] == 2
+    assert location['location_version'] == 5
 
 
 def test_standard_mode_replaces_repeat_before_second_player(page, server):
@@ -1556,19 +1514,27 @@ def test_slow_ready_response_does_not_block_fast_next_round(page, server):
     """Сетевое подтверждение таймера не держит уже видимый интерфейс."""
     page.add_init_script("""
         const originalFetch = window.fetch.bind(window);
+        window.__heldReadyResponses = [];
         window.fetch = async (...args) => {
             const response = await originalFetch(...args);
             const url = String(args[0]);
             if (url.includes('/api/game/ready')) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                // Сервер уже записал ready; клиентский ответ остаётся в пути.
+                await new Promise(resolve => window.__heldReadyResponses.push(resolve));
             }
             return response;
         };
     """)
     page.goto(server)
     page.locator('#start-btn').click()
+    page.wait_for_function('window.__heldReadyResponses.length === 1')
     _play_round(page)
 
     page.locator('#next-round-btn').click()
+    page.wait_for_function('window.__heldReadyResponses.length === 2')
     expect(page.locator('#current-round')).to_have_text('2', timeout=10000)
     expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    expect(page.locator('#photo-overlay')).to_be_hidden(timeout=10000)
+    page.locator('#map').click(position={'x': 150, 'y': 120})
+    expect(page.locator('#guess-btn')).to_be_enabled()
+    page.evaluate('window.__heldReadyResponses.splice(0).forEach(resolve => resolve())')

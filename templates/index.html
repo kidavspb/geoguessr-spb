@@ -96,7 +96,6 @@
                     </div>
                     {# Rollout guard: старый worker может перечитать новый template
                        до restart, но не должен показать UI, которого его API не знает. #}
-                    {% if district_feature_enabled|default(false) %}
                     <div class="district-choice-separator" aria-hidden="true">
                         <span>или</span>
                     </div>
@@ -111,7 +110,6 @@
                         <span id="district-action-label">Выбрать конкретный район</span>
                         <span class="district-action-chevron" aria-hidden="true">›</span>
                     </button>
-                    {% endif %}
                 </fieldset>
 
                 <fieldset class="input-group settings-group" id="timer-group">
@@ -155,7 +153,6 @@
         </main>
     </div>
 
-    {% if district_feature_enabled|default(false) %}
     <!-- Отдельный экран выбора административного района. Геометрия приходит
          из локального canonical GeoJSON; список остаётся доступным fallback. -->
     <div id="district-screen" class="screen">
@@ -175,7 +172,7 @@
                     <strong id="district-selected-name">Район не выбран</strong>
                 </div>
 
-                <div class="district-map-frame" id="district-map-frame">
+                <div class="district-map-frame">
                     <div class="district-map-loading" id="district-map-loading"
                          role="status">Загружаем карту районов…</div>
                     <svg id="district-map" class="district-map hidden"
@@ -212,16 +209,13 @@
             </section>
         </main>
     </div>
-    {% endif %}
 
     <!-- Игровой экран: панорама во весь экран, карта — оверлей в углу -->
     <div id="game-screen" class="screen">
         <div class="game-stage">
             <!-- Панорама текущего раунда -->
             <div class="location-container">
-                <div id="panorama-mode" class="location-mode">
-                    <div id="panorama-player"></div>
-                </div>
+                <div id="panorama-player"></div>
                 <div class="photo-overlay" id="photo-overlay">
                     <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="" class="overlay-logo">
                     <span>Загрузка…</span>
@@ -328,7 +322,7 @@
 
                 <div class="final-actions">
                     <button id="challenge-btn" class="btn btn-secondary hidden">⚔️ Бросить вызов другу</button>
-                    <button id="play-again-btn" class="btn btn-primary">На главный экран</button>
+                    <button id="home-btn" class="btn btn-primary">На главный экран</button>
                     <button id="final-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
                 </div>
             </div>
@@ -355,19 +349,15 @@
                     <button type="button" class="lb-filter-btn" data-difficulty="center">Центр</button>
                     <button type="button" class="lb-filter-btn" data-difficulty="medium">Средняя</button>
                     <button type="button" class="lb-filter-btn" data-difficulty="hard">Весь город</button>
-                    {% if district_feature_enabled|default(false) %}
                     <button type="button" class="lb-filter-btn" data-difficulty="district">Район</button>
-                    {% endif %}
                 </div>
 
-                {% if district_feature_enabled|default(false) %}
                 <div id="lb-district-filter" class="lb-district-filter hidden">
                     <label for="lb-district-select">Район</label>
                     <select id="lb-district-select" class="lb-district-select">
                         {% include '_district_options.html' %}
                     </select>
                 </div>
-                {% endif %}
 
                 <div id="leaderboard-table" class="leaderboard-table" aria-live="polite" aria-busy="false">
                     <!-- Таблица будет добавлена динамически -->

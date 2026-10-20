@@ -6,6 +6,7 @@
 import math
 
 import game_logic
+from helpers import guess_at_target, round_body
 
 
 # --------------------------------------------------------------------------
@@ -26,7 +27,7 @@ def test_calculate_score_bounds():
     max_score = game_logic.MAX_SCORE_PER_ROUND
     assert game_logic.calculate_score(0) == max_score          # точно в цель
     assert game_logic.calculate_score(0.04) == max_score       # в пределах 50 м
-    assert game_logic.calculate_score(game_logic.MAX_DISTANCE_KM) == 0
+    assert game_logic.calculate_score(30) == 0
     assert game_logic.calculate_score(1000) == 0               # очень далеко
     mid = game_logic.calculate_score(3)
     assert 0 < mid < max_score
@@ -106,10 +107,7 @@ def test_full_game_flow_perfect_score(client):
     for i in range(rounds):
         loc = client.get('/api/game/location').get_json()
         # Угадываем ровно в сгенерированную точку → расстояние 0, максимум очков.
-        last = client.post('/api/game/guess', json={
-            'latitude': loc['latitude'],
-            'longitude': loc['longitude'],
-        }).get_json()
+        last = guess_at_target(client, loc)
         assert last['score'] == 5000
 
     assert last['is_game_over'] is True
@@ -126,9 +124,7 @@ def test_leaderboard_filters_by_difficulty(client):
     # Доводим одну игру в режиме center до конца.
     client.post('/api/game/start', json={'player_name': 'Гонщик', 'difficulty': 'center'})
     for _ in range(5):
-        loc = client.get('/api/game/location').get_json()
-        client.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(client, client.get('/api/game/location').get_json())
 
     all_board = client.get('/api/leaderboard').get_json()
     assert any(e['player_name'] == 'Гонщик' for e in all_board['leaderboard'])
@@ -151,43 +147,41 @@ def test_unfinished_game_not_in_leaderboard(client):
     assert all(e['player_name'] != 'Недоигравший' for e in board['leaderboard'])
 
 
-def test_set_actual_point_antifraud(client):
+def test_panorama_far_from_server_point_is_rejected(client):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     loc = client.get('/api/game/location').get_json()
     gen_lat, gen_lon = loc['latitude'], loc['longitude']
 
     # Точка далеко от серверной (≈ полградуса долготы ≈ 28 км) — отклоняется.
-    far = client.post('/api/game/set_actual_point',
-                      json={'latitude': gen_lat, 'longitude': gen_lon + 0.5})
+    far = client.post('/api/game/validate_panorama',
+                      json=round_body(loc, latitude=gen_lat, longitude=gen_lon + 0.5))
     assert far.status_code == 200
-    assert far.get_json()['success'] is False
-    assert far.get_json()['reason'] == 'too_far'
+    assert far.get_json() == {'valid': False, 'reason': 'too_far'}
 
     # Точка рядом с серверной — принимается.
-    near = client.post('/api/game/set_actual_point',
-                       json={'latitude': gen_lat, 'longitude': gen_lon})
-    assert near.get_json()['success'] is True
+    near = client.post('/api/game/validate_panorama',
+                       json=round_body(loc, latitude=gen_lat, longitude=gen_lon))
+    assert near.get_json()['valid'] is True
 
 
-def test_set_actual_point_rejects_bad_coords(client):
-    client.post('/api/game/start', json={'difficulty': 'medium'})
-    client.get('/api/game/location')
-    resp = client.post('/api/game/set_actual_point', json={'latitude': 'nope'})
+def test_panorama_check_rejects_bad_coords(client):
+    loc = client.post('/api/game/start', json={'difficulty': 'medium'}).get_json()['location']
+    resp = client.post('/api/game/validate_panorama', json=round_body(loc, latitude='nope'))
     assert resp.status_code == 400
 
 
 def test_non_finite_coordinates_are_rejected(client):
-    client.post('/api/game/start', json={'difficulty': 'medium'})
-    response = client.post('/api/game/guess', json={
-        'latitude': 'Infinity', 'longitude': 30.3,
-    })
+    loc = client.post('/api/game/start', json={'difficulty': 'medium'}).get_json()['location']
+    response = client.post('/api/game/guess', json=round_body(
+        loc, latitude='Infinity', longitude=30.3,
+    ))
     assert response.status_code == 400
 
 
 def test_skip_location_regenerates_point(client):
     client.post('/api/game/start', json={'difficulty': 'medium'})
     first = client.get('/api/game/location').get_json()
-    skipped = client.post('/api/game/skip_location').get_json()
+    skipped = client.post('/api/game/skip_location', json=round_body(first)).get_json()
     # Раунд тот же, но координаты пересгенерированы (с подавляющей вероятностью иные).
     assert skipped['round'] == first['round']
     assert (skipped['latitude'], skipped['longitude']) != (first['latitude'], first['longitude'])

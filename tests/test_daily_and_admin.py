@@ -2,6 +2,8 @@
 и OG-тегов челлендж-ссылок."""
 from datetime import timedelta
 
+from helpers import guess_at_target, round_body
+
 ADMIN_HEADERS = {'X-Admin-Key': 'test-admin-key'}
 
 
@@ -11,8 +13,7 @@ def _finish_game(client, rounds=5):
     for _ in range(rounds):
         loc = client.get('/api/game/location').get_json()
         points.append((loc['latitude'], loc['longitude']))
-        client.post('/api/game/guess',
-                    json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+        guess_at_target(client, loc)
     return points
 
 
@@ -48,9 +49,7 @@ def test_daily_single_attempt_per_cookie(client):
 
 def test_daily_unfinished_game_resumes(client):
     client.post('/api/game/start', json={'player_name': 'Недоигравший', 'daily': True})
-    loc = client.get('/api/game/location').get_json()
-    client.post('/api/game/guess',
-                json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+    guess_at_target(client, client.get('/api/game/location').get_json())
 
     resumed = client.post('/api/game/start', json={'daily': True}).get_json()
     assert resumed['resumed'] is True
@@ -94,7 +93,7 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
     from models import GameRound, VerifiedPoint, db
 
     client.post('/api/game/start', json={'difficulty': 'medium'})
-    client.get('/api/game/location')
+    loc = client.get('/api/game/location').get_json()
 
     with app_module.app.app_context():
         # Точка пула, совпадающая с текущей точкой раунда, — как будто
@@ -109,7 +108,7 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
         db.session.commit()
 
     # Первый скип: счётчик неудач растёт
-    client.post('/api/game/skip_location')
+    client.post('/api/game/skip_location', json=round_body(loc, reason='no_coverage'))
     with app_module.app.app_context():
         point = VerifiedPoint.query.first()
         assert point.fail_count == 1
@@ -123,6 +122,7 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
     from pool import mark_point_failed
     with app_module.app.app_context():
         mark_point_failed(lat, lon)
+        db.session.commit()
         assert VerifiedPoint.query.count() == 0
 
 
@@ -141,9 +141,9 @@ def test_network_error_does_not_poison_verified_pool(client, app_module):
         ))
         db.session.commit()
 
-    skipped = client.post('/api/game/skip_location', json={
-        'round_id': loc['round_id'], 'reason': 'network_error'
-    })
+    skipped = client.post('/api/game/skip_location', json=round_body(
+        loc, reason='network_error',
+    ))
     assert skipped.status_code == 200
     assert skipped.get_json()['source'] == f"{loc['source']}_recovery"
     with app_module.app.app_context():
@@ -166,9 +166,10 @@ def test_confirmed_panorama_resets_fail_count(client, app_module):
         ))
         db.session.commit()
 
-    # Панорама нашлась и подтвердилась антифродом — неудачи прощены
-    client.post('/api/game/set_actual_point',
-                json={'latitude': loc['latitude'], 'longitude': loc['longitude']})
+    # Панорама нашлась и прошла серверную проверку — неудачи прощены
+    client.post('/api/game/validate_panorama', json=round_body(
+        loc, latitude=loc['latitude'], longitude=loc['longitude'],
+    ))
     with app_module.app.app_context():
         assert VerifiedPoint.query.first().fail_count == 0
 

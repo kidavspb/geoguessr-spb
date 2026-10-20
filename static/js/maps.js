@@ -84,37 +84,11 @@ export function ymapsV3Ready() {
 }
 
 /** Постоянный начальный вид территории, без привязки к ответу раунда. */
-function initialGuessMapLocation(container) {
-    if (state.gameData.difficulty === 'district' &&
-            Object.prototype.hasOwnProperty.call(DISTRICT_MAP_VIEWS, state.gameData.districtId)) {
-        const view = DISTRICT_MAP_VIEWS[state.gameData.districtId];
-        return { center: [...view.center], zoom: view.zoom };
-    }
-    // Для ещё не описанного района сохраняем прежний fallback по bounds.
-    const bounds = state.gameData.districtBounds;
-    if (state.gameData.difficulty !== 'district' || !Array.isArray(bounds) ||
-            bounds.length !== 4 || !bounds.every(Number.isFinite)) {
-        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
-    }
-    const [west, south, east, north] = bounds;
-    if (west >= east || south >= north || south <= -85 || north >= 85) {
-        return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
-    }
-    const southY = mercatorY(south);
-    const northY = mercatorY(north);
-    // clientWidth/Height не зависят от transform свёрнутого мобильного листа.
-    const width = Math.max(120, (container.clientWidth || 320) - 48);
-    const height = Math.max(120, (container.clientHeight || 220) - 48);
-    // Размер района влияет на приближение максимум на один шаг. Большие
-    // районы не отдаляем ради fit: важнее сразу удобно ставить точку.
-    const zoom = Math.floor(Math.max(DEFAULT_ZOOM, Math.min(DEFAULT_ZOOM + 1, Math.min(
-        Math.log2(width / TILE_SIZE / ((east - west) / 360)),
-        Math.log2(height / TILE_SIZE / Math.abs(northY - southY))
-    ))));
-    return {
-        center: [(west + east) / 2, mercatorYInv((southY + northY) / 2)],
-        zoom,
-    };
+function initialGuessMapLocation() {
+    const view = state.game.difficulty === 'district'
+        ? DISTRICT_MAP_VIEWS[state.game.districtId] : null;
+    if (view) return { center: [...view.center], zoom: view.zoom };
+    return { center: [SPB_CENTER[1], SPB_CENTER[0]], zoom: DEFAULT_ZOOM };
 }
 
 /** Инициализация карты выбора. */
@@ -130,7 +104,7 @@ export async function initMap() {
     mapContainer.innerHTML = '';
 
     state.map = new YMap(mapContainer, {
-        location: initialGuessMapLocation(mapContainer)
+        location: initialGuessMapLocation()
     });
 
     state.map.addChild(new YMapDefaultSchemeLayer());
@@ -176,7 +150,7 @@ export function destroyMainMap() {
 /**
  * Размещение маркера догадки на карте
  */
-export function placeMarker(coordinates) {
+function placeMarker(coordinates) {
     const [lon, lat] = coordinates;
     state.guessCoords = { latitude: lat, longitude: lon };
 
@@ -202,7 +176,7 @@ export function placeMarker(coordinates) {
  * В отличие от встроенного fullscreen Яндекса, панораму не трогаем вообще —
  * игрок остаётся ровно там, куда дошёл.
  */
-export function setMapPanelCollapsed(collapse) {
+function setMapPanelCollapsed(collapse) {
     const panel = document.getElementById('map-panel');
     const handle = document.getElementById('map-handle');
     panel.classList.toggle('collapsed', collapse);
@@ -273,9 +247,10 @@ export function resetMapForNewRound() {
     state.guessCoords = null;
     document.getElementById('guess-btn').disabled = true;
 
-    // Возвращаем подсказку
+    // Возвращаем подсказку. Пока карты нет, на месте остаётся кнопка её
+    // повторной загрузки: без карты ответить нельзя.
     const hint = document.getElementById('map-hint');
-    if (hint) {
+    if (hint && state.map) {
         hint.textContent = 'Кликни по карте, чтобы отметить место';
         hint.classList.remove('hidden', 'map-retry');
         hint.onclick = null;
@@ -283,8 +258,35 @@ export function resetMapForNewRound() {
 
     // Центрируем карту
     if (state.map) {
-        state.map.setLocation(initialGuessMapLocation(document.getElementById('map')));
+        state.map.setLocation(initialGuessMapLocation());
     }
+}
+
+/**
+ * Размер карты результата и закрытые панелью полосы. На десктопе панель
+ * закрывает правую часть, на мобильных — только скругление внизу.
+ */
+function resultMapFreeArea(mapContainer) {
+    const rect = mapContainer.getBoundingClientRect();
+    const isMobile = window.innerWidth <= 720;
+    // Страховка: если контейнер ещё не получил размер, берём оценку от окна
+    const width = rect.width > 50 ? rect.width : window.innerWidth;
+    const height = rect.height > 50 ? rect.height
+        : (isMobile ? window.innerHeight * 0.44 : window.innerHeight);
+    const panelRight = isMobile ? 0 : Math.min(380, width);
+    const panelBottom = isMobile
+        ? Math.max(0, rect.bottom - document.querySelector('.result-panel').getBoundingClientRect().top)
+        : 0;
+    return { width, height, isMobile, panelRight, panelBottom };
+}
+
+/** Центр карты, при котором точка (lon, mercatorY) окажется в середине свободной части. */
+function shiftedCenter(area, zoom, lon, mercY) {
+    const worldPx = TILE_SIZE * Math.pow(2, zoom);
+    return [
+        lon + (area.panelRight / 2) * (360 / worldPx),
+        mercatorYInv(mercY + (area.panelBottom / 2) / worldPx),
+    ];
 }
 
 /**
@@ -307,11 +309,15 @@ export async function showResultMap(data) {
 
     const correctLon = data.correct_location.longitude;
     const correctLat = data.correct_location.latitude;
+    const area = resultMapFreeArea(mapContainer);
 
-    // Раунд без догадки (время вышло): показываем только реальную точку
+    // Раунд без догадки (время вышло): только реальная точка — в середине
+    // видимой части карты, как и пара точек в обычном раунде.
     if (!data.guess) {
+        const zoom = 14;
+        const [centerLon, centerLat] = shiftedCenter(area, zoom, correctLon, mercatorY(correctLat));
         state.resultMap = new YMap(mapContainer, {
-            location: { center: [correctLon, correctLat], zoom: 14 }
+            location: { center: [centerLon, centerLat], zoom }
         });
         state.resultMap.addChild(new YMapDefaultSchemeLayer());
         state.resultMap.addChild(new YMapDefaultFeaturesLayer());
@@ -324,30 +330,17 @@ export async function showResultMap(data) {
     const guessLon = data.guess.longitude;
     const guessLat = data.guess.latitude;
 
-    // Сами вписываем обе точки в кадр — по фактическому размеру контейнера.
-    // На мобильных панель закрывает только нижнюю полоску карты под скруглением;
-    // на десктопе она закрывает правую часть — учитываем обе области.
-    const rect = mapContainer.getBoundingClientRect();
-    const isMobile = window.innerWidth <= 720;
-    // Страховка: если контейнер ещё не получил размер, берём оценку от окна
-    const stageW = rect.width > 50 ? rect.width : window.innerWidth;
-    const stageH = rect.height > 50 ? rect.height
-        : (isMobile ? window.innerHeight * 0.44 : window.innerHeight);
-    const panelRight = isMobile ? 0 : Math.min(380, stageW);
-    const panelBottom = isMobile
-        ? Math.max(0, rect.bottom - document.querySelector('.result-panel').getBoundingClientRect().top)
-        : 0;
     // Вертикальный запас больше горизонтального: пины рисуются НАД точкой
     // (~45px вверх) и на маленькой мобильной карте иначе срезаются краем
-    const padX = isMobile ? 32 : 70;
-    const padY = isMobile ? 72 : 70;
+    const padX = area.isMobile ? 32 : 70;
+    const padY = area.isMobile ? 72 : 70;
 
     // Минимальные охваты ~50 м: при точном попадании не упираемся в ноль,
     // а при маленьком промахе карта приближается к кварталу, не к городу
     const spanLon = Math.max(Math.abs(correctLon - guessLon), 0.0009) / 360;
     const spanY = Math.max(Math.abs(mercatorY(correctLat) - mercatorY(guessLat)), 0.0000012);
-    const availW = Math.max(stageW - panelRight - padX * 2, 120);
-    const availH = Math.max(stageH - panelBottom - padY * 2, 120);
+    const availW = Math.max(area.width - area.panelRight - padX * 2, 120);
+    const availH = Math.max(area.height - area.panelBottom - padY * 2, 120);
     // Округляем вниз: дробный zoom карта округлит вверх, и точки выйдут за кадр
     const zoom = Math.floor(Math.max(3, Math.min(18,
         Math.min(
@@ -355,13 +348,11 @@ export async function showResultMap(data) {
             Math.log2(availH / TILE_SIZE / spanY)
         )
     )));
-
-    // Геометрический центр двух точек, сдвинутый так, чтобы он оказался
-    // в середине свободной от панели области
-    const worldPx = TILE_SIZE * Math.pow(2, zoom);
-    const centerLon = (correctLon + guessLon) / 2 + (panelRight / 2) * (360 / worldPx);
-    const centerY = (mercatorY(correctLat) + mercatorY(guessLat)) / 2 + (panelBottom / 2) / worldPx;
-    const centerLat = mercatorYInv(centerY);
+    const [centerLon, centerLat] = shiftedCenter(
+        area, zoom,
+        (correctLon + guessLon) / 2,
+        (mercatorY(correctLat) + mercatorY(guessLat)) / 2,
+    );
 
     state.resultMap = new YMap(mapContainer, {
         location: {
