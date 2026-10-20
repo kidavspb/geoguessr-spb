@@ -8,6 +8,7 @@ import sys
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 import pytest
 import sqlalchemy as sa
 
@@ -19,6 +20,7 @@ PRIOR_REVISION = 'a49c7d8e2f10'
 DISTRICT_REVISION = 'c82f4b10a6d1'
 SEARCH_REVISION = '972e240b1d4d'
 RULES_REVISION = '7cc7dd2165af'
+HEAD_REVISION = ScriptDirectory(str(PROJECT_ROOT / 'migrations')).get_current_head()
 MIGRATION_MODULE = (
     'migrations.versions.c82f4b10a6d1_административные_районы'
 )
@@ -171,7 +173,7 @@ def test_legacy_database_without_alembic_is_stamped_and_upgraded(tmp_path):
     _upgrade(database_path, 'head', auto_migrate=True)
     with sqlite3.connect(database_path) as connection:
         assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
-            RULES_REVISION,
+            HEAD_REVISION,
         )
         assert connection.execute('SELECT player_name FROM game_sessions').fetchone() == ('Legacy',)
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
@@ -215,7 +217,7 @@ def test_rules_migration_preserves_games_and_old_worker_default(
         connection.execute("INSERT INTO game_sessions (id, player_name) VALUES (3, 'Old worker')")
         assert connection.execute('SELECT panorama_rules_version '
                                   'FROM game_sessions WHERE id = 3').fetchone() == (0,)
-        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (RULES_REVISION,)
+        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (HEAD_REVISION,)
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
 
 
@@ -241,6 +243,35 @@ def test_search_batch_migration_preserves_rounds(tmp_path, partial_ddl):
         ]
         assert connection.execute('SELECT total_score FROM game_sessions').fetchone() == (5000,)
         assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
-            RULES_REVISION,
+            HEAD_REVISION,
         )
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+
+
+@pytest.mark.parametrize('partial_ddl', [False, True])
+def test_pool_failure_game_migration_preserves_points(tmp_path, partial_ddl):
+    database_path = tmp_path / 'pool.db'
+    _upgrade(database_path, RULES_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("INSERT INTO verified_points "
+                           "(id, latitude, longitude, lat_key, lon_key, "
+                           "dist_from_center_km, district_id, fail_count) "
+                           "VALUES (1, 59.9386, 30.3141, 599386, 303141, 1.0, "
+                           "'tsentralny', 2)")
+        if partial_ddl:
+            connection.execute('ALTER TABLE verified_points '
+                               'ADD COLUMN last_failed_game_id INTEGER')
+    _upgrade(database_path, 'head')
+    _upgrade(database_path, 'head')
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute('SELECT latitude, district_id, fail_count, '
+                                  'last_failed_game_id FROM verified_points').fetchall() == [
+            (59.9386, 'tsentralny', 2, None),
+        ]
+        # INSERT старого worker без новой колонки остаётся допустимым.
+        connection.execute("INSERT INTO verified_points "
+                           "(latitude, longitude, lat_key, lon_key, dist_from_center_km) "
+                           "VALUES (59.94, 30.32, 599400, 303200, 1.0)")
+        assert connection.execute('SELECT version_num FROM alembic_version').fetchone() == (
+            HEAD_REVISION,
+        )

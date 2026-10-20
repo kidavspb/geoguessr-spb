@@ -805,7 +805,14 @@ async function sendGuess(payload) {
             requestPayload.panorama_latitude = state.actualPoint[0];
             requestPayload.panorama_longitude = state.actualPoint[1];
         }
-        const { ok, data, networkError } = await api.guess(requestPayload);
+        let response = await api.guess(requestPayload);
+        if (response.status === 409 && response.data?.reason === 'round_not_started') {
+            // Фоновый /ready потерялся в сети, а игра с таймером без него
+            // ответ не принимает. Отмечаем показ и повторяем тот же ответ.
+            const ready = await api.roundReady(roundId, requestPayload.location_version);
+            if (ready.ok) response = await api.guess(requestPayload);
+        }
+        const { ok, data, networkError } = response;
         if (ok) {
             showRoundResult(data);
         } else {
