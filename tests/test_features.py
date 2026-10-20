@@ -130,21 +130,13 @@ def test_skip_retry_with_same_location_version_is_idempotent(client, app_module)
 # Пул проверенных точек
 # --------------------------------------------------------------------------
 
-def test_validated_panorama_feeds_verified_pool(client, app_module):
-    client.post('/api/game/start', json={'difficulty': 'medium'})
-    loc = client.get('/api/game/location').get_json()
-    body = round_body(loc, latitude=loc['latitude'], longitude=loc['longitude'])
-
-    resp = client.post('/api/game/validate_panorama', json=body)
-    assert resp.get_json()['valid'] is True
-
+def test_verified_pool_deduplicates_nearby_panoramas(app):
     from models import VerifiedPoint
-    with app_module.app.app_context():
-        assert VerifiedPoint.query.count() == 1
 
-    # Та же точка второй раз не дублируется (дедупликация ~10 м)
-    client.post('/api/game/validate_panorama', json=body)
-    with app_module.app.app_context():
+    with app.app_context():
+        pool.add_verified_point(59.93860, 30.31410)
+        # Та же съёмка в паре метров не дублируется (ключ ~10 м)
+        pool.add_verified_point(59.93861, 30.31411)
         assert VerifiedPoint.query.count() == 1
 
 
@@ -169,6 +161,7 @@ def test_guess_atomically_uses_panorama_point_and_grows_pool(client, app_module)
     loc = client.get('/api/game/location').get_json()
     pano_lat = loc['latitude'] + 0.001
     pano_lon = loc['longitude']
+    client.post('/api/game/ready', json=round_body(loc))
     response = client.post('/api/game/guess', json=round_body(
         loc,
         latitude=pano_lat,
@@ -320,6 +313,7 @@ def test_panorama_metric_is_saved_for_round(client, app_module):
 def test_timeout_round_without_guess(client):
     client.post('/api/game/start', json={'difficulty': 'center', 'time_limit': 60})
     first = client.get('/api/game/location').get_json()
+    client.post('/api/game/ready', json=round_body(first))
 
     result = client.post('/api/game/guess', json=round_body(first, timed_out=True))
     assert result.status_code == 200

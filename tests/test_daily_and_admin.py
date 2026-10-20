@@ -118,10 +118,12 @@ def test_pool_point_removed_after_repeated_failures(client, app_module):
         point.fail_count = POOL_MAX_FAILS - 1
         db.session.commit()
         lat, lon = point.latitude, point.longitude
+        other_game_id = point.last_failed_game_id + 1
 
     from pool import mark_point_failed
     with app_module.app.app_context():
-        mark_point_failed(lat, lon)
+        # Неудача в другой игре доводит счётчик до порога
+        mark_point_failed(lat, lon, other_game_id)
         db.session.commit()
         assert VerifiedPoint.query.count() == 0
 
@@ -166,9 +168,11 @@ def test_confirmed_panorama_resets_fail_count(client, app_module):
         ))
         db.session.commit()
 
-    # Панорама нашлась и прошла серверную проверку — неудачи прощены
-    client.post('/api/game/validate_panorama', json=round_body(
+    # Панорама нашлась, показана и раунд сыгран — неудачи прощены
+    client.post('/api/game/ready', json=round_body(loc))
+    client.post('/api/game/guess', json=round_body(
         loc, latitude=loc['latitude'], longitude=loc['longitude'],
+        panorama_latitude=loc['latitude'], panorama_longitude=loc['longitude'],
     ))
     with app_module.app.app_context():
         assert VerifiedPoint.query.first().fail_count == 0

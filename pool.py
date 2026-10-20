@@ -1,8 +1,12 @@
 """Пул проверенных точек — мест, где панорама Яндекса точно существует.
 
-Пополняется из validate_panorama и guess.
-Клиентские координаты ограничены серверной точкой и выбранной территорией;
-это базовая проверка, а не подтверждение панорамы независимым источником.
+Пополняется только из сыгранных раундов: панорама была показана (/ready),
+раунд завершён ответом в /guess, одна точка на раунд. Координаты сообщает
+клиент; они ограничены серверной точкой и выбранной территорией — это
+базовая проверка, а не подтверждение панорамы независимым источником.
+
+Неудачи считаются по играм: одна игра даёт точке не больше одной неудачи
+подряд, и точка выбывает только после неудач в нескольких разных играх.
 """
 import logging
 import random
@@ -36,7 +40,8 @@ LEGACY_POOL_BOUNDS = {
     'lon_min': SPB_BOUNDS['lon_min'] - 0.02,
     'lon_max': SPB_BOUNDS['lon_max'] + 0.02,
 }
-# После скольких неудачных поисков панорамы подряд точка выбывает из пула
+# После неудачных поисков панорамы в скольких разных играх подряд точка
+# выбывает из пула
 POOL_MAX_FAILS = 3
 
 
@@ -48,17 +53,25 @@ def _point_by_coords(lat, lon):
     ).first()
 
 
-def mark_point_failed(lat, lon):
+def is_pool_point(lat, lon):
+    """Есть ли в пуле панорама в этой точке (с точностью ключа ~10 м)."""
+    return _point_by_coords(lat, lon) is not None
+
+
+def mark_point_failed(lat, lon, game_id):
     """Панорама у точки не нашлась: считаем неудачи, на пороге удаляем.
 
     Вызывается при перегенерации точки раунда — если исходная точка была
     из пула, значит панорама там пропала (Яндекс иногда убирает съёмку).
+    Повторная неудача от той же игры не считается: одна игра (или один
+    клиент со скриптом) не может в одиночку удалить точку.
     Изменение коммитит вызывающий вместе со сменой точки раунда.
     """
     point = _point_by_coords(lat, lon)
-    if point is None:
+    if point is None or point.last_failed_game_id == game_id:
         return
     point.fail_count = (point.fail_count or 0) + 1
+    point.last_failed_game_id = game_id
     if point.fail_count >= POOL_MAX_FAILS:
         db.session.delete(point)
         logger.info('Точка пула удалена после %d неудач: %.5f, %.5f',
@@ -209,8 +222,9 @@ def add_verified_point(lat, lon):
         if existing is not None:
             # Панорама подтверждена живой — прощаем прошлые неудачи
             changed = False
-            if existing.fail_count:
+            if existing.fail_count or existing.last_failed_game_id is not None:
                 existing.fail_count = 0
+                existing.last_failed_game_id = None
                 changed = True
             if existing.district_id is None and point_district_id is not None:
                 existing.district_id = point_district_id

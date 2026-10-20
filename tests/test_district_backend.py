@@ -137,6 +137,10 @@ def test_duplicate_panorama_is_replaced_without_poisoning_pool(
     })
     assert validated.status_code == 200
     assert validated.get_json() == {'valid': True}
+    assert client.post('/api/game/ready', json={
+        'round_id': first['round_id'],
+        'location_version': first['location_version'],
+    }).status_code == 200
     guessed = client.post('/api/game/guess', json={
         'round_id': first['round_id'],
         'location_version': first['location_version'],
@@ -268,7 +272,9 @@ def test_district_recovery_can_use_verified_point_reserved_for_future_round(
         rounds = GameRound.query.order_by(GameRound.round_number).all()
         for rnd, lat in zip(rounds, (59.947, 59.948, 59.960, 59.951, 59.955)):
             rnd.gen_latitude, rnd.gen_longitude = lat, 30.3159
+        # Раунд из пула создаётся с известным местом съёмки.
         rounds[2].location_source = 'pool'
+        rounds[2].actual_latitude, rounds[2].actual_longitude = future_point
         app_module.db.session.commit()
 
     first = client.get('/api/game/location').get_json()
@@ -302,10 +308,15 @@ def test_district_recovery_can_use_verified_point_reserved_for_future_round(
     })
     assert skipped.status_code == 200
     assert (skipped.get_json()['latitude'], skipped.get_json()['longitude']) == future_point
+    # Известное место переезжает вместе с точкой.
+    assert skipped.get_json()['max_panorama_drift_km'] == 0.1
     with app_module.app.app_context():
+        current = app_module.db.session.get(GameRound, second['round_id'])
+        assert (current.actual_latitude, current.actual_longitude) == future_point
         future = GameRound.query.filter_by(round_number=3).one()
         assert (future.gen_latitude, future.gen_longitude) == new_future_point
         assert future.location_source == 'explore'
+        assert future.actual_latitude is None
 
 
 def test_hard_start_generates_all_rounds_inside_exact_city(client, app_module):
@@ -438,25 +449,36 @@ def test_guess_rechecks_district_and_keeps_prevalidated_point(client, app_module
         rnd.gen_latitude, rnd.gen_longitude = inside
         app_module.db.session.commit()
 
-    client.post('/api/game/validate_panorama', json={
-        'round_id': location['round_id'], 'location_version': 0,
-        'latitude': inside[0], 'longitude': inside[1],
-    })
-    rejected = client.post('/api/game/guess', json={
+    guess_body = {
         'round_id': location['round_id'],
         'location_version': location['location_version'],
         'latitude': inside[0], 'longitude': inside[1],
         'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
-    })
+    }
+    # Без предварительной проверки /guess сам проверяет район панорамы.
+    rejected = client.post('/api/game/guess', json=guess_body)
     assert rejected.status_code == 409
     assert rejected.get_json()['reason'] == 'outside_district'
-
     with app_module.app.app_context():
         rnd = app_module.db.session.get(GameRound, location['round_id'])
         game = GameSession.query.one()
-        assert (rnd.actual_latitude, rnd.actual_longitude) == inside
+        assert rnd.actual_latitude is None
         assert rnd.answered_at is None
         assert game.current_round == 0
+
+    # Проверенное место зафиксировано: другая позиция в /guess его не сдвигает.
+    client.post('/api/game/validate_panorama', json={
+        'round_id': location['round_id'], 'location_version': 0,
+        'latitude': inside[0], 'longitude': inside[1],
+    })
+    accepted = client.post('/api/game/guess', json=guess_body)
+    assert accepted.status_code == 200
+    assert accepted.get_json()['correct_location'] == {
+        'latitude': inside[0], 'longitude': inside[1],
+    }
+    with app_module.app.app_context():
+        rnd = app_module.db.session.get(GameRound, location['round_id'])
+        assert (rnd.actual_latitude, rnd.actual_longitude) == inside
 
 
 def test_hard_preflight_ready_and_guess_enforce_exact_city(client, app_module):
@@ -480,6 +502,22 @@ def test_hard_preflight_ready_and_guess_enforce_exact_city(client, app_module):
     assert not_ready.status_code == 409
     assert not_ready.get_json()['reason'] == 'panorama_not_validated'
 
+    guess_body = {
+        'round_id': location['round_id'],
+        'location_version': location['location_version'],
+        'latitude': inside[0], 'longitude': inside[1],
+        'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
+    }
+    rejected_guess = client.post('/api/game/guess', json=guess_body)
+    assert rejected_guess.status_code == 409
+    assert rejected_guess.get_json()['reason'] == 'outside_city'
+    with app_module.app.app_context():
+        rnd = app_module.db.session.get(GameRound, location['round_id'])
+        game = GameSession.query.one()
+        assert rnd.actual_latitude is None
+        assert rnd.answered_at is None
+        assert game.current_round == 0
+
     rejected = client.post('/api/game/validate_panorama', json={
         'round_id': location['round_id'], 'location_version': 0,
         'latitude': outside[0], 'longitude': outside[1],
@@ -497,20 +535,11 @@ def test_hard_preflight_ready_and_guess_enforce_exact_city(client, app_module):
         'location_version': location['location_version'],
     }).status_code == 200
 
-    rejected_guess = client.post('/api/game/guess', json={
-        'round_id': location['round_id'],
-        'location_version': location['location_version'],
+    accepted = client.post('/api/game/guess', json=guess_body)
+    assert accepted.status_code == 200
+    assert accepted.get_json()['correct_location'] == {
         'latitude': inside[0], 'longitude': inside[1],
-        'panorama_latitude': outside[0], 'panorama_longitude': outside[1],
-    })
-    assert rejected_guess.status_code == 409
-    assert rejected_guess.get_json()['reason'] == 'outside_city'
-    with app_module.app.app_context():
-        rnd = app_module.db.session.get(GameRound, location['round_id'])
-        game = GameSession.query.one()
-        assert (rnd.actual_latitude, rnd.actual_longitude) == inside
-        assert rnd.answered_at is None
-        assert game.current_round == 0
+    }
 
 
 def test_outside_city_skip_does_not_poison_pool(client, app_module):
@@ -612,7 +641,6 @@ def test_legacy_hard_challenge_with_stored_outside_point_remains_playable(
             difficulty='hard',
             panorama_rules_version=0,
             total_score=25000,
-            rounds_played=5,
             current_round=5,
             challenge_token='legacy-hard-challenge',
             completed_at=utcnow(),
