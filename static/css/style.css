@@ -2141,7 +2141,6 @@ h1, h2 {
     --night-blue: #0c294c;
     --night-coral: #da795e;
     --night-coral-dark: #c66a54;
-    --night-gold: #cda780;
 }
 
 /* Обёртка логотипа — inline-block с той же строкой, что и сам img: вне
@@ -2166,14 +2165,17 @@ h1, h2 {
 
 /* Всадник за логотипом — геометрия из примера владельца (example.svg): кадр
    повёрнут на 55,37°, и его нижний срез лежит вдоль прямого правого верхнего
-   края суши. Координаты пересчитаны в пиксели логотипа шириной 132px. */
+   края суши. Всё в долях ширины логотипа (132px, на телефоне 108px):
+   left и width — от ширины обёртки, вертикальный сдвиг — margin-top, чьи
+   проценты тоже считаются от ширины. */
 .horseman-peek {
     position: absolute;
-    top: -36px;
-    left: 130.3px;
+    top: 0;
+    left: 98.71%;
     z-index: 0;
-    width: 92.2px;
-    height: 61.5px;
+    width: 69.86%;
+    aspect-ratio: 1600 / 1067;
+    margin-top: -27.3%;
     padding: 0;
     border: 0;
     background: transparent;
@@ -2193,9 +2195,9 @@ h1, h2 {
 /* То выглядывает из-за края, то уходит обратно: видно, что он «живой» и
    на него можно нажать. Сдвиг — вдоль его собственной оси, внутрь суши. */
 @keyframes horseman-haunt {
-    0%, 8%    { opacity: 0; transform: rotate(55.37deg) translateY(12px); }
+    0%, 8%    { opacity: 0; transform: rotate(55.37deg) translateY(20%); }
     22%, 62%  { opacity: 1; transform: rotate(55.37deg) translateY(0); }
-    76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(12px); }
+    76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(20%); }
 }
 
 /* Наведение или фокус — всадник показывается и ждёт клика */
@@ -2210,11 +2212,11 @@ h1, h2 {
     outline-offset: 2px;
 }
 
-/* В режиме погони он уже выехал и стоит на месте */
+/* В режиме погони он уже выехал и стоит на месте; повторный клик по нему
+   возвращает обычную игру */
 #start-screen.is-chase .horseman-peek {
     animation: none;
     opacity: 1;
-    cursor: default;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2253,17 +2255,6 @@ html.theme-chase:not(.theme-light) body,
 
 #chase-title:focus {
     outline: none;
-}
-
-#start-screen.is-chase .start-tagline.chase-only {
-    margin-bottom: 0.5rem;
-}
-
-.chase-note {
-    margin-bottom: 1.75rem;
-    color: var(--night-gold);
-    font-size: 0.85rem;
-    letter-spacing: 0.02em;
 }
 
 #start-screen.is-chase #daily-btn:disabled,

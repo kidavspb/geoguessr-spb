@@ -6,7 +6,7 @@
  * логотипа то появляется, то исчезает Медный всадник; клик по нему — волна на
  * весь экран, и тот же экран переодевается в палитру обложки: «ночной»
  * логотип, название, легенда, коралловый старт, вызов дня и «Без лимита»
- * неактивны. «Назад» возвращает обычную игру. В игре отсчёт
+ * неактивны. Повторный клик по всаднику возвращает обычную игру. В игре отсчёт
  * становится погоней: всадник приближается, панорама чёрно-белая, края
  * темнеют, в последние секунды стучит сердце, когда время вышло — «Попался!».
  * Все слои — CSS поверх панорамы с pointer-events: none; второго Player или
@@ -47,18 +47,14 @@ export function initHalloween({ onModeChange }) {
     const peek = document.getElementById('horseman-peek');
     if (!peek) return;
 
+    // Тот же всадник и выключает режим — без отдельной кнопки.
     peek.addEventListener('click', () => {
-        if (chaseMode) return;
+        const on = !chaseMode;
         runFlood(() => {
-            setChaseMode(true);
-            onModeChange(true);
-            document.getElementById('chase-title').focus();
+            setChaseMode(on);
+            onModeChange(on);
+            if (on) document.getElementById('chase-title').focus();
         });
-    });
-    document.getElementById('chase-back-btn').addEventListener('click', () => {
-        setChaseMode(false);
-        onModeChange(false);
-        peek.focus();
     });
 }
 
@@ -79,8 +75,9 @@ function setChaseMode(on) {
     chaseMode = on;
     document.getElementById('start-screen').classList.toggle('is-chase', on);
     document.documentElement.classList.toggle('theme-chase', on);
-    // В режиме всадник уже выехал: повторный клик ничего бы не дал.
-    document.getElementById('horseman-peek').disabled = on;
+    document.getElementById('horseman-peek').setAttribute('aria-label', on
+        ? 'Медный всадник. Вернуться к обычной игре'
+        : 'Медный всадник. Включить «Ночь Медного всадника»');
     document.getElementById('start-btn').textContent = on ? 'Бежать' : 'Начать игру';
     // Вызов дня без таймера: в погоне он виден, но недоступен.
     document.getElementById('daily-btn').disabled = on;
