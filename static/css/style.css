@@ -2192,6 +2192,20 @@ h1, h2 {
     height: 100%;
 }
 
+/* Тач-зона шире картинки: по всаднику легко попасть, особенно пальцем.
+   Над логотипом зона не мешает — он не принимает кликов. */
+.horseman-peek::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+}
+
+@media (max-width: 480px) {
+    .horseman-peek::before {
+        inset: -20px;
+    }
+}
+
 /* То выглядывает из-за края, то уходит обратно: видно, что он «живой» и
    на него можно нажать. Сдвиг — вдоль его собственной оси, внутрь суши. */
 @keyframes horseman-haunt {
@@ -2251,6 +2265,40 @@ html.theme-chase:not(.theme-light),
 html.theme-chase:not(.theme-light) body,
 #start-screen.is-chase {
     background: var(--night-blue);
+}
+
+/* --navy на этих экранах — цвет фона: им «вырезаны» кольца ползунка и тики,
+   залит экран района и его кнопка сброса. В режиме это синий обложки. */
+#start-screen.is-chase,
+html.theme-chase #district-screen {
+    --navy: var(--night-blue);
+    --navy-soft: #1d3c63;
+}
+
+/* Приглушённая шкала при выбранном районе: непрозрачные смеси cream с новым
+   фоном в тех же долях, что #8c87a0 и #bcb7bd с прежним */
+#start-screen.is-chase .territory-control.district-active {
+    --territory-thumb-color: #808d95;
+}
+
+#start-screen.is-chase .territory-control.district-active:hover,
+#start-screen.is-chase .territory-control.district-active:focus-within {
+    --territory-thumb-color: #b5bbb6;
+}
+
+/* Выбор района и поле имени — коралл вместо зелёного */
+html.theme-chase .district-shape.is-selected {
+    fill: var(--night-coral);
+}
+
+html.theme-chase #district-confirm-btn:not(:disabled) {
+    background: linear-gradient(180deg, #e3876c, var(--night-coral-dark));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 6px 16px rgba(218, 121, 94, 0.35);
+}
+
+#start-screen.is-chase .input-group input[type="text"]:focus {
+    border-color: var(--night-coral);
 }
 
 #chase-title:focus {

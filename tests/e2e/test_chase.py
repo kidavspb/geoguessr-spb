@@ -7,6 +7,7 @@ from test_settings import _author_challenge_token
 
 FIRST_WHISPER = 'Медный всадник сошёл с Гром-камня…'
 NO_HSCROLL = 'document.documentElement.scrollWidth <= innerWidth'
+NIGHT_BLUE = 'rgb(12, 41, 76)'
 
 
 def _shorten_rounds(page, remaining_ms):
@@ -75,8 +76,12 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
         page.set_viewport_size({'width': width, 'height': 800})
         assert page.evaluate(NO_HSCROLL)
 
+    # Цвет фона режима и в «вырезах» шкалы, и на экране выбора района.
+    expect(page.locator('.territory-tick').first).to_have_css(
+        'background-color', NIGHT_BLUE)
     # Все настройки главного экрана работают и в погоне, включая район.
     page.locator('#district-picker-btn').click()
+    expect(page.locator('#district-screen')).to_have_css('background-color', NIGHT_BLUE)
     page.locator('#district-list').select_option('petrogradsky')
     page.locator('#district-confirm-btn').click()
     page.get_by_text('3 мин', exact=True).click()
@@ -134,6 +139,26 @@ def test_horseman_sits_on_the_logo_edge_at_any_logo_size(page, halloween_server)
         assert abs(left - 0.987) < 0.015
         assert abs(top + 0.273) < 0.015
         assert abs(size - 0.699) < 0.015
+
+
+def test_horseman_is_easy_to_hit_on_a_phone(page, halloween_server):
+    """Тач-зона шире картинки: промах на палец рядом со всадником — всё равно он."""
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.emulate_media(reduced_motion='reduce')
+    page.goto(halloween_server)
+    hits = page.evaluate("""() => {
+        const peek = document.getElementById('horseman-peek');
+        const wrap = peek.parentElement.getBoundingClientRect();
+        const angle = 55.37 * Math.PI / 180;
+        // Середина внешнего края повёрнутого кадра и направление наружу.
+        const x = wrap.left + peek.offsetLeft + Math.cos(angle) * peek.offsetWidth / 2;
+        const y = wrap.top + peek.offsetTop + Math.sin(angle) * peek.offsetWidth / 2;
+        const hit = distance => !!document.elementFromPoint(
+            x + Math.sin(angle) * distance, y - Math.cos(angle) * distance,
+        )?.closest('#horseman-peek');
+        return [hit(4), hit(16), hit(40)];
+    }""")
+    assert hits == [True, True, False]
 
 
 def test_second_click_on_horseman_returns_regular_game(page, halloween_server):
