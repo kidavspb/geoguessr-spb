@@ -2158,9 +2158,12 @@ h1, h2 {
     z-index: 1;
 }
 
-/* Логотип не интерактивен: тап по его краю у всадника достаётся всаднику */
-.start-logo-wrap.has-horseman .start-logo {
-    pointer-events: none;
+/* Логотип — тоже переключатель режима: в него попасть проще, чем во
+   всадника. Клик ловит обёртка (см. halloween.js); в челлендже всадник
+   скрыт, и логотип снова обычная картинка. */
+.start-logo-wrap.has-horseman:has(> .horseman-peek:not(.hidden)) {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
 }
 
 /* Всадник за логотипом — геометрия из примера владельца (example.svg): кадр
@@ -2193,7 +2196,7 @@ h1, h2 {
 }
 
 /* Тач-зона шире картинки: по всаднику легко попасть, особенно пальцем.
-   Над логотипом зона не мешает — он не принимает кликов. */
+   Там, где зона заходит на логотип, клик всё равно переключает режим. */
 .horseman-peek::before {
     content: '';
     position: absolute;
@@ -2214,8 +2217,8 @@ h1, h2 {
     76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(20%); }
 }
 
-/* Наведение или фокус — всадник показывается и ждёт клика */
-.horseman-peek:hover,
+/* Наведение на логотип или фокус — всадник показывается и ждёт клика */
+.start-logo-wrap:hover .horseman-peek,
 .horseman-peek:focus-visible {
     animation: none;
     opacity: 1;
@@ -2303,6 +2306,30 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 
 #chase-title:focus {
     outline: none;
+}
+
+/* Легенда — что случилось, правила — что делать (и зачем «Бежать») */
+#start-screen.is-chase .start-tagline.chase-only {
+    margin-bottom: 0.75rem;
+}
+
+.chase-rules {
+    margin-bottom: 2rem;
+    color: rgba(253, 250, 228, 0.62);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    text-wrap: balance;
+}
+
+.chase-rules strong {
+    color: var(--night-coral);
+    font-weight: 600;
+}
+
+@media (max-width: 480px) {
+    .chase-rules {
+        margin-bottom: 1.5rem;
+    }
 }
 
 #start-screen.is-chase #daily-btn:disabled,
