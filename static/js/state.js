@@ -67,6 +67,7 @@ export const state = {
         timeLimit: 0,
         noMove: false,
         daily: false,
+        chase: false,         // хэллоуинская погоня: оформление таймера
     },
 
     challengeToken: null, // токен челленджа из ссылки-вызова

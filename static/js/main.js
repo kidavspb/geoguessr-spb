@@ -19,6 +19,9 @@ import {
     initDistrictPicker, openDistrictPicker, closeDistrictPicker,
     districtDisplayName
 } from './districts.js';
+import {
+    CHASE_TIME_LIMIT, resetChase, updateChase, chaseCaught, wasCaught
+} from './halloween.js';
 
 const { settings, game } = state;
 const TERRITORIES = ['center', 'medium', 'hard'];
@@ -75,6 +78,8 @@ function initEventListeners() {
     // Стартовый экран
     document.getElementById('start-btn').addEventListener('click', () => startGame());
     document.getElementById('daily-btn').addEventListener('click', () => startGame({ daily: true }));
+    // Хэллоуинская погоня: кнопка есть только в сезон (см. halloween.py)
+    document.getElementById('chase-btn')?.addEventListener('click', () => startGame({ chase: true }));
     document.getElementById('show-leaderboard-btn').addEventListener('click', () => openLeaderboard());
 
     // Игровой экран
@@ -371,6 +376,8 @@ async function initChallengeFromUrl() {
     for (const id of ['difficulty-group', 'timer-group', 'move-group']) {
         document.getElementById(id).classList.add('hidden');
     }
+    // Погоня — отдельная игра со своим таймером, а не способ сыграть челлендж.
+    document.getElementById('halloween-group')?.classList.add('hidden');
 }
 
 /** Вернуть обычный стартовый экран после челленджа или его ошибки. */
@@ -382,6 +389,7 @@ function leaveChallengeMode(message = null) {
     for (const id of ['difficulty-group', 'timer-group', 'move-group']) {
         document.getElementById(id).classList.remove('hidden');
     }
+    document.getElementById('halloween-group')?.classList.remove('hidden');
     window.history.replaceState(null, '', window.location.pathname);
 }
 
@@ -414,6 +422,14 @@ function showMapsWarning(text) {
     warning.textContent = text;
 }
 
+/** Кнопки запуска блокируются вместе: второй POST /start не нужен. */
+function setStartButtonsDisabled(disabled) {
+    for (const id of ['start-btn', 'daily-btn', 'chase-btn']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = disabled;
+    }
+}
+
 /**
  * Начало новой игры
  */
@@ -421,8 +437,7 @@ async function startGame(opts = {}) {
     if (state.gameStarting) return;
     state.gameStarting = true;
     stopRoundTimer();
-    document.getElementById('start-btn').disabled = true;
-    document.getElementById('daily-btn').disabled = true;
+    setStartButtonsDisabled(true);
     const playerName = document.getElementById('player-name').value.trim() || randomPlayerName();
     document.getElementById('player-name').value = playerName;
     try {
@@ -447,7 +462,8 @@ async function startGame(opts = {}) {
             player_name: playerName,
             difficulty: settings.difficulty,
             district_id: settings.difficulty === 'district' ? settings.districtId : null,
-            time_limit: settings.timeLimit || null,
+            // Погоня — та же игра с минутным таймером; выбор игрока не трогаем.
+            time_limit: opts.chase ? CHASE_TIME_LIMIT : (settings.timeLimit || null),
             no_move: settings.noMove,
             challenge_token: state.challengeToken,
             daily: !!opts.daily
@@ -481,6 +497,8 @@ async function startGame(opts = {}) {
             timeLimit: data.time_limit || 0,
             noMove: !!data.no_move,
             daily: !!data.daily,
+            // Погоня рисует отсчёт таймера: без лимита ей нечего показывать.
+            chase: !!opts.chase && !!data.time_limit,
         });
         discardPreloaded(state.preloaded);
         state.preloaded = null;
@@ -498,6 +516,7 @@ async function startGame(opts = {}) {
         // Метрика: какие режимы реально играют
         reachGoal(game.daily ? 'daily_start'
                 : state.challengeToken ? 'challenge_accept' : 'game_start');
+        if (game.chase) reachGoal('halloween_start');
 
         // Челлендж одноразовый: следующая игра с этими же точками не имеет
         // смысла — игрок их уже видел. Возвращаем обычный стартовый экран.
@@ -518,8 +537,7 @@ async function startGame(opts = {}) {
         alert('Не удалось начать игру. Проверьте подключение. Детали: ' + error.message);
     } finally {
         state.gameStarting = false;
-        document.getElementById('start-btn').disabled = false;
-        document.getElementById('daily-btn').disabled = false;
+        setStartButtonsDisabled(false);
     }
 }
 
@@ -552,6 +570,7 @@ async function loadCurrentLocation(locationOverride = null) {
     state.roundLoading = true;
     state.roundInteractive = false;
     document.getElementById('guess-btn').disabled = true;
+    resetChase();
 
     // Оверлей загрузки появится, только если раунд грузится дольше 300 мс:
     // прогретый раунд подключается мгновенно, без мелькания «Загрузки»
@@ -732,7 +751,8 @@ function startRoundTimer(deadlineMs = null) {
 
 function updateTimerDisplay() {
     const chip = document.getElementById('timer-chip');
-    const secondsLeft = Math.max(0, Math.ceil((state.roundDeadline - Date.now()) / 1000));
+    const remainingMs = state.roundDeadline - Date.now();
+    const secondsLeft = Math.max(0, Math.ceil(remainingMs / 1000));
 
     if (secondsLeft !== state.lastTimerSecond) {
         state.lastTimerSecond = secondsLeft;
@@ -741,6 +761,7 @@ function updateTimerDisplay() {
         document.getElementById('timer-value').textContent = `${min}:${sec}`;
     }
 
+    if (game.chase) updateChase(remainingMs, game.timeLimit * 1000);
     if (secondsLeft <= 10) chip.classList.add('timer-low');
 
     if (secondsLeft <= 0) {
@@ -761,6 +782,7 @@ function stopRoundTimer() {
  * Если точка отмечена — обычная догадка, нет — раунд завершается с 0 очков.
  */
 function onRoundTimeExpired() {
+    if (game.chase) chaseCaught();
     if (state.guessCoords) {
         submitGuess();
     } else {
@@ -903,7 +925,9 @@ function showRoundResult(data) {
             missBlock.append(', но ответ пришёл после окончания времени');
         }
     } else {
-        missBlock.textContent = 'Время вышло — точка так и не была отмечена';
+        missBlock.textContent = game.chase
+            ? 'Всадник догнал тебя раньше, чем ты отметил точку'
+            : 'Время вышло — точка так и не была отмечена';
     }
 
     // Очки за раунд
@@ -913,7 +937,10 @@ function showRoundResult(data) {
 
     // Заголовок результата
     const title = document.getElementById('result-title');
-    if (data.timed_out) {
+    if (game.chase && (data.timed_out || wasCaught())) {
+        // Отмеченная к сроку точка засчитана, но погоня всё равно проиграна.
+        title.textContent = 'Всадник догнал!';
+    } else if (data.timed_out) {
         title.textContent = 'Время вышло!';
     } else if (data.score >= 4500) {
         title.textContent = 'В яблочко!';
