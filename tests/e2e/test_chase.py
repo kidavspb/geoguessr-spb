@@ -60,17 +60,17 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
     horseman.click()
     expect(page.locator('#chase-title')).to_have_text('Ночь Медного всадника')
     expect(page.locator('.brand-title:not(.chase-only)')).to_be_hidden()
-    expect(page.locator('.chase-note')).to_have_text('До 1 ноября')
     expect(page.locator('html')).to_have_class(re.compile('theme-chase'))
     expect(page.locator('#start-btn')).to_have_text('Бежать')
-    expect(horseman).to_be_disabled()
+    expect(horseman).to_have_attribute('aria-label', re.compile('Вернуться к обычной игре'))
     # Без таймера погоня невозможна: вызов дня и «Без лимита» видны, но неактивны.
     expect(page.locator('#daily-btn')).to_be_visible()
     expect(page.locator('#daily-btn')).to_be_disabled()
     expect(page.locator('label[for="timer-unlimited"]')).to_be_visible()
     expect(page.locator('#timer-unlimited')).to_be_disabled()
     expect(page.locator('input[name="round-time"]:checked')).to_have_value('60')
-    expect(page.get_by_role('button', name='Назад')).to_be_visible()
+    # Лишних кнопок нет: выход — повторный клик по всаднику.
+    expect(page.get_by_role('button', name='Назад')).to_have_count(0)
     for width in [320, 390, 1280]:
         page.set_viewport_size({'width': width, 'height': 800})
         assert page.evaluate(NO_HSCROLL)
@@ -113,15 +113,39 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
     assert console_issues == []
 
 
-def test_back_returns_regular_start_screen(page, halloween_server):
+def test_horseman_sits_on_the_logo_edge_at_any_logo_size(page, halloween_server):
+    """На телефоне логотип 108px вместо 132px — всадник масштабируется с ним."""
+    page.emulate_media(reduced_motion='reduce')
+    page.goto(halloween_server)
+    logo_selector = '.start-logo-wrap .start-logo:not(.chase-only)'
+    for width, logo_width in [(390, 108), (1280, 132)]:
+        page.set_viewport_size({'width': width, 'height': 800})
+        # Новый вьюпорт применяется не мгновенно — ждём нужный размер логотипа.
+        page.wait_for_function(
+            '([selector, width]) => document.querySelector(selector)'
+            '.getBoundingClientRect().width === width',
+            arg=[logo_selector, logo_width])
+        left, top, size = page.evaluate("""selector => {
+            const logo = document.querySelector(selector).getBoundingClientRect().width;
+            const peek = document.getElementById('horseman-peek');
+            return [peek.offsetLeft / logo, peek.offsetTop / logo, peek.offsetWidth / logo];
+        }""", logo_selector)
+        # Доли из примера владельца: кадр у правого верхнего края суши.
+        assert abs(left - 0.987) < 0.015
+        assert abs(top + 0.273) < 0.015
+        assert abs(size - 0.699) < 0.015
+
+
+def test_second_click_on_horseman_returns_regular_game(page, halloween_server):
     _open_chase(page, halloween_server)
-    page.get_by_role('button', name='Назад').click()
+    page.locator('#horseman-peek').click()
 
     expect(page.locator('.brand-title:not(.chase-only)')).to_have_text('Петербургский следопыт')
     expect(page.locator('#chase-title')).to_be_hidden()
     expect(page.locator('html')).not_to_have_class(re.compile('theme-chase'))
     expect(page.locator('#start-btn')).to_have_text('Начать игру')
-    expect(page.locator('#horseman-peek')).to_be_enabled()
+    expect(page.locator('#horseman-peek')).to_have_attribute(
+        'aria-label', re.compile('Включить'))
     expect(page.locator('#daily-btn')).to_be_enabled()
     expect(page.locator('#timer-unlimited')).to_be_enabled()
     # «Без лимита» был выбран до погони — он и возвращается.
