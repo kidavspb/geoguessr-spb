@@ -20,6 +20,8 @@ def app_module(tmp_path_factory):
     # Схему в тестах создают фикстуры (db.create_all), миграции не нужны
     os.environ['AUTO_MIGRATE'] = 'false'
     os.environ['YANDEX_MAPS_API_KEY'] = ''
+    # Сезонный режим включается по календарю — тесты не должны от него зависеть
+    os.environ['HALLOWEEN_MODE'] = 'off'
     # Известный ключ админки для тестов модерации (не из .env)
     os.environ['ADMIN_KEY'] = 'test-admin-key'
 

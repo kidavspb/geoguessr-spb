@@ -50,9 +50,16 @@
             src="https://api-maps.yandex.ru/v3/?apikey={{ yandex_api_key }}&lang=ru_RU"
             onerror="window.yandexMapsLoadErrors.v3=true"></script>
 </head>
-<body>
+<body{% if halloween %} class="halloween"{% endif %}>
     <!-- Стартовый экран -->
     <div id="start-screen" class="screen active">
+        {% if halloween %}
+        <div class="halloween-sky" aria-hidden="true">
+            <span class="halloween-bat">🦇</span>
+            <span class="halloween-bat">🦇</span>
+            <span class="halloween-bat">🦇</span>
+        </div>
+        {% endif %}
         <main class="start-layout">
             <div class="start-card">
                 <img class="start-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="Логотип «Петербургский следопыт»">
@@ -142,6 +149,14 @@
                 </div>
 
                 <button id="start-btn" class="btn btn-primary">Начать игру</button>
+                {% if halloween %}
+                <!-- Хэллоуин (временно, см. halloween.py): обычная игра с
+                     минутным таймером, отсчёт которой — приближающийся всадник -->
+                <div class="halloween-group" id="halloween-group">
+                    <button id="chase-btn" class="btn btn-chase">🎃 Побег от Медного всадника</button>
+                    <small class="halloween-hint">Хэллоуин: та же территория, но минута на раунд. Не успеешь отметить точку — догонит!</small>
+                </div>
+                {% endif %}
                 <button id="daily-btn" class="btn btn-secondary">🗓 Вызов дня</button>
                 <small class="daily-hint hidden" id="daily-hint"></small>
                 <button id="show-leaderboard-btn" class="btn btn-secondary">Таблица лидеров</button>
@@ -226,6 +241,18 @@
                     </div>
                 </div>
             </div>
+
+            {% if halloween %}
+            <!-- Погоня: только CSS поверх панорамы, клики проходят насквозь -->
+            <div class="chase-layer hidden" id="chase-layer" aria-hidden="true">
+                <div class="chase-vignette"></div>
+                <div class="chase-pulse"></div>
+                <div class="chase-monster">
+                    <svg class="chase-horseman" viewBox="0 0 200 200"><use href="#horseman"></use></svg>
+                </div>
+            </div>
+            <p class="chase-whisper" id="chase-whisper" role="status"></p>
+            {% endif %}
 
             <!-- Плашки поверх панорамы -->
             <div class="hud-top">
@@ -373,6 +400,49 @@
         <div id="pano-modal-player"></div>
         <button id="pano-modal-close" class="pano-modal-close" aria-label="Закрыть">✕</button>
     </div>
+
+    {% if halloween %}
+    <!-- Сцена «догнал»: на миг поверх всего, затем гаснет над результатом -->
+    <div class="chase-caught" id="chase-caught" aria-hidden="true">
+        <svg class="chase-caught-horseman" viewBox="0 0 200 200"><use href="#horseman"></use></svg>
+        <p class="chase-caught-title">Попался!</p>
+        <p class="chase-caught-quote">«…За ним повсюду Всадник Медный<br>с тяжёлым топотом скакал»</p>
+    </div>
+
+    <!-- Силуэт Медного всадника на Гром-камне. Контейнер не display:none,
+         иначе браузеры теряют градиент горящих глаз. -->
+    <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false">
+        <defs>
+            <radialGradient id="chase-eye-glow">
+                <stop offset="0" stop-color="#ffd27a"/>
+                <stop offset="0.3" stop-color="#ff3b1f"/>
+                <stop offset="1" stop-color="#ff3b1f" stop-opacity="0"/>
+            </radialGradient>
+        </defs>
+        <symbol id="horseman" viewBox="0 0 200 200">
+            <g fill="#0b0f0d" stroke="#0b0f0d" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M4 200 L10 178 Q24 162 52 161 L104 159 Q138 152 160 149 L178 124 Q190 120 194 134 L198 200 Z"/>
+                <path fill="none" stroke-width="7" d="M58 112 Q40 126 46 150 Q50 162 42 172"/>
+                <path fill="none" stroke-width="9" d="M74 130 L63 147 L73 160"/>
+                <path fill="none" stroke-width="9" d="M88 128 L84 146 L96 158"/>
+                <path stroke="none" d="M58 108 C58 96 70 92 80 92 Q98 84 116 72 Q126 58 134 42 L136 36 Q142 32 148 38 L162 50 Q170 54 168 62 Q166 66 160 64 L153 61 Q147 59 147 67 Q146 80 140 92 Q136 104 124 108 L92 130 Q82 138 70 136 Q56 130 58 108 Z"/>
+                <path stroke="none" d="M136 39 L136 31 L141 37 Z"/>
+                <path stroke="none" d="M141 37 L143 30 L146 38 Z"/>
+                <path fill="none" stroke-width="8" d="M132 98 L152 104 L154 122"/>
+                <path fill="none" stroke-width="8" d="M124 106 L142 116 L138 132"/>
+                <path stroke="none" d="M98 54 Q78 70 64 102 L84 98 Q92 80 104 66 Z"/>
+                <path fill="none" stroke-width="12" d="M100 84 L104 52"/>
+                <path fill="none" stroke-width="7" d="M102 86 L113 98 L108 112"/>
+                <path fill="none" stroke-width="5.5" d="M104 56 L137 42"/>
+                <circle stroke="none" cx="106" cy="43" r="7.5"/>
+            </g>
+            <circle cx="109" cy="42" r="6" fill="url(#chase-eye-glow)"/>
+            <circle cx="109" cy="42" r="1.6" fill="#fff1c4"/>
+            <circle cx="151" cy="45" r="6" fill="url(#chase-eye-glow)"/>
+            <circle cx="151" cy="45" r="1.6" fill="#fff1c4"/>
+        </symbol>
+    </svg>
+    {% endif %}
 
     <!-- Всплывающее уведомление (копирование ссылки-вызова и т.п.) -->
     <div id="toast" class="toast hidden"></div>

@@ -2135,6 +2135,247 @@ h1, h2 {
     }
 }
 
+/* ===== Хэллоуин (временно, см. halloween.py) ===== */
+/* Стартовый экран: лунное свечение и летучие мыши позади карточки */
+body.halloween #start-screen {
+    position: relative;
+    isolation: isolate;
+    background:
+        radial-gradient(circle at 82% 6%, rgba(255, 166, 77, 0.2), transparent 40%),
+        var(--navy);
+}
+
+.halloween-sky {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.halloween-bat {
+    position: absolute;
+    left: -3rem;
+    font-size: 1.5rem;
+    opacity: 0.5;
+    animation: halloween-bat-flight 19s linear infinite;
+}
+
+.halloween-bat:nth-child(1) { top: 8%; }
+.halloween-bat:nth-child(2) { top: 24%; font-size: 1.1rem; animation-duration: 25s; animation-delay: -9s; }
+.halloween-bat:nth-child(3) { top: 62%; font-size: 1.3rem; animation-duration: 22s; animation-delay: -16s; }
+
+@keyframes halloween-bat-flight {
+    0%   { transform: translate(0, 0); }
+    25%  { transform: translate(28vw, -2rem); }
+    50%  { transform: translate(55vw, 1rem); }
+    75%  { transform: translate(80vw, -1.5rem); }
+    100% { transform: translate(calc(100vw + 6rem), 0); }
+}
+
+.btn-chase {
+    width: 100%;
+    color: #fff;
+    background: linear-gradient(180deg, #ff9a3d, #e5631a);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 6px 18px rgba(255, 122, 26, 0.4);
+}
+
+.btn-chase:hover:not(:disabled) {
+    transform: translateY(-2px);
+    filter: brightness(1.05);
+}
+
+.btn-chase:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-chase:disabled {
+    background: #b5b2a0;
+    box-shadow: none;
+}
+
+.halloween-hint {
+    display: block;
+    margin: -0.15rem 0 0.9rem;
+    color: rgba(253, 250, 228, 0.6);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    text-wrap: balance;
+}
+
+/* Погоня поверх панорамы: над Player (1), под HUD и картой (10).
+   --chase-p — доля прошедшего времени раунда, её задаёт тик таймера. */
+.chase-layer {
+    --chase-p: 0;
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.chase-vignette,
+.chase-pulse {
+    position: absolute;
+    inset: 0;
+}
+
+.chase-vignette {
+    background: radial-gradient(ellipse at 50% 45%, transparent 40%,
+        rgba(70, 0, 12, 0.55) 75%, rgba(8, 0, 4, 0.9) 100%);
+    opacity: calc(0.2 + 0.8 * var(--chase-p));
+    transition: opacity 0.3s linear;
+}
+
+.chase-pulse {
+    opacity: 0;
+    box-shadow: inset 0 0 14vmin 3vmin rgba(210, 0, 24, 0.8);
+}
+
+.chase-close .chase-pulse {
+    animation: chase-heartbeat 0.9s ease-out infinite;
+}
+
+@keyframes chase-heartbeat {
+    0%, 60%, 100% { opacity: 0; }
+    12% { opacity: 0.9; }
+    24% { opacity: 0.2; }
+    36% { opacity: 0.7; }
+}
+
+/* Издалека всадник маленький и выше по «улице», вблизи — во весь рост.
+   Левее центра: справа на десктопе лежит карта. */
+.chase-monster {
+    position: absolute;
+    left: 36%;
+    bottom: 0;
+    width: min(78vh, 110vw);
+    height: min(78vh, 110vw);
+    transform-origin: 50% 100%;
+    transform: translate(-50%, calc((1 - var(--chase-p)) * -28vh))
+               scale(calc(0.12 + 0.88 * var(--chase-p)));
+    opacity: calc(0.55 + 0.9 * var(--chase-p));
+    transition: transform 0.3s linear, opacity 0.3s linear;
+}
+
+.chase-horseman {
+    display: block;
+    width: 100%;
+    height: 100%;
+    animation: chase-gallop 0.55s ease-in-out infinite;
+}
+
+.chase-close .chase-horseman {
+    animation-duration: 0.35s;
+}
+
+@keyframes chase-gallop {
+    0%, 100% { transform: translateY(0) rotate(0); }
+    50%      { transform: translateY(-2.5%) rotate(-2deg); }
+}
+
+.chase-whisper {
+    position: absolute;
+    top: 4.6rem;
+    left: 50%;
+    z-index: 11;
+    width: max-content;
+    max-width: calc(100% - 2rem);
+    transform: translateX(-50%);
+    padding: 0.5rem 1.1rem;
+    border-radius: 1.25rem;
+    background: rgba(12, 4, 8, 0.78);
+    color: #ffd9c4;
+    font-style: italic;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+.chase-whisper.show {
+    opacity: 1;
+}
+
+/* На телефоне под шапкой слева стоит домик «к началу» */
+@media (max-width: 720px) {
+    .chase-whisper {
+        top: 7.75rem;
+        font-size: 0.85rem;
+    }
+}
+
+/* Сцена «Попался!»: поверх всех экранов, клики проходят насквозь */
+.chase-caught {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    /* Непрозрачно: под сценой уже рисуется экран результата */
+    background: radial-gradient(circle at 50% 42%, #820012, #050003 70%);
+    color: #ffe3d6;
+    text-align: center;
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.4s ease, visibility 0s linear 0.4s;
+}
+
+.chase-caught.show {
+    visibility: visible;
+    opacity: 1;
+    transition: opacity 0.08s ease;
+}
+
+.chase-caught-horseman {
+    width: min(55vh, 80vw);
+    height: min(55vh, 80vw);
+}
+
+.chase-caught.show .chase-caught-horseman {
+    animation: chase-lunge 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.25) both,
+               chase-shake 0.1s linear 0.45s 5;
+}
+
+@keyframes chase-lunge {
+    from { transform: scale(0.55); }
+    to   { transform: scale(1); }
+}
+
+@keyframes chase-shake {
+    0%, 100% { transform: translate(0, 0); }
+    25%      { transform: translate(-1.5%, 1%); }
+    75%      { transform: translate(1.5%, -1%); }
+}
+
+.chase-caught-title {
+    font-family: var(--font-accent);
+    font-size: clamp(2.2rem, 9vw, 4rem);
+    color: #ff5a3c;
+    text-shadow: 0 0 24px rgba(255, 60, 30, 0.6);
+}
+
+.chase-caught-quote {
+    font-style: italic;
+    color: rgba(255, 227, 214, 0.75);
+    line-height: 1.5;
+}
+
+.svg-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         scroll-behavior: auto !important;

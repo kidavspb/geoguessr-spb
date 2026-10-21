@@ -21,7 +21,7 @@ except ImportError:
 E2E_DIR = Path(__file__).parent
 PROJECT_ROOT = E2E_DIR.parent.parent
 PORT = 5688
-BASE_URL = f'http://127.0.0.1:{PORT}'
+HALLOWEEN_PORT = 5689
 
 pytestmark = pytest.mark.skipif(not HAVE_PLAYWRIGHT, reason='playwright не установлен')
 
@@ -36,8 +36,7 @@ def _wait_port(port, timeout=15):
     return False
 
 
-@pytest.fixture(scope='session')
-def server(tmp_path_factory):
+def _run_server(tmp_path_factory, port, halloween_mode):
     """Приложение как отдельный процесс на временной БД."""
     db_path = tmp_path_factory.mktemp('e2e-db') / 'e2e.db'
     env = {
@@ -50,18 +49,31 @@ def server(tmp_path_factory):
         'ADMIN_KEY': 'e2e-admin-key',
         'YANDEX_MAPS_API_KEY': '',
         'METRIKA_ID': '',
-        'PORT': str(PORT),
+        'PORT': str(port),
         'FLASK_DEBUG': 'false',
+        # Сезонный режим включается по календарю — задаём его явно
+        'HALLOWEEN_MODE': halloween_mode,
     }
     proc = subprocess.Popen(
         [sys.executable, 'app.py'],
         cwd=PROJECT_ROOT, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    assert _wait_port(PORT), 'сервер не поднялся'
-    yield BASE_URL
+    assert _wait_port(port), 'сервер не поднялся'
+    yield f'http://127.0.0.1:{port}'
     proc.terminate()
     proc.wait(timeout=5)
+
+
+@pytest.fixture(scope='session')
+def server(tmp_path_factory):
+    yield from _run_server(tmp_path_factory, PORT, 'off')
+
+
+@pytest.fixture(scope='session')
+def halloween_server(tmp_path_factory):
+    """Тот же сервер в сезон «Побега от Медного всадника»."""
+    yield from _run_server(tmp_path_factory, HALLOWEEN_PORT, 'on')
 
 
 @pytest.fixture(scope='session')
