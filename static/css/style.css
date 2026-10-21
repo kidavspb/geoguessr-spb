@@ -2136,72 +2136,257 @@ h1, h2 {
 }
 
 /* ===== Хэллоуин (временно, см. halloween.py) ===== */
-/* Стартовый экран: лунное свечение и летучие мыши позади карточки */
-body.halloween #start-screen {
-    position: relative;
-    isolation: isolate;
-    background:
-        radial-gradient(circle at 82% 6%, rgba(255, 166, 77, 0.2), transparent 40%),
-        var(--navy);
+/* Палитра режима — с обложки «Медного всадника»: глубокий синий и коралл */
+:root {
+    --night-blue: #0c294c;
+    --night-coral: #da795e;
+    --night-coral-dark: #c66a54;
+    --night-gold: #cda780;
 }
 
-.halloween-sky {
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    overflow: hidden;
+/* Обёртка логотипа — inline-block с той же строкой, что и сам img: вне
+   сезона раскладка стартового экрана не меняется ни на пиксель. */
+.start-logo-wrap {
+    position: relative;
+    display: inline-block;
+    vertical-align: top;
+    isolation: isolate;
+}
+
+/* Слои внутри обёртки: всадник 0, логотип 1 */
+.start-logo-wrap .start-logo {
+    position: relative;
+    z-index: 1;
+}
+
+/* Логотип не интерактивен: тап по его краю у всадника достаётся всаднику */
+.start-logo-wrap.has-horseman .start-logo {
     pointer-events: none;
 }
 
-.halloween-bat {
+/* Всадник за логотипом — геометрия из примера владельца (example.svg): кадр
+   повёрнут на 55,37°, и его нижний срез лежит вдоль прямого правого верхнего
+   края суши. Координаты пересчитаны в пиксели логотипа шириной 132px. */
+.horseman-peek {
     position: absolute;
-    left: -3rem;
-    font-size: 1.5rem;
-    opacity: 0.5;
-    animation: halloween-bat-flight 19s linear infinite;
+    top: -36px;
+    left: 130.3px;
+    z-index: 0;
+    width: 92.2px;
+    height: 61.5px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    transform-origin: 0 0;
+    transform: rotate(55.37deg);
+    animation: horseman-haunt 7s ease-in-out infinite;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.halloween-bat:nth-child(1) { top: 8%; }
-.halloween-bat:nth-child(2) { top: 24%; font-size: 1.1rem; animation-duration: 25s; animation-delay: -9s; }
-.halloween-bat:nth-child(3) { top: 62%; font-size: 1.3rem; animation-duration: 22s; animation-delay: -16s; }
-
-@keyframes halloween-bat-flight {
-    0%   { transform: translate(0, 0); }
-    25%  { transform: translate(28vw, -2rem); }
-    50%  { transform: translate(55vw, 1rem); }
-    75%  { transform: translate(80vw, -1.5rem); }
-    100% { transform: translate(calc(100vw + 6rem), 0); }
-}
-
-.btn-chase {
-    width: 100%;
-    color: #fff;
-    background: linear-gradient(180deg, #ff9a3d, #e5631a);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
-                0 6px 18px rgba(255, 122, 26, 0.4);
-}
-
-.btn-chase:hover:not(:disabled) {
-    transform: translateY(-2px);
-    filter: brightness(1.05);
-}
-
-.btn-chase:active:not(:disabled) {
-    transform: translateY(0);
-}
-
-.btn-chase:disabled {
-    background: #b5b2a0;
-    box-shadow: none;
-}
-
-.halloween-hint {
+.horseman-peek img {
     display: block;
-    margin: -0.15rem 0 0.9rem;
-    color: rgba(253, 250, 228, 0.6);
-    font-size: 0.8rem;
-    line-height: 1.4;
-    text-wrap: balance;
+    width: 100%;
+    height: 100%;
+}
+
+/* То выглядывает из-за края, то уходит обратно: видно, что он «живой» и
+   на него можно нажать. Сдвиг — вдоль его собственной оси, внутрь суши. */
+@keyframes horseman-haunt {
+    0%, 8%    { opacity: 0; transform: rotate(55.37deg) translateY(12px); }
+    22%, 62%  { opacity: 1; transform: rotate(55.37deg) translateY(0); }
+    76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(12px); }
+}
+
+/* Наведение или фокус — всадник показывается и ждёт клика */
+.horseman-peek:hover,
+.horseman-peek:focus-visible {
+    animation: none;
+    opacity: 1;
+}
+
+.horseman-peek:focus-visible {
+    outline: 2px solid var(--green-light);
+    outline-offset: 2px;
+}
+
+/* В режиме погони он уже выехал и стоит на месте */
+#start-screen.is-chase .horseman-peek {
+    animation: none;
+    opacity: 1;
+    cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .horseman-peek {
+        animation: none;
+        opacity: 1;
+    }
+}
+
+/* Режим погони — тот же стартовый экран в палитре обложки: «ночной»
+   логотип, название и легенда, коралловый старт. Вызов дня и «Без лимита»
+   видны, но недоступны: погоня всегда с таймером. */
+.chase-only {
+    display: none;
+}
+
+#start-screen.is-chase .chase-only {
+    display: block;
+}
+
+#start-screen.is-chase img.chase-only {
+    display: inline;
+}
+
+#start-screen.is-chase .start-logo:not(.chase-only),
+#start-screen.is-chase .brand-title:not(.chase-only),
+#start-screen.is-chase .start-tagline:not(.chase-only) {
+    display: none;
+}
+
+html.theme-chase:not(.theme-light),
+html.theme-chase:not(.theme-light) body,
+#start-screen.is-chase {
+    background: var(--night-blue);
+}
+
+#chase-title:focus {
+    outline: none;
+}
+
+#start-screen.is-chase .start-tagline.chase-only {
+    margin-bottom: 0.5rem;
+}
+
+.chase-note {
+    margin-bottom: 1.75rem;
+    color: var(--night-gold);
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+}
+
+#start-screen.is-chase #daily-btn:disabled,
+#start-screen.is-chase #daily-hint {
+    opacity: 0.4;
+}
+
+#start-screen.is-chase #daily-btn:disabled:hover {
+    border-color: rgba(253, 250, 228, 0.3);
+    color: rgba(253, 250, 228, 0.8);
+}
+
+#start-screen.is-chase #timer-unlimited + label {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+#start-screen.is-chase #timer-unlimited + label:hover {
+    color: rgba(253, 250, 228, 0.72);
+}
+
+/* Коралловый старт — тот же рисунок кнопки, что у зелёной */
+#start-screen.is-chase #start-btn:not(:disabled) {
+    background: linear-gradient(180deg, #e3876c, var(--night-coral-dark));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 6px 16px rgba(218, 121, 94, 0.35);
+}
+
+#start-screen.is-chase #start-btn:hover:not(:disabled) {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 8px 20px rgba(218, 121, 94, 0.45);
+}
+
+#start-screen.is-chase .move-setting input:checked ~ .switch-control {
+    border-color: #e3876c;
+    background: var(--night-coral);
+}
+
+/* Вход в режим: волна поднимается снизу, закрывает экран и уходит вверх.
+   Пока она идёт, клики перехватываются — второй вход не начнётся. */
+.chase-flood {
+    position: fixed;
+    inset: 0;
+    z-index: 1600;
+    overflow: hidden;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+.chase-flood.run {
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.chase-flood-wave {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 220vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.chase-flood-crest {
+    display: block;
+    flex: none;
+    width: 100%;
+    height: 90px;
+}
+
+.chase-flood-body {
+    flex: 1;
+    background: var(--night-blue);
+}
+
+.chase-flood.run .chase-flood-wave {
+    animation: chase-flood 1.4s cubic-bezier(0.55, 0, 0.45, 1) forwards;
+}
+
+@keyframes chase-flood {
+    from { transform: translateY(0); }
+    to   { transform: translateY(-320vh); }
+}
+
+/* В игре погони: чёрно-белые панорамы, тёмный таймер с подковой */
+/* Только сам снимок (canvas): логотип и копирайты Яндекса по условиям API
+   нельзя видоизменять, они остаются цветными. */
+.game-stage.chase-mode #panorama-player canvas {
+    filter: grayscale(1);
+}
+
+.game-stage.chase-mode .hud-chip-timer:not(.timer-low) {
+    background: #17121c;
+    color: var(--cream);
+}
+
+.game-stage.chase-mode .timer-icon:not(.chase-only) {
+    display: none;
+}
+
+.game-stage.chase-mode .timer-icon.chase-only {
+    display: inline-block;
+    vertical-align: -2px;
+}
+
+/* Дырки для гвоздей — цвета плашки, в том числе красной в конце раунда */
+.horseshoe-nails {
+    fill: #17121c;
+}
+
+.timer-low .horseshoe-nails {
+    fill: var(--red);
+}
+
+@media (min-width: 721px) {
+    .game-stage.chase-mode .hud-brand span:not(.chase-only) {
+        display: none;
+    }
+
+    .game-stage.chase-mode .hud-brand .chase-only {
+        display: inline;
+    }
 }
 
 /* Погоня поверх панорамы: над Player (1), под HUD и картой (10).
@@ -2213,6 +2398,10 @@ body.halloween #start-screen {
     z-index: 4;
     overflow: hidden;
     pointer-events: none;
+    /* Логотип и копирайты Яндекса внизу панорамы перекрывать нельзя:
+       нижняя полоса остаётся чистой, выше погоня проявляется плавно. */
+    -webkit-mask-image: linear-gradient(to top, transparent 32px, #000 80px);
+    mask-image: linear-gradient(to top, transparent 32px, #000 80px);
 }
 
 .chase-vignette,
@@ -2250,8 +2439,8 @@ body.halloween #start-screen {
     position: absolute;
     left: 36%;
     bottom: 0;
-    width: min(78vh, 110vw);
-    height: min(78vh, 110vw);
+    height: min(82vh, 140vw);
+    aspect-ratio: 1090 / 1400;
     transform-origin: 50% 100%;
     transform: translate(-50%, calc((1 - var(--chase-p)) * -28vh))
                scale(calc(0.12 + 0.88 * var(--chase-p)));
@@ -2308,7 +2497,8 @@ body.halloween #start-screen {
     }
 }
 
-/* Сцена «Попался!»: поверх всех экранов, клики проходят насквозь */
+/* Сцена «Попался!»: поверх всех экранов, клики проходят насквозь.
+   Непрозрачная: под ней уже рисуется экран результата. */
 .chase-caught {
     position: fixed;
     inset: 0;
@@ -2319,8 +2509,7 @@ body.halloween #start-screen {
     justify-content: center;
     gap: 0.5rem;
     padding: 1rem;
-    /* Непрозрачно: под сценой уже рисуется экран результата */
-    background: radial-gradient(circle at 50% 42%, #820012, #050003 70%);
+    background: #12050a;
     color: #ffe3d6;
     text-align: center;
     pointer-events: none;
@@ -2336,8 +2525,8 @@ body.halloween #start-screen {
 }
 
 .chase-caught-horseman {
-    width: min(55vh, 80vw);
-    height: min(55vh, 80vw);
+    width: auto;
+    height: min(56vh, 110vw);
 }
 
 .chase-caught.show .chase-caught-horseman {
@@ -2360,20 +2549,12 @@ body.halloween #start-screen {
     font-family: var(--font-accent);
     font-size: clamp(2.2rem, 9vw, 4rem);
     color: #ff5a3c;
-    text-shadow: 0 0 24px rgba(255, 60, 30, 0.6);
 }
 
 .chase-caught-quote {
     font-style: italic;
     color: rgba(255, 227, 214, 0.75);
     line-height: 1.5;
-}
-
-.svg-defs {
-    position: absolute;
-    width: 0;
-    height: 0;
-    overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
