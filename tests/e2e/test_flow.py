@@ -1538,3 +1538,36 @@ def test_slow_ready_response_does_not_block_fast_next_round(page, server):
     page.locator('#map').click(position={'x': 150, 'y': 120})
     expect(page.locator('#guess-btn')).to_be_enabled()
     page.evaluate('window.__heldReadyResponses.splice(0).forEach(resolve => resolve())')
+
+
+def test_lost_ready_in_timed_game_is_resent_before_the_answer(page, server):
+    """Сервер не примет ответ с таймером без /ready — клиент повторит его сам."""
+    ready_calls = []
+    guess_statuses = []
+
+    def ready_route(route):
+        ready_calls.append(route.request.url)
+        # Обе попытки фонового /ready потерялись в сети.
+        if len(ready_calls) <= 2:
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route('**/api/game/ready', ready_route)
+    page.on('response', lambda response: guess_statuses.append(response.status)
+            if '/api/game/guess' in response.url else None)
+    page.goto(server)
+    page.locator('label[for="timer-60"]').click()
+    page.locator('#start-btn').click()
+    expect(page.locator('#panorama-player .stub-pano')).to_be_visible(timeout=10000)
+    for _ in range(50):
+        if len(ready_calls) >= 2:
+            break
+        page.wait_for_timeout(100)
+    assert len(ready_calls) == 2
+
+    _play_round(page)
+
+    assert len(ready_calls) == 3
+    assert guess_statuses == [409, 200]
+    expect(page.locator('#result-distance')).to_be_visible()

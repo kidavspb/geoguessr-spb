@@ -11,7 +11,13 @@ def round_body(location, **fields):
 
 
 def guess_at_target(client, location, **fields):
-    """Ответить точно в выданную точку раунда; вернуть JSON ответа."""
+    """Ответить точно в выданную точку раунда; вернуть JSON ответа.
+
+    Как настоящий клиент, сначала отмечает показ панорамы (/ready): без него
+    игра с таймером ответ не примет. Отказ /ready (район без проверенной
+    панорамы) не проверяется — о нём так же сообщит сам /guess.
+    """
+    client.post('/api/game/ready', json=round_body(location))
     body = round_body(location, latitude=location['latitude'],
                       longitude=location['longitude'], **fields)
     return client.post('/api/game/guess', json=body).get_json()

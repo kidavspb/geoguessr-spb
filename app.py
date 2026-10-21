@@ -26,12 +26,13 @@ from models import (db, GameSession, GameRound, VerifiedPoint, utcnow,
 from game_logic import (
     ROUNDS_PER_GAME, MAX_SCORE_PER_ROUND,
     MAX_SKIPS_PER_SEARCH_BATCH, MAX_ACTUAL_POINT_DRIFT_KM,
-    MIN_ROUND_LOCATION_DISTANCE_KM,
+    KNOWN_PANORAMA_DRIFT_KM, MIN_ROUND_LOCATION_DISTANCE_KM,
     TIME_LIMIT_GRACE_SECONDS, DIFFICULTY_SETTINGS,
     difficulty_name, haversine_distance,
     calculate_score, parse_coords, parse_time_limit,
 )
-from pool import choose_round_candidates, add_verified_point, mark_point_failed
+from pool import (choose_round_candidates, add_verified_point, is_pool_point,
+                  mark_point_failed)
 from daily import DAILY_DIFFICULTY, MSK, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
 from districts import (
@@ -310,7 +311,8 @@ def _location_payload(game, rnd):
         'latitude': rnd.gen_latitude,
         'longitude': rnd.gen_longitude,
         'source': rnd.location_source or 'legacy',
-        'max_panorama_drift_km': MAX_ACTUAL_POINT_DRIFT_KM,
+        'max_panorama_drift_km': (KNOWN_PANORAMA_DRIFT_KM if _has_known_panorama(rnd)
+                                  else MAX_ACTUAL_POINT_DRIFT_KM),
         # Версия кандидата внутри того же round_id. Нужна, чтобы безопасно
         # повторить skip после потерянного HTTP-ответа, не перескочив ещё раз.
         'location_version': rnd.skips or 0,
@@ -355,6 +357,18 @@ def _scoring_point(rnd):
     if rnd.actual_latitude is not None and rnd.actual_longitude is not None:
         return rnd.actual_latitude, rnd.actual_longitude
     return rnd.gen_latitude, rnd.gen_longitude
+
+
+def _has_known_panorama(rnd):
+    """Место съёмки знает сервер: это точка пула, вызова дня или челленджа.
+
+    Такой раунд с самого начала хранит actual == gen — ранее сыгранную
+    панораму. Для нового места actual появляется позже из сообщения клиента
+    о найденной поблизости съёмке и с gen практически не совпадает.
+    """
+    return (rnd.actual_latitude is not None
+            and rnd.actual_latitude == rnd.gen_latitude
+            and rnd.actual_longitude == rnd.gen_longitude)
 
 
 def _stale_location_error(message='Версия точки устарела'):
@@ -794,11 +808,16 @@ def start_game():
 
     if daily is not None:
         for i, (lat, lon) in enumerate(daily_points(daily), start=1):
+            # В молодом проекте набор дня мог быть сгенерирован случайно;
+            # подтверждённые точки пула сразу фиксируют место съёмки.
+            known = is_pool_point(lat, lon)
             db.session.add(GameRound(
                 session_id=game_session.id,
                 round_number=i,
                 gen_latitude=lat,
                 gen_longitude=lon,
+                actual_latitude=lat if known else None,
+                actual_longitude=lon if known else None,
                 location_source='daily',
             ))
     elif source is not None:
@@ -823,11 +842,14 @@ def start_game():
             difficulty, ROUNDS_PER_GAME, district_id=district_id
         )
         for i, (lat, lon, point_source) in enumerate(candidates, start=1):
+            known = point_source == 'pool'
             db.session.add(GameRound(
                 session_id=game_session.id,
                 round_number=i,
                 gen_latitude=lat,
                 gen_longitude=lon,
+                actual_latitude=lat if known else None,
+                actual_longitude=lon if known else None,
                 location_source=point_source,
             ))
 
@@ -970,7 +992,7 @@ def skip_location():
     if reason == 'no_coverage':
         # Сигнал пула и смена точки коммитятся вместе: потерянный ответ не
         # должен увеличить fail_count без изменения location_version.
-        mark_point_failed(rnd.gen_latitude, rnd.gen_longitude)
+        mark_point_failed(rnd.gen_latitude, rnd.gen_longitude, game.id)
 
     # Исследовательская попытка уже дала проекту полезный сигнал. После неё
     # восстанавливаем раунд из пула, чтобы не заставлять игрока ждать цепочку
@@ -982,6 +1004,8 @@ def skip_location():
         exclude=excluded_coords,
         avoid=played_coords if reason == 'duplicate_panorama' else None,
     )[0]
+    # Точка пула — уже сыгранная панорама: её место известно серверу.
+    actual = (lat, lon) if replacement_source.startswith('pool') else (None, None)
     if (game.difficulty == DISTRICT_MODE and game.daily_date is None
             and game.challenged_from_id is None):
         # Малый пул может целиком быть зарезервирован за будущими раундами.
@@ -1013,11 +1037,13 @@ def skip_location():
                         > MAX_ACTUAL_POINT_DRIFT_KM + MIN_ROUND_LOCATION_DISTANCE_KM)):
                 future.gen_latitude, lat = lat, future.gen_latitude
                 future.gen_longitude, lon = lon, future.gen_longitude
+                future_actual = (future.actual_latitude, future.actual_longitude)
+                future.actual_latitude, future.actual_longitude = actual
+                actual = future_actual
                 future.location_source = replacement_source
     rnd.gen_latitude = lat
     rnd.gen_longitude = lon
-    rnd.actual_latitude = None
-    rnd.actual_longitude = None
+    rnd.actual_latitude, rnd.actual_longitude = actual
     if previous_source.endswith('_recovery'):
         rnd.location_source = previous_source
     else:
@@ -1083,6 +1109,20 @@ def validate_panorama():
     if coords is None:
         return jsonify({'error': 'Некорректные координаты'}), 400
     lat, lon = coords
+    if rnd.actual_latitude is not None:
+        # Место съёмки этой версии точки уже зафиксировано: известная точка
+        # пула, дня или челленджа либо прошлая проверка. Клиент его не меняет.
+        moved = haversine_distance(lat, lon, rnd.actual_latitude, rnd.actual_longitude)
+        if moved > KNOWN_PANORAMA_DRIFT_KM:
+            # Яндекс убрал съёмку из этой точки: клиент заменит её как
+            # отсутствие покрытия, и точка пула получит неудачу.
+            app.logger.info(
+                'Панорама сместилась от зафиксированной на %.2f км '
+                '(round=%s, game_id=%s)', moved, rnd.round_number, game.id,
+            )
+            return jsonify({'valid': False, 'reason': 'panorama_moved'})
+        # Очки считаются по зафиксированному месту — его и проверяем.
+        lat, lon = rnd.actual_latitude, rnd.actual_longitude
     reason, drift = _panorama_rejection_reason(game, rnd, lat, lon)
     if reason == 'district_unavailable':
         return jsonify({'error': 'Район текущей игры больше недоступен'}), 409
@@ -1097,7 +1137,6 @@ def validate_panorama():
     rnd.actual_latitude = lat
     rnd.actual_longitude = lon
     db.session.commit()
-    add_verified_point(lat, lon)
     return jsonify({'valid': True})
 
 
@@ -1185,6 +1224,13 @@ def submit_guess():
     version_error = _location_version_error(data, rnd)
     if version_error:
         return version_error
+    if game.time_limit and rnd.started_at is None:
+        # Без отметки показа сервер не может проверить лимит времени. Клиент
+        # повторит потерянный /ready и отправит тот же ответ ещё раз.
+        return jsonify({
+            'error': 'Раунд ещё не начался',
+            'reason': 'round_not_started',
+        }), 409
 
     coords = parse_coords(data)
     # Клиент может завершить раунд без догадки, когда время вышло
@@ -1194,11 +1240,21 @@ def submit_guess():
 
     # Точные координаты открытой съёмки приходят вместе с догадкой:
     # результат всегда считается по той панораме, которую видел игрок.
+    # Уже зафиксированное место (известная точка или /validate_panorama)
+    # клиент не переопределяет.
     panorama_coords = parse_coords({
         'latitude': data.get('panorama_latitude'),
         'longitude': data.get('panorama_longitude'),
     })
-    if panorama_coords is not None:
+    if panorama_coords is not None and rnd.actual_latitude is not None:
+        moved = haversine_distance(*panorama_coords, *_scoring_point(rnd))
+        if moved > KNOWN_PANORAMA_DRIFT_KM:
+            app.logger.info(
+                'Позиция панорамы в /guess проигнорирована: %.2f км от '
+                'зафиксированной (round=%s, game_id=%s)',
+                moved, rnd.round_number, game.id,
+            )
+    elif panorama_coords is not None:
         pano_lat, pano_lon = panorama_coords
         reason, drift = _panorama_rejection_reason(
             game, rnd, pano_lat, pano_lon
@@ -1233,7 +1289,7 @@ def submit_guess():
     # Серверная проверка таймера: опоздавший ответ получает 0 очков
     # (запас — на сетевые задержки и загрузку панорамы).
     forced_timeout = False
-    if game.time_limit and rnd.started_at is not None:
+    if game.time_limit:
         elapsed = (utcnow() - _aware_utc(rnd.started_at)).total_seconds()
         if elapsed > game.time_limit + TIME_LIMIT_GRACE_SECONDS:
             forced_timeout = True
@@ -1264,9 +1320,9 @@ def submit_guess():
         game.completed_at = utcnow()
 
     db.session.commit()
-    # Пополнение молодого пула остаётся для каждого сыгранного раунда,
-    # но больше не требует отдельного клиентского POST в критической гонке.
-    if rnd.actual_latitude is not None:
+    # Пул пополняют только сыгранные раунды: панорама была на экране (/ready)
+    # и раунд завершён — одна точка на раунд. Повтор ответа сюда не доходит.
+    if rnd.started_at is not None and rnd.actual_latitude is not None:
         add_verified_point(rnd.actual_latitude, rnd.actual_longitude)
 
     # Фактическая сложность места (None, пока данных мало). Запрос читает все

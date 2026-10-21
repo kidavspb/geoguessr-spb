@@ -23,6 +23,11 @@ def _author_challenge_token(server, **settings):
 
     location = post('/api/game/start', {'player_name': 'Автор', **settings})['location']
     for _ in range(5):
+        # Как браузер: показ панорамы, затем ответ (с таймером — обязательно).
+        post('/api/game/ready', {
+            'round_id': location['round_id'],
+            'location_version': location['location_version'],
+        })
         result = post('/api/game/guess', {
             'round_id': location['round_id'],
             'location_version': location['location_version'],

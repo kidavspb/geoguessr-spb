@@ -29,7 +29,6 @@ class GameSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     player_name = db.Column(db.String(100), default='Аноним')
     total_score = db.Column(db.Integer, default=0)
-    rounds_played = db.Column(db.Integer, default=0)
     # Территория игры: center / medium / hard или district.
     # Нужен, чтобы таблица лидеров была честной: режимы не сравнимы напрямую.
     difficulty = db.Column(db.String(10), default='medium')
@@ -117,9 +116,9 @@ class GameRound(db.Model):
 class VerifiedPoint(db.Model):
     """Пул проверенных точек — мест, где панорама Яндекса точно существует.
 
-    Пополняется автоматически: каждая панорама, найденная клиентом в честной
-    игре, попадает сюда. Новые игры берут точки из пула — раунд стартует сразу,
-    без перебора случайных точек в поисках панорамы.
+    Пополняется автоматически: панорама каждого сыгранного раунда попадает
+    сюда. Новые игры берут точки из пула — раунд стартует сразу, без перебора
+    случайных точек в поисках панорамы.
     """
     __tablename__ = 'verified_points'
 
@@ -134,10 +133,12 @@ class VerifiedPoint(db.Model):
     # Пространственный кэш: какому району принадлежит панорама.
     # NULL допустим для legacy-точек и координат вне административной границы.
     district_id = db.Column(db.String(32), index=True)
-    # Сколько раз подряд у точки не нашлась панорама (панорамы иногда
+    # В скольких играх подряд у точки не нашлась панорама (панорамы иногда
     # пропадают). На пороге точка удаляется из пула; при успешном
     # подтверждении панорамы счётчик сбрасывается.
     fail_count = db.Column(db.Integer, default=0)
+    # Игра последней неудачи: повтор от неё же счётчик не увеличивает.
+    last_failed_game_id = db.Column(db.Integer)
     created_at = db.Column(db.DateTime, default=utcnow)
 
     __table_args__ = (

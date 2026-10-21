@@ -55,7 +55,7 @@ def test_challenge_inherits_source_rules(client, app, rules_version):
     with app.app_context():
         source = GameSession(
             difficulty='hard', panorama_rules_version=rules_version,
-            completed_at=utcnow(), current_round=5, rounds_played=5,
+            completed_at=utcnow(), current_round=5,
             challenge_token='rules-source',
         )
         db.session.add(source)
