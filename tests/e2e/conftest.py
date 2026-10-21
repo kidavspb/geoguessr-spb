@@ -72,7 +72,7 @@ def server(tmp_path_factory):
 
 @pytest.fixture(scope='session')
 def halloween_server(tmp_path_factory):
-    """Тот же сервер в сезон «Побега от Медного всадника»."""
+    """Тот же сервер в сезон «Ночи Медного всадника»."""
     yield from _run_server(tmp_path_factory, HALLOWEEN_PORT, 'on')
 
 

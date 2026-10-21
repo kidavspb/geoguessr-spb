@@ -1,18 +1,27 @@
 /**
- * Хэллоуин (временно): «Побег от Медного всадника».
+ * Хэллоуин (временно): «Ночь Медного всадника».
  *
- * Это обычная игра с минутным таймером — правила, счёт и таблица лидеров те
- * же. Модуль только рисует отсчёт как погоню: всадник приближается, края
- * темнеют, в последние секунды стучит сердце, а когда время вышло, мелькает
- * сцена «Попался!». Все слои — CSS поверх панорамы с pointer-events: none;
- * второго Player или карты режим не создаёт. Разметка есть только в сезон
- * (см. halloween.py), без неё функции ничего не делают.
+ * Погоня — обычная игра с таймером на 1 или 3 минуты: правила, счёт и
+ * таблица лидеров те же. Модуль только оформляет её. На стартовом экране из-за
+ * логотипа то появляется, то исчезает Медный всадник; клик по нему — волна на
+ * весь экран, и тот же экран переодевается в палитру обложки: «ночной»
+ * логотип, название, легенда, коралловый старт, вызов дня и «Без лимита»
+ * неактивны. «Назад» возвращает обычную игру. В игре отсчёт
+ * становится погоней: всадник приближается, панорама чёрно-белая, края
+ * темнеют, в последние секунды стучит сердце, когда время вышло — «Попался!».
+ * Все слои — CSS поверх панорамы с pointer-events: none; второго Player или
+ * карты режим не создаёт. Разметка есть только в сезон (см. halloween.py),
+ * без неё функции ничего не делают. Режим не запоминается: каждый визит
+ * всадника находят заново.
  */
 
 export const CHASE_TIME_LIMIT = 60;
 
 // Тот же порог, что у красного таймера в main.js.
 const CLOSE_MS = 10000;
+// Волна входа в режим (CSS: 1.4s): переключаем, пока экран закрыт.
+const FLOOD_SWITCH_MS = 700;
+const FLOOD_MS = 1450;
 const WHISPER_MS = 3200;
 const CAUGHT_MS = 1800;
 
@@ -22,10 +31,65 @@ const WHISPERS = [
     'Он прямо за спиной — отмечай точку!',
 ];
 
+let chaseMode = false;
 let whisperStage = 0;
 let whisperTimer = null;
 let caughtTimer = null;
 let caught = false;
+
+/** Включён ли режим погони на стартовом экране. */
+export function chaseModeOn() {
+    return chaseMode;
+}
+
+/** Всадник за логотипом; onModeChange(on) сообщает о смене режима. */
+export function initHalloween({ onModeChange }) {
+    const peek = document.getElementById('horseman-peek');
+    if (!peek) return;
+
+    peek.addEventListener('click', () => {
+        if (chaseMode) return;
+        runFlood(() => {
+            setChaseMode(true);
+            onModeChange(true);
+            document.getElementById('chase-title').focus();
+        });
+    });
+    document.getElementById('chase-back-btn').addEventListener('click', () => {
+        setChaseMode(false);
+        onModeChange(false);
+        peek.focus();
+    });
+}
+
+/** Волна на весь экран; switchMode срабатывает, пока экран закрыт. */
+function runFlood(switchMode) {
+    const flood = document.getElementById('chase-flood');
+    if (flood.classList.contains('run')) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        switchMode();
+        return;
+    }
+    flood.classList.add('run');
+    setTimeout(switchMode, FLOOD_SWITCH_MS);
+    setTimeout(() => flood.classList.remove('run'), FLOOD_MS);
+}
+
+function setChaseMode(on) {
+    chaseMode = on;
+    document.getElementById('start-screen').classList.toggle('is-chase', on);
+    document.documentElement.classList.toggle('theme-chase', on);
+    // В режиме всадник уже выехал: повторный клик ничего бы не дал.
+    document.getElementById('horseman-peek').disabled = on;
+    document.getElementById('start-btn').textContent = on ? 'Бежать' : 'Начать игру';
+    // Вызов дня без таймера: в погоне он виден, но недоступен.
+    document.getElementById('daily-btn').disabled = on;
+}
+
+/** Игровой экран в оформлении погони (ч/б панорама, таймер) или обычном. */
+export function setChaseGame(on) {
+    document.querySelector('.game-stage').classList.toggle('chase-mode', on);
+}
 
 /** Новый раунд или новая игра: всадник снова далеко. */
 export function resetChase() {
@@ -59,6 +123,11 @@ export function chaseCaught() {
     if (!overlay) return;
     caught = true;
     hideWhisper();
+    // Картинка сцены — та же, что в погоне: к этому моменту она уже в кэше.
+    const image = overlay.querySelector('img');
+    if (!image.getAttribute('src')) {
+        image.src = document.getElementById('chase-horseman').src;
+    }
     clearTimeout(caughtTimer);
     overlay.classList.add('show');
     caughtTimer = setTimeout(() => overlay.classList.remove('show'), CAUGHT_MS);

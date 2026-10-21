@@ -20,7 +20,8 @@ import {
     districtDisplayName
 } from './districts.js';
 import {
-    CHASE_TIME_LIMIT, resetChase, updateChase, chaseCaught, wasCaught
+    CHASE_TIME_LIMIT, initHalloween, chaseModeOn, setChaseGame,
+    resetChase, updateChase, chaseCaught, wasCaught
 } from './halloween.js';
 
 const { settings, game } = state;
@@ -76,10 +77,25 @@ function initPlayerName() {
  */
 function initEventListeners() {
     // Стартовый экран
-    document.getElementById('start-btn').addEventListener('click', () => startGame());
+    document.getElementById('start-btn').addEventListener('click', () => startGame({ chase: chaseModeOn() }));
     document.getElementById('daily-btn').addEventListener('click', () => startGame({ daily: true }));
-    // Хэллоуинская погоня: кнопка есть только в сезон (см. halloween.py)
-    document.getElementById('chase-btn')?.addEventListener('click', () => startGame({ chase: true }));
+    // Хэллоуинская погоня: всадник за логотипом есть только в сезон (см. halloween.py)
+    let timeBeforeChase = 0;
+    initHalloween({
+        onModeChange: on => {
+            // Без лимита погоне нечего показывать: на время режима — минута,
+            // а «Без лимита» возвращается при выходе из него.
+            if (on) {
+                timeBeforeChase = settings.timeLimit;
+                if (!settings.timeLimit) settings.timeLimit = CHASE_TIME_LIMIT;
+            } else if (!timeBeforeChase) {
+                settings.timeLimit = 0;
+            }
+            // Скрытый пункт не должен выбираться и стрелками с клавиатуры.
+            document.getElementById('timer-unlimited').disabled = on;
+            syncTimeControl();
+        }
+    });
     document.getElementById('show-leaderboard-btn').addEventListener('click', () => openLeaderboard());
 
     // Игровой экран
@@ -148,7 +164,7 @@ function initEventListeners() {
 
     // Enter для начала игры
     document.getElementById('player-name').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') startGame();
+        if (e.key === 'Enter') startGame({ chase: chaseModeOn() });
     });
 }
 
@@ -376,8 +392,8 @@ async function initChallengeFromUrl() {
     for (const id of ['difficulty-group', 'timer-group', 'move-group']) {
         document.getElementById(id).classList.add('hidden');
     }
-    // Погоня — отдельная игра со своим таймером, а не способ сыграть челлендж.
-    document.getElementById('halloween-group')?.classList.add('hidden');
+    // Погоня — отдельная игра со своими правилами, а не способ сыграть челлендж.
+    document.getElementById('horseman-peek')?.classList.add('hidden');
 }
 
 /** Вернуть обычный стартовый экран после челленджа или его ошибки. */
@@ -389,7 +405,7 @@ function leaveChallengeMode(message = null) {
     for (const id of ['difficulty-group', 'timer-group', 'move-group']) {
         document.getElementById(id).classList.remove('hidden');
     }
-    document.getElementById('halloween-group')?.classList.remove('hidden');
+    document.getElementById('horseman-peek')?.classList.remove('hidden');
     window.history.replaceState(null, '', window.location.pathname);
 }
 
@@ -422,14 +438,6 @@ function showMapsWarning(text) {
     warning.textContent = text;
 }
 
-/** Кнопки запуска блокируются вместе: второй POST /start не нужен. */
-function setStartButtonsDisabled(disabled) {
-    for (const id of ['start-btn', 'daily-btn', 'chase-btn']) {
-        const button = document.getElementById(id);
-        if (button) button.disabled = disabled;
-    }
-}
-
 /**
  * Начало новой игры
  */
@@ -437,7 +445,8 @@ async function startGame(opts = {}) {
     if (state.gameStarting) return;
     state.gameStarting = true;
     stopRoundTimer();
-    setStartButtonsDisabled(true);
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('daily-btn').disabled = true;
     const playerName = document.getElementById('player-name').value.trim() || randomPlayerName();
     document.getElementById('player-name').value = playerName;
     try {
@@ -462,10 +471,11 @@ async function startGame(opts = {}) {
             player_name: playerName,
             difficulty: settings.difficulty,
             district_id: settings.difficulty === 'district' ? settings.districtId : null,
-            // Погоня — та же игра с минутным таймером; выбор игрока не трогаем.
-            time_limit: opts.chase ? CHASE_TIME_LIMIT : (settings.timeLimit || null),
+            // Режим погони сам выставляет таймер; без лимита её не бывает.
+            time_limit: settings.timeLimit || (opts.chase ? CHASE_TIME_LIMIT : null),
             no_move: settings.noMove,
-            challenge_token: state.challengeToken,
+            // Погоня — своя игра, а не способ сыграть челлендж.
+            challenge_token: opts.chase ? null : state.challengeToken,
             daily: !!opts.daily
         });
 
@@ -500,6 +510,7 @@ async function startGame(opts = {}) {
             // Погоня рисует отсчёт таймера: без лимита ей нечего показывать.
             chase: !!opts.chase && !!data.time_limit,
         });
+        setChaseGame(game.chase);
         discardPreloaded(state.preloaded);
         state.preloaded = null;
         state.currentLocation = null;
@@ -537,7 +548,9 @@ async function startGame(opts = {}) {
         alert('Не удалось начать игру. Проверьте подключение. Детали: ' + error.message);
     } finally {
         state.gameStarting = false;
-        setStartButtonsDisabled(false);
+        document.getElementById('start-btn').disabled = false;
+        // В режиме погони вызов дня остаётся неактивным.
+        document.getElementById('daily-btn').disabled = chaseModeOn();
     }
 }
 
