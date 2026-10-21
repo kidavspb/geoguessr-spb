@@ -116,7 +116,7 @@ YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
 ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
 # Номер счётчика Яндекс Метрики; не задан — аналитика выключена.
 METRIKA_ID = os.environ.get('METRIKA_ID', '')
-# Сезонный режим «Побег от Медного всадника»: on/off, иначе по календарю.
+# Сезонный режим «Ночь Медного всадника»: on/off, иначе по календарю.
 HALLOWEEN_MODE = os.environ.get('HALLOWEEN_MODE', '')
 
 db.init_app(app)
@@ -575,6 +575,8 @@ def inject_asset_version():
         'js/panorama.js', 'js/maps.js',
         'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
         'js/halloween.js',
+        'img/halloween/horseman-peek.webp', 'img/halloween/horseman-chase.webp',
+        'img/halloween/logo-night.svg',
         'manifest.json', 'manifest-dev.json',
         'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
         'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico',

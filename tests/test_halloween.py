@@ -34,6 +34,6 @@ def test_mode_off_disables_season(mode):
 def test_index_renders_chase_only_in_season(app_module, client, monkeypatch, mode, visible):
     monkeypatch.setattr(app_module, 'HALLOWEEN_MODE', mode)
     html = client.get('/').get_data(as_text=True)
-    for marker in ('<body class="halloween">', 'id="chase-btn"', 'id="chase-layer"',
-                   'id="chase-caught"', '<symbol id="horseman"'):
+    for marker in ('id="horseman-peek"', 'id="chase-title"', 'id="chase-flood"',
+                   'id="chase-layer"', 'id="chase-caught"', 'img/halloween/logo-night.svg'):
         assert (marker in html) is visible, marker
