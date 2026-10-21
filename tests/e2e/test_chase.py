@@ -8,6 +8,10 @@ from test_settings import _author_challenge_token
 FIRST_WHISPER = 'Медный всадник сошёл с Гром-камня…'
 NO_HSCROLL = 'document.documentElement.scrollWidth <= innerWidth'
 NIGHT_BLUE = 'rgb(12, 41, 76)'
+# Логотип — тоже переключатель. Центр кнопки всадника лежит под логотипом,
+# поэтому саму кнопку тесты нажимают с клавиатуры или событием click.
+LOGO = '.start-logo-wrap .start-logo:not(.chase-only)'
+NIGHT_LOGO = '.start-logo-wrap .start-logo.chase-only'
 
 
 def _shorten_rounds(page, remaining_ms):
@@ -32,7 +36,7 @@ def _open_chase(page, server):
     """Без анимаций: всадник стоит на месте, режим включается сразу."""
     page.emulate_media(reduced_motion='reduce')
     page.goto(server)
-    page.locator('#horseman-peek').click()
+    page.locator(LOGO).click()
     expect(page.locator('#chase-title')).to_be_visible()
 
 
@@ -58,9 +62,13 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
         page.set_viewport_size({'width': width, 'height': 800})
         assert page.evaluate(NO_HSCROLL)
 
-    horseman.click()
+    # Кнопка всадника доступна с клавиатуры.
+    horseman.focus()
+    page.keyboard.press('Enter')
     expect(page.locator('#chase-title')).to_have_text('Ночь Медного всадника')
     expect(page.locator('.brand-title:not(.chase-only)')).to_be_hidden()
+    # Под легендой — короткие правила: зачем кнопка «Бежать».
+    expect(page.locator('.chase-rules')).to_contain_text('Пять раундов на время')
     expect(page.locator('html')).to_have_class(re.compile('theme-chase'))
     expect(page.locator('#start-btn')).to_have_text('Бежать')
     expect(horseman).to_have_attribute('aria-label', re.compile('Вернуться к обычной игре'))
@@ -161,9 +169,24 @@ def test_horseman_is_easy_to_hit_on_a_phone(page, halloween_server):
     assert hits == [True, True, False]
 
 
+def test_logo_switches_mode_both_ways(page, halloween_server):
+    """Логотип — тоже переключатель, и клик не срабатывает дважды."""
+    page.emulate_media(reduced_motion='reduce')
+    page.goto(halloween_server)
+    page.locator(LOGO).click()
+    expect(page.locator('#chase-title')).to_be_visible()
+    page.locator(NIGHT_LOGO).click()
+    expect(page.locator('#chase-title')).to_be_hidden()
+    expect(page.locator('#start-btn')).to_have_text('Начать игру')
+    # Клик по самому всаднику всплывает к тому же обработчику — режим
+    # переключается один раз, а не туда и обратно.
+    page.locator('#horseman-peek').dispatch_event('click')
+    expect(page.locator('#chase-title')).to_be_visible()
+
+
 def test_second_click_on_horseman_returns_regular_game(page, halloween_server):
     _open_chase(page, halloween_server)
-    page.locator('#horseman-peek').click()
+    page.locator('#horseman-peek').dispatch_event('click')
 
     expect(page.locator('.brand-title:not(.chase-only)')).to_have_text('Петербургский следопыт')
     expect(page.locator('#chase-title')).to_be_hidden()
@@ -186,8 +209,7 @@ def test_second_click_on_horseman_returns_regular_game(page, halloween_server):
 def test_flood_switches_mode_under_the_wave(page, halloween_server):
     page.goto(halloween_server)
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'))
-    # Всадник то появляется, то исчезает — ждать «стабильности» бессмысленно.
-    page.locator('#horseman-peek').click(force=True)
+    page.locator(LOGO).click()
     expect(page.locator('#chase-flood')).to_have_class(re.compile('run'))
     expect(page.locator('#chase-title')).to_be_visible(timeout=3000)
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'), timeout=3000)
@@ -260,6 +282,8 @@ def test_challenge_link_hides_the_horseman(page, halloween_server):
     expect(page.locator('#challenge-banner')).to_contain_text('Автор')
     # Погоня — своя игра, а не способ сыграть чужой челлендж.
     expect(page.locator('#horseman-peek')).to_be_hidden()
+    page.locator(LOGO).click()
+    expect(page.locator('#chase-title')).to_be_hidden()
 
 
 def test_off_season_page_has_no_halloween(page, server):
