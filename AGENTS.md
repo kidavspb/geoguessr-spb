@@ -187,7 +187,10 @@ PROD; инфраструктуру администратор применяет
   переодевает стартовый экран, игра — обычная с таймером, отсчёт нарисован
   CSS-погоней поверх панорамы (ч/б только canvas, нижнюю полосу с копирайтами
   Яндекса слои не перекрывают). Окно 20.10–1.11 по МСК или
-  `HALLOWEEN_MODE=on/off`; как удалить — в docstring `halloween.py`.
+  `HALLOWEEN_MODE=on/off`; как удалить — в docstring `halloween.py`. Звук
+  режима — `static/js/halloween-sound.js` и CC0-файлы в
+  `static/audio/halloween/`: AudioContext только из жеста, обычная игра звук
+  не грузит; E2E подменяют Web Audio заглушкой `tests/e2e/audio_stub.js`.
 - `districts.py` — геометрия 18 районов из `data/spb_districts.geojson`:
   принадлежность точки району и городу, равномерная генерация точек.
   `data/README.md` описывает происхождение данных,

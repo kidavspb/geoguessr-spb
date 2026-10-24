@@ -13,8 +13,10 @@
  * Все слои — CSS поверх панорамы с pointer-events: none; второго Player или
  * карты режим не создаёт. Разметка есть только в сезон (см. halloween.py),
  * без неё функции ничего не делают. Режим не запоминается: каждый визит
- * всадника находят заново.
+ * всадника находят заново. Звук погони — halloween-sound.js.
  */
+
+import { initSound, playFlood, chaseSound, endChaseSound, caughtSound } from './halloween-sound.js';
 
 export const CHASE_TIME_LIMIT = 60;
 
@@ -47,6 +49,7 @@ export function chaseModeOn() {
 export function initHalloween({ onModeChange }) {
     const peek = document.getElementById('horseman-peek');
     if (!peek) return;
+    initSound();
 
     // Переключатель — весь логотип вместе со всадником, и в обе стороны.
     // Один обработчик на обёртке: клик по кнопке всадника всплывает сюда же
@@ -55,25 +58,29 @@ export function initHalloween({ onModeChange }) {
         // Челлендж прячет всадника: своя игра автора важнее погони.
         if (peek.classList.contains('hidden')) return;
         const on = !chaseMode;
-        runFlood(() => {
+        const started = runFlood(() => {
             setChaseMode(on);
             onModeChange(on);
             if (on) document.getElementById('chase-title').focus();
         });
+        // Звук — прямо в клике: только этот жест разрешает браузеру играть.
+        if (started) playFlood(on);
     });
 }
 
-/** Волна на весь экран; switchMode срабатывает, пока экран закрыт. */
+/** Волна на весь экран; switchMode срабатывает, пока экран закрыт.
+ *  false — волна уже идёт, повторный клик ничего не переключает. */
 function runFlood(switchMode) {
     const flood = document.getElementById('chase-flood');
-    if (flood.classList.contains('run')) return;
+    if (flood.classList.contains('run')) return false;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         switchMode();
-        return;
+        return true;
     }
     flood.classList.add('run');
     setTimeout(switchMode, FLOOD_SWITCH_MS);
     setTimeout(() => flood.classList.remove('run'), FLOOD_MS);
+    return true;
 }
 
 function setChaseMode(on) {
@@ -99,6 +106,7 @@ export function resetChase() {
     caught = false;
     document.getElementById('chase-layer')?.classList.add('hidden');
     hideWhisper();
+    endChaseSound();
 }
 
 /** Кадр погони по остатку времени; вызывается каждым тиком таймера. */
@@ -109,6 +117,7 @@ export function updateChase(remainingMs, totalMs) {
     layer.style.setProperty('--chase-p', progress.toFixed(3));
     layer.classList.toggle('chase-close', remainingMs <= CLOSE_MS);
     layer.classList.remove('hidden');
+    chaseSound(progress, remainingMs);
 
     // Фразы идут только вперёд: повторный старт таймера по ответу /ready
     // не должен заново показывать уже прозвучавшую.
@@ -125,6 +134,7 @@ export function chaseCaught() {
     if (!overlay) return;
     caught = true;
     hideWhisper();
+    caughtSound();
     // Картинка сцены — та же, что в погоне: к этому моменту она уже в кэше.
     const image = overlay.querySelector('img');
     if (!image.getAttribute('src')) {
@@ -138,6 +148,11 @@ export function chaseCaught() {
     } catch (e) {
         // вибрация — необязательное украшение
     }
+}
+
+/** Ответ ушёл (кнопкой или по таймеру): погоня окончена, галоп стихает. */
+export function endChase() {
+    endChaseSound();
 }
 
 /** Закончился ли текущий раунд поимкой — для заголовка результата. */

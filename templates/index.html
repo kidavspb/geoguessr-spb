@@ -280,6 +280,19 @@
 
             <!-- Вернуться к стартовой точке панорамы (если далеко ушёл по стрелкам) -->
             <button class="pano-home" id="pano-home" title="Вернуться к началу" aria-label="Вернуться к началу панорамы">⌂</button>
+            {% if halloween %}
+            <!-- Звук погони: кнопка только в раунде погони, выбор помнит устройство -->
+            <button type="button" class="chase-sound chase-only" id="chase-sound-btn"
+                    aria-label="Звук погони" aria-pressed="true" title="Выключить звук"
+                    data-sound-base="{{ url_for('static', filename='audio/halloween/') }}"
+                    data-sound-version="{{ asset_version }}">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                    <path class="sound-speaker" d="M3.5 9.5h3.8L12 5.6v12.8l-4.7-3.9H3.5z"/>
+                    <path class="sound-waves" d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.4a8 8 0 0 1 0 11.2"/>
+                    <path class="sound-off" d="M15.6 9.4l5.2 5.2M20.8 9.4l-5.2 5.2"/>
+                </svg>
+            </button>
+            {% endif %}
 
             <!-- Карта для выбора: на десктопе разворачивается при наведении,
                  на мобильных — нижний лист с ручкой сворачивания -->
