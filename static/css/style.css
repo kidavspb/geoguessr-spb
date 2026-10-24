@@ -2423,9 +2423,17 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 
 /* Вход в режим: волна поднимается снизу, закрывает экран и уходит вверх.
    Пока она идёт, клики перехватываются — второй вход не начнётся. */
+/* На iPhone fixed-слой с inset: 0 кончается над нижней панелью Safari, и
+   волна начиналась над адресной строкой, а полоса за панелью оставалась
+   страницей. Высота «большого» вьюпорта (панели свёрнуты) заводит слой под
+   панель. 100vh — запасной вариант: на iOS это та же большая высота. */
 .chase-flood {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100vh;
+    height: 100lvh;
     z-index: 1600;
     overflow: hidden;
     pointer-events: none;
@@ -2620,7 +2628,12 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
    Непрозрачная: под ней уже рисуется экран результата. */
 .chase-caught {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    /* Как у волны: и под нижней панелью Safari на iPhone */
+    height: 100vh;
+    height: 100lvh;
     z-index: 1500;
     display: flex;
     flex-direction: column;

@@ -13,6 +13,11 @@ NIGHT_BLUE = 'rgb(12, 41, 76)'
 # поэтому саму кнопку тесты нажимают с клавиатуры или событием click.
 LOGO = '.start-logo-wrap .start-logo:not(.chase-only)'
 NIGHT_LOGO = '.start-logo-wrap .start-logo.chase-only'
+# Слой на весь экран (на iPhone — и под нижней панелью Safari).
+COVERS_VIEWPORT = """id => {
+    const r = document.getElementById(id).getBoundingClientRect();
+    return r.top <= 0 && r.left <= 0 && r.bottom >= innerHeight && r.right >= innerWidth;
+}"""
 
 
 def _shorten_rounds(page, remaining_ms):
@@ -265,6 +270,7 @@ def test_flood_switches_mode_under_the_wave(page, halloween_server):
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'))
     page.locator(LOGO).click()
     expect(page.locator('#chase-flood')).to_have_class(re.compile('run'))
+    assert page.evaluate(COVERS_VIEWPORT, 'chase-flood')
     expect(page.locator('#chase-title')).to_be_visible(timeout=3000)
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'), timeout=3000)
     expect(page.locator('#start-btn')).to_have_text('Бежать')
@@ -277,6 +283,7 @@ def test_horseman_catches_player_and_next_round_starts_far_away(page, halloween_
     page.locator('#start-btn').click()
 
     expect(page.locator('#chase-caught')).to_be_visible(timeout=10000)
+    assert page.evaluate(COVERS_VIEWPORT, 'chase-caught')
     expect(page.locator('#result-screen')).to_have_class(re.compile('active'))
     expect(page.locator('#result-title')).to_have_text('Всадник догнал!')
     expect(page.locator('#result-miss')).to_have_text(
