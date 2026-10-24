@@ -1,5 +1,6 @@
 """Хэллоуинская «Ночь Медного всадника»: пасхалка, режим и погоня в раунде."""
 import re
+from pathlib import Path
 
 from playwright.sync_api import expect
 
@@ -182,6 +183,59 @@ def test_logo_switches_mode_both_ways(page, halloween_server):
     # переключается один раз, а не туда и обратно.
     page.locator('#horseman-peek').dispatch_event('click')
     expect(page.locator('#chase-title')).to_be_visible()
+
+
+def test_logo_glitches_in_step_with_horseman(page, halloween_server):
+    """«Ночной» логотип проявляется вместе со всадником, а тапы идут в обычный."""
+    page.goto(halloween_server)
+    night = page.locator(NIGHT_LOGO)
+    assert night.evaluate('el => getComputedStyle(el).animationName') == 'logo-glitch'
+    assert night.evaluate('el => getComputedStyle(el).pointerEvents') == 'none'
+    # Под пальцем — всегда видимый обычный логотип, а не прозрачная накладка.
+    assert page.evaluate("""selector => {
+        const box = document.querySelector(selector).getBoundingClientRect();
+        return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+            .matches(selector);
+    }""", LOGO)
+
+    def opacities_at(ms):
+        return page.evaluate("""([ms, night]) => {
+            document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms; });
+            return [getComputedStyle(document.getElementById('horseman-peek')).opacity,
+                    getComputedStyle(document.querySelector(night)).opacity];
+        }""", [ms, NIGHT_LOGO])
+
+    assert opacities_at(300) == ['0', '0']
+    assert opacities_at(3000) == ['1', '1']
+
+
+def test_hover_reveal_is_desktop_only(browser, page, halloween_server):
+    """На телефоне тап сначала «наводит»: если от этого что-то проявится,
+    iOS Safari не отправит клик. Поэтому подсказка наведением — только там,
+    где наведение настоящее, а первый тап сразу включает режим."""
+    page.goto(halloween_server)
+    page.locator(LOGO).hover()
+    assert page.locator('#horseman-peek').evaluate(
+        'el => getComputedStyle(el).animationName') == 'none'
+    expect(page.locator(NIGHT_LOGO)).to_have_css('opacity', '1')
+
+    context = browser.new_context(viewport={'width': 390, 'height': 844},
+                                  is_mobile=True, has_touch=True)
+    stub_js = (Path(__file__).parent / 'ymaps_stub.js').read_text()
+    context.route('**/api-maps.yandex.ru/**', lambda route: route.fulfill(
+        status=200, content_type='application/javascript', body=stub_js))
+    context.route('**/mc.yandex.ru/**', lambda route: route.abort())
+    phone = context.new_page()
+    try:
+        phone.goto(halloween_server)
+        assert phone.evaluate("matchMedia('(hover: hover)').matches") is False
+        phone.locator(LOGO).hover()
+        assert phone.locator('#horseman-peek').evaluate(
+            'el => getComputedStyle(el).animationName') == 'horseman-haunt'
+        phone.locator(LOGO).tap()
+        expect(phone.locator('#chase-title')).to_be_visible(timeout=3000)
+    finally:
+        context.close()
 
 
 def test_second_click_on_horseman_returns_regular_game(page, halloween_server):

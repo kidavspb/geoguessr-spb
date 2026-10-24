@@ -2217,9 +2217,51 @@ h1, h2 {
     76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(20%); }
 }
 
-/* Наведение на логотип или фокус — всадник показывается и ждёт клика */
-.start-logo-wrap:hover .horseman-peek,
-.horseman-peek:focus-visible {
+/* «Ночной» логотип лежит поверх обычного и проявляется глитчем, пока
+   выглядывает всадник (тот же 7-секундный цикл), — видно, что логотип
+   «живой» и на него можно нажать. Клики проходят к обычному логотипу:
+   iOS Safari не отдаёт клик цели, которая за время тапа стала из
+   невидимой видимой. */
+.start-logo-wrap .start-logo.chase-only {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    opacity: 0;
+    pointer-events: none;
+    animation: logo-glitch 7s steps(1, end) infinite;
+}
+
+/* steps(1): каждое значение держится до следующего кадра — рывки, а не
+   плавные переходы. Вход совпадает с появлением всадника, выход — с началом
+   его ухода (horseman-haunt: 8–22% и 62–76%). */
+@keyframes logo-glitch {
+    0%, 9.5%    { opacity: 0; transform: none; clip-path: none; }
+    10%         { opacity: 1; transform: translateX(-4px); clip-path: inset(0 0 58% 0); }
+    10.6%       { opacity: 1; transform: translateX(3px); clip-path: inset(46% 0 0 0); }
+    11.2%       { opacity: 0; transform: none; clip-path: none; }
+    12%         { opacity: 1; transform: translateX(2px); clip-path: inset(20% 0 30% 0); }
+    12.6%       { opacity: 1; transform: none; clip-path: none; }
+    63.5%       { opacity: 1; transform: translateX(-3px); clip-path: inset(0 0 50% 0); }
+    64.1%       { opacity: 0; transform: none; clip-path: none; }
+    64.8%       { opacity: 1; transform: translateX(3px); clip-path: inset(55% 0 0 0); }
+    65.4%, 100% { opacity: 0; transform: none; clip-path: none; }
+}
+
+/* Наведение на логотип — всадник и «ночной» логотип показываются и ждут
+   клика. Только там, где наведение настоящее: на телефоне тап сначала
+   «наводит», и если от этого что-то проявилось, iOS Safari клик не
+   отправляет — первый тап по логотипу пропадал. */
+@media (hover: hover) {
+    .start-logo-wrap:hover .horseman-peek,
+    .start-logo-wrap:hover .start-logo.chase-only {
+        animation: none;
+        opacity: 1;
+    }
+}
+
+.horseman-peek:focus-visible,
+.start-logo-wrap:has(.horseman-peek:focus-visible) .start-logo.chase-only {
     animation: none;
     opacity: 1;
 }
@@ -2241,6 +2283,10 @@ h1, h2 {
         animation: none;
         opacity: 1;
     }
+
+    .start-logo-wrap .start-logo.chase-only {
+        animation: none;
+    }
 }
 
 /* Режим погони — тот же стартовый экран в палитре обложки: «ночной»
@@ -2254,11 +2300,18 @@ h1, h2 {
     display: block;
 }
 
-#start-screen.is-chase img.chase-only {
-    display: inline;
+/* В режиме «ночной» логотип постоянный и принимает клики, а обычный
+   остаётся в потоке, держа размер обёртки, но не виден. */
+#start-screen.is-chase .start-logo-wrap .start-logo.chase-only {
+    opacity: 1;
+    pointer-events: auto;
+    animation: none;
 }
 
-#start-screen.is-chase .start-logo:not(.chase-only),
+#start-screen.is-chase .start-logo:not(.chase-only) {
+    visibility: hidden;
+}
+
 #start-screen.is-chase .brand-title:not(.chase-only),
 #start-screen.is-chase .start-tagline:not(.chase-only) {
     display: none;
