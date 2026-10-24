@@ -107,12 +107,12 @@ export function playFlood(entering) {
         const late = ctx.currentTime - start;
         if (!buffer || late > FLOOD_LATE) return;
         // Опоздавший файл вступает с середины — в такт с волной.
-        play('water', ctx.currentTime, { gain: entering ? 1 : 0.55, offset: late });
+        play('water', ctx.currentTime, { gain: entering ? 0.7 : 0.4, offset: late });
     });
     if (!entering) return;
     decode('thud').then(buffer => {
         if (!buffer || ctx.currentTime > start + FLOOD_THUD_AT + 0.15) return;
-        play('thud', Math.max(ctx.currentTime, start + FLOOD_THUD_AT), { gain: 0.9 });
+        play('thud', Math.max(ctx.currentTime, start + FLOOD_THUD_AT));
     });
     // Галоп, сердце и сцена поимки понадобятся в раунде — готовим заранее.
     ROUND_FILES.forEach(decode);
@@ -142,9 +142,11 @@ export function caughtSound() {
     stopChase(true);
     if (!soundOn || !ctx) return;
     const now = ctx.currentTime;
+    // Громкости — под файлы, выровненные к -16 LUFS: гонг звенит долго и
+    // без поправки заглушал бы храп, удар упирается в пик и идёт полным.
     play('thud', now);
-    play('gong', now + 0.03, { gain: 0.7 });
-    play('snort', now + 0.35, { gain: 0.8 });
+    play('gong', now + 0.03, { gain: 0.5 });
+    play('snort', now + 0.35, { gain: 0.7 });
 }
 
 function startChase() {
@@ -194,7 +196,7 @@ function schedule() {
     if (chase.heartBpm && buffers.has('heartbeat')) {
         if (chase.nextBeat < now) chase.nextBeat = now + 0.02;
         while (chase.nextBeat < horizon) {
-            play('heartbeat', chase.nextBeat, { gain: 0.8, out: chase.heart });
+            play('heartbeat', chase.nextBeat, { out: chase.heart });
             chase.nextBeat += 60 / chase.heartBpm;
         }
     }

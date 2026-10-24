@@ -108,10 +108,18 @@ def test_heart_joins_and_gallop_closes_in_at_the_end(page, halloween_server):
     _shorten_rounds(page, 6000)
     _open_chase(page, halloween_server)
     _start_chase_round(page)
-    page.wait_for_function(
-        "() => window.__audio.started.filter(s => s.name === 'heartbeat').length >= 3")
-    # До ответа /ready часы раунда ещё полные — смотрим последние шаги.
-    assert all(gap < 0.56 for gap in _gaps(page, 'gallop')[-2:]), _gaps(page, 'gallop')
+    # До ответа /ready часы раунда ещё полные, а уже поставленный шаг держит
+    # прежний интервал — смотрим шаги через секунду после первого удара сердца.
+    page.wait_for_function("""() => {
+        const started = window.__audio.started;
+        const heart = started.find(s => s.name === 'heartbeat');
+        return heart && started.filter(
+            s => s.name === 'gallop' && s.when > heart.when + 1).length >= 3;
+    }""")
+    heart_from = _started(page, 'heartbeat')[0]['when']
+    times = [s['when'] for s in _started(page, 'gallop') if s['when'] > heart_from + 1]
+    gaps = [later - earlier for earlier, later in zip(times, times[1:])]
+    assert len(gaps) >= 2 and all(gap < 0.56 for gap in gaps), gaps
 
 
 def test_answer_in_time_silences_the_gallop(page, halloween_server):
@@ -172,13 +180,18 @@ def test_sound_button_mutes_and_is_remembered(page, halloween_server):
     page.wait_for_function("() => window.__audio.started.some(s => s.name === 'gallop')")
 
 
-def test_sound_button_sits_clear_of_the_home_button(page, halloween_server):
+def _overlap(a, b):
+    return (a['x'] < b['x'] + b['width'] and b['x'] < a['x'] + a['width']
+            and a['y'] < b['y'] + b['height'] and b['y'] < a['y'] + a['height'])
+
+
+def test_sound_button_covers_neither_home_button_nor_whisper(page, halloween_server):
     _with_audio(page)
     for width in (1280, 390):
         page.set_viewport_size({'width': width, 'height': 800})
         _open_chase(page, halloween_server)
         _start_chase_round(page)
+        expect(page.locator('#chase-whisper')).to_have_class(re.compile('show'))
         sound = page.locator('#chase-sound-btn').bounding_box()
-        home = page.locator('#pano-home').bounding_box()
-        assert sound['x'] == home['x'], width
-        assert abs(sound['y'] - home['y']) >= home['height'] + 8, width
+        for other in ('#pano-home', '#chase-whisper', '.hud-top'):
+            assert not _overlap(sound, page.locator(other).bounding_box()), (width, other)

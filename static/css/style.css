@@ -2509,7 +2509,8 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 }
 
 /* Звук погони — такая же круглая кнопка, как «к началу панорамы» (⌂):
-   на десктопе над ней, на телефоне под ней. Только в раунде погони. */
+   на десктопе над ней, на телефоне справа — под ⌂ там шепот погони.
+   Только в раунде погони. */
 .chase-sound {
     position: absolute;
     left: 16px;
@@ -2556,7 +2557,8 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 @media (max-width: 720px) {
     .chase-sound {
         bottom: auto;
-        top: 124px;
+        top: 76px;
+        left: 62px;
     }
 }
 
