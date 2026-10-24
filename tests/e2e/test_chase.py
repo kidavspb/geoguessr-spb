@@ -267,13 +267,34 @@ def test_second_click_on_horseman_returns_regular_game(page, halloween_server):
 
 def test_flood_switches_mode_under_the_wave(page, halloween_server):
     page.goto(halloween_server)
+    theme = page.locator('meta[name="theme-color"]')
+    tint = page.locator('.chase-flood-tint')
+    expect(theme).to_have_attribute('content', '#231c62')
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'))
+    expect(tint).to_be_hidden()
+    # Полоса прижата к нижнему краю: по ней Safari 26 красит свою панель.
+    assert tint.evaluate("""el => {
+        const style = getComputedStyle(el);
+        return style.position === 'fixed' && style.bottom === '0px'
+            && style.backgroundColor === 'rgb(12, 41, 76)';
+    }""")
+
     page.locator(LOGO).click()
     expect(page.locator('#chase-flood')).to_have_class(re.compile('run'))
     assert page.evaluate(COVERS_VIEWPORT, 'chase-flood')
+    # Пока вода поднимается, панели браузера — тоже вода.
+    expect(tint).to_be_visible()
+    expect(theme).to_have_attribute('content', '#0c294c')
     expect(page.locator('#chase-title')).to_be_visible(timeout=3000)
     expect(page.locator('#chase-flood')).not_to_have_class(re.compile('run'), timeout=3000)
+    expect(tint).to_be_hidden()
+    expect(theme).to_have_attribute('content', '#0c294c')
     expect(page.locator('#start-btn')).to_have_text('Бежать')
+
+    # Обратно той же волной: после неё панели снова обычного цвета.
+    page.locator(NIGHT_LOGO).click()
+    expect(page.locator('#chase-title')).to_be_hidden(timeout=3000)
+    expect(theme).to_have_attribute('content', '#231c62', timeout=3000)
 
 
 def test_horseman_catches_player_and_next_round_starts_far_away(page, halloween_server):
@@ -288,8 +309,10 @@ def test_horseman_catches_player_and_next_round_starts_far_away(page, halloween_
     expect(page.locator('#result-title')).to_have_text('Всадник догнал!')
     expect(page.locator('#result-miss')).to_have_text(
         'Всадник догнал тебя раньше, чем ты отметил точку')
-    # Сцена короткая и не мешает нажать «Продолжить».
+    # Сцена короткая и не мешает нажать «Продолжить». Закрытая — убрана
+    # целиком: невидимый слой во весь экран красил бы панель Safari 26.
     expect(page.locator('#chase-caught')).to_be_hidden(timeout=4000)
+    expect(page.locator('#chase-caught')).to_have_css('display', 'none')
     assert len(guesses) == 1
     assert guesses[0]['timed_out'] is True
 

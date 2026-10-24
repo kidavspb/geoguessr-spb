@@ -2423,17 +2423,9 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 
 /* Вход в режим: волна поднимается снизу, закрывает экран и уходит вверх.
    Пока она идёт, клики перехватываются — второй вход не начнётся. */
-/* На iPhone fixed-слой с inset: 0 кончается над нижней панелью Safari, и
-   волна начиналась над адресной строкой, а полоса за панелью оставалась
-   страницей. Высота «большого» вьюпорта (панели свёрнуты) заводит слой под
-   панель. 100vh — запасной вариант: на iOS это та же большая высота. */
 .chase-flood {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 100vh;
-    height: 100lvh;
+    inset: 0;
     z-index: 1600;
     overflow: hidden;
     pointer-events: none;
@@ -2443,6 +2435,25 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 .chase-flood.run {
     visibility: visible;
     pointer-events: auto;
+}
+
+/* Под нижней панелью Safari на iPhone страница не рисуется (без
+   viewport-fit=cover панель сплошная), и волна выходила из-за её края.
+   Safari 26 красит панель в фон fixed-элемента у нижнего края — эта
+   полоса, пока вода поднимается, делает панель «водой», и волна выходит из
+   неё. Дальше панель снова берёт цвет страницы, открывающейся снизу. */
+.chase-flood-tint {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 6px;
+    background: var(--night-blue);
+}
+
+.chase-flood.rising .chase-flood-tint {
+    display: block;
 }
 
 .chase-flood-wave {
@@ -2626,16 +2637,15 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 
 /* Сцена «Попался!»: поверх всех экранов, клики проходят насквозь.
    Непрозрачная: под ней уже рисуется экран результата. */
+/* Закрытая сцена — display: none, а не просто прозрачная: Safari 26 берёт
+   цвет нижней панели и у невидимых fixed-слоёв во весь экран, и панель
+   красилась бы в почти чёрный на всех экранах. Открывает её halloween.js:
+   .open включает слой, следующий кадр .show — проявление. */
 .chase-caught {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    /* Как у волны: и под нижней панелью Safari на iPhone */
-    height: 100vh;
-    height: 100lvh;
+    inset: 0;
     z-index: 1500;
-    display: flex;
+    display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -2648,6 +2658,10 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
     visibility: hidden;
     opacity: 0;
     transition: opacity 0.4s ease, visibility 0s linear 0.4s;
+}
+
+.chase-caught.open {
+    display: flex;
 }
 
 .chase-caught.show {
