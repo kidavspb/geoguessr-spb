@@ -2428,19 +2428,20 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 }
 
 /* Вход в режим: волна поднимается снизу, закрывает экран и уходит вверх.
-   Пока она идёт, клики перехватываются — второй вход не начнётся. */
+   Пока она идёт, клики перехватываются — второй вход не начнётся. Между
+   волнами слой убран целиком (display: none), а не просто невидим: Safari 26
+   красит нижнюю панель и по невидимым fixed-слоям у нижнего края, а у этого
+   слоя фон прозрачный — панель выходила белой. */
 .chase-flood {
+    display: none;
     position: fixed;
     inset: 0;
     z-index: 1600;
     overflow: hidden;
-    pointer-events: none;
-    visibility: hidden;
 }
 
 .chase-flood.run {
-    visibility: visible;
-    pointer-events: auto;
+    display: block;
 }
 
 .chase-flood-wave {

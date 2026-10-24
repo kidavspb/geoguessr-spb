@@ -13,10 +13,12 @@ NIGHT_BLUE = 'rgb(12, 41, 76)'
 # поэтому саму кнопку тесты нажимают с клавиатуры или событием click.
 LOGO = '.start-logo-wrap .start-logo:not(.chase-only)'
 NIGHT_LOGO = '.start-logo-wrap .start-logo.chase-only'
-# Слой на весь экран (на iPhone — и под нижней панелью Safari).
+# Слой на весь экран. По CSS, а не по размеру: закрытый слой — display: none,
+# и на медленной машине замер мог попасть в момент, когда он уже убран.
 COVERS_VIEWPORT = """id => {
-    const r = document.getElementById(id).getBoundingClientRect();
-    return r.top <= 0 && r.left <= 0 && r.bottom >= innerHeight && r.right >= innerWidth;
+    const style = getComputedStyle(document.getElementById(id));
+    return style.position === 'fixed'
+        && ['top', 'right', 'bottom', 'left'].every(side => style[side] === '0px');
 }"""
 
 
@@ -290,19 +292,25 @@ def test_browser_bars_match_the_screen_in_chase_mode(page, halloween_server):
     экранах режима, в игре — navy, как сама игра (иначе верх и низ iPhone
     разного цвета)."""
     theme = page.locator('meta[name="theme-color"]')
-    root_background = "() => getComputedStyle(document.documentElement).backgroundColor"
+    # Повторяющиеся проверки: в reduced motion у всех элементов, включая html,
+    # переход длиной 0.01ms, и цвет фона меняется только на следующем кадре.
+    root = page.locator('html')
+    flood = page.locator('#chase-flood')
     _open_chase(page, halloween_server)
-    assert page.evaluate(root_background) == NIGHT_BLUE
+    expect(root).to_have_css('background-color', NIGHT_BLUE)
     expect(theme).to_have_attribute('content', '#0c294c')
+    # Между волнами у нижнего края нет прозрачного fixed-слоя волны.
+    expect(flood).to_have_css('display', 'none')
 
     page.locator('#district-picker-btn').click()
-    assert page.evaluate(root_background) == NIGHT_BLUE
+    expect(root).to_have_css('background-color', NIGHT_BLUE)
     expect(theme).to_have_attribute('content', '#0c294c')
     page.locator('#district-cancel-btn').click()
 
     _start_chase_round(page)
-    assert page.evaluate(root_background) == 'rgb(35, 28, 98)'
+    expect(root).to_have_css('background-color', 'rgb(35, 28, 98)')
     expect(theme).to_have_attribute('content', '#231c62')
+    expect(flood).to_have_css('display', 'none')
 
 
 def test_horseman_catches_player_and_next_round_starts_far_away(page, halloween_server):
