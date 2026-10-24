@@ -2317,10 +2317,16 @@ h1, h2 {
     display: none;
 }
 
-html.theme-chase:not(.theme-light),
-html.theme-chase:not(.theme-light) body,
 #start-screen.is-chase {
     background: var(--night-blue);
+}
+
+/* Фон документа и панели браузера (Safari красит их по фону страницы,
+   showScreen ставит theme-color из --navy) — синие только пока на экране
+   стартовый экран режима или выбор района. Игра и результат остаются
+   navy: иначе верх и низ iPhone были бы разного цвета. */
+html.theme-chase:has(#start-screen.active, #district-screen.active) {
+    --navy: var(--night-blue);
 }
 
 /* --navy на этих экранах — цвет фона: им «вырезаны» кольца ползунка и тики,
@@ -2435,25 +2441,6 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 .chase-flood.run {
     visibility: visible;
     pointer-events: auto;
-}
-
-/* Под нижней панелью Safari на iPhone страница не рисуется (без
-   viewport-fit=cover панель сплошная), и волна выходила из-за её края.
-   Safari 26 красит панель в фон fixed-элемента у нижнего края — эта
-   полоса, пока вода поднимается, делает панель «водой», и волна выходит из
-   неё. Дальше панель снова берёт цвет страницы, открывающейся снизу. */
-.chase-flood-tint {
-    display: none;
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 6px;
-    background: var(--night-blue);
-}
-
-.chase-flood.rising .chase-flood-tint {
-    display: block;
 }
 
 .chase-flood-wave {
