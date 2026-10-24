@@ -2517,17 +2517,21 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
 
 /* Погоня поверх панорамы: над Player (1), под HUD и картой (10).
    --chase-p — доля прошедшего времени раунда, её задаёт тик таймера. */
+/* Слой кончается в 32px от низа, а не прозрачен там маской. Логотип и
+   копирайты Яндекса внизу панорамы перекрывать нельзя — нижняя полоса
+   чистая, выше погоня проявляется плавно. И Safari на iPhone красит нижнюю
+   панель по элементу в 4px от нижнего края (WebKit fixedContainerEdges,
+   проба без учёта pointer-events): там должна быть панорама, как в обычной
+   игре. Невидимый слой погони в этой точке давал кремовую панель. */
 .chase-layer {
     --chase-p: 0;
     position: absolute;
-    inset: 0;
+    inset: 0 0 32px 0;
     z-index: 4;
     overflow: hidden;
     pointer-events: none;
-    /* Логотип и копирайты Яндекса внизу панорамы перекрывать нельзя:
-       нижняя полоса остаётся чистой, выше погоня проявляется плавно. */
-    -webkit-mask-image: linear-gradient(to top, transparent 32px, #000 80px);
-    mask-image: linear-gradient(to top, transparent 32px, #000 80px);
+    -webkit-mask-image: linear-gradient(to top, transparent 0, #000 48px);
+    mask-image: linear-gradient(to top, transparent 0, #000 48px);
 }
 
 .chase-vignette,
