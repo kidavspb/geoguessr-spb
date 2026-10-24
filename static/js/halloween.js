@@ -27,8 +27,6 @@ const WHISPER_MS = 3200;
 const CAUGHT_MS = 1800;
 // Совпадает с transition гашения .chase-caught в CSS.
 const CAUGHT_FADE_MS = 400;
-// Синий обложки — цвет воды и фона режима (--night-blue в CSS).
-const NIGHT_BLUE = '#0c294c';
 
 const WHISPERS = [
     'Медный всадник сошёл с Гром-камня…',
@@ -68,40 +66,29 @@ export function initHalloween({ onModeChange }) {
 }
 
 /** Волна на весь экран; switchMode срабатывает, пока экран закрыт. */
+// Нижняя панель Safari на iPhone сплошная (страница под неё не заходит без
+// viewport-fit=cover на всём сайте), поэтому волна выходит из-за её края.
+// Попытка перекрашивать панель на время волны давала шов — оставлено так.
 function runFlood(switchMode) {
     const flood = document.getElementById('chase-flood');
     if (flood.classList.contains('run')) return;
-    const switchAndTint = () => {
-        switchMode();
-        setBrowserTint(chaseMode ? NIGHT_BLUE : getComputedStyle(document.documentElement)
-            .getPropertyValue('--navy').trim());
-    };
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        switchAndTint();
+        switchMode();
         return;
     }
-    // Пока вода поднимается, панели браузера — тоже вода: волна выходит из
-    // нижней панели Safari, а не из-за её края. После переключения панели
-    // снова берут цвет страницы, которая открывается снизу.
-    flood.classList.add('run', 'rising');
-    setBrowserTint(NIGHT_BLUE);
-    setTimeout(() => {
-        flood.classList.remove('rising');
-        switchAndTint();
-    }, FLOOD_SWITCH_MS);
+    flood.classList.add('run');
+    setTimeout(switchMode, FLOOD_SWITCH_MS);
     setTimeout(() => flood.classList.remove('run'), FLOOD_MS);
-}
-
-/** theme-color красит панели браузера в iOS до 26 и в Android. Safari 26 его
- * не читает и берёт цвет у страницы — ему служит полоса .chase-flood-tint. */
-function setBrowserTint(color) {
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
 }
 
 function setChaseMode(on) {
     chaseMode = on;
     document.getElementById('start-screen').classList.toggle('is-chase', on);
     document.documentElement.classList.toggle('theme-chase', on);
+    // theme-color — как у showScreen: из --navy документа, который в режиме
+    // на стартовом экране синий (см. CSS). Панели браузера совпадают с экраном.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content',
+        getComputedStyle(document.documentElement).getPropertyValue('--navy').trim());
     document.getElementById('horseman-peek').setAttribute('aria-label', on
         ? 'Медный всадник. Вернуться к обычной игре'
         : 'Медный всадник. Включить «Ночь Медного всадника»');
