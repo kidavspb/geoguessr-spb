@@ -55,9 +55,31 @@
     <div id="start-screen" class="screen active">
         <main class="start-layout">
             <div class="start-card">
-                <img class="start-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="Логотип «Петербургский следопыт»">
+                <div class="start-logo-wrap{% if halloween %} has-horseman{% endif %}">
+                    <img class="start-logo" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="Логотип «Петербургский следопыт»">
+                    {% if halloween %}
+                    <!-- Хэллоуин (временно, см. halloween.py): из-за логотипа то
+                         появляется, то исчезает Медный всадник; клик — погоня -->
+                    <img class="start-logo chase-only" src="{{ url_for('static', filename='img/halloween/logo-night.svg') }}?v={{ asset_version }}"
+                         alt="Логотип «Ночь Медного всадника»">
+                    <button type="button" class="horseman-peek" id="horseman-peek"
+                            aria-label="Медный всадник. Включить «Ночь Медного всадника»">
+                        <img src="{{ url_for('static', filename='img/halloween/horseman-peek.webp') }}?v={{ asset_version }}"
+                             alt="" width="420" height="280" decoding="async">
+                    </button>
+                    {% endif %}
+                </div>
                 <h1 class="brand-title">Петербургский следопыт</h1>
                 <p class="start-tagline">Осмотрись на панораме, вспомни город и отметь на карте, где ты оказался.</p>
+                {% if halloween %}
+                <h1 class="brand-title chase-only" id="chase-title" tabindex="-1">Ночь Медного всадника</h1>
+                <p class="start-tagline chase-only">Ноябрь 1824-го. После наводнения бедный Евгений погрозил
+                    памятнику Петру — и всадник сошёл с Гром-камня. Всю ночь он гнался за Евгением
+                    по городу. Говорят, в конце октября он выезжает снова.</p>
+                <p class="chase-rules chase-only"><strong>Как играть.</strong> Пять раундов на время:
+                    пока ищешь место, всадник всё ближе. Отметь точку на карте, пока время
+                    не вышло, — иначе раунд без очков.</p>
+                {% endif %}
 
                 <div class="input-group">
                     <label for="player-name">Твоё имя</label>
@@ -227,21 +249,50 @@
                 </div>
             </div>
 
+            {% if halloween %}
+            <!-- Погоня: только CSS поверх панорамы, клики проходят насквозь -->
+            <div class="chase-layer hidden" id="chase-layer" aria-hidden="true">
+                <div class="chase-vignette"></div>
+                <div class="chase-pulse"></div>
+                <div class="chase-monster">
+                    <!-- lazy: картинку грузят только те, кто дошёл до погони -->
+                    <img class="chase-horseman" id="chase-horseman"
+                         src="{{ url_for('static', filename='img/halloween/horseman-chase.webp') }}?v={{ asset_version }}"
+                         alt="" width="1090" height="1400" loading="lazy" decoding="async">
+                </div>
+            </div>
+            <p class="chase-whisper" id="chase-whisper" role="status"></p>
+            {% endif %}
+
             <!-- Плашки поверх панорамы -->
             <div class="hud-top">
                 <div class="hud-brand">
                     <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="">
                     <span>Петербургский следопыт</span>
+                    {% if halloween %}<span class="chase-only">Ночь Медного всадника</span>{% endif %}
                 </div>
                 <div class="hud-chips">
                     <div class="hud-chip">Раунд&nbsp;<strong id="current-round">1</strong>&thinsp;/&thinsp;<span id="total-rounds">5</span></div>
                     <div class="hud-chip">Счёт&nbsp;<strong id="total-score">0</strong></div>
-                    <div class="hud-chip hud-chip-timer hidden" id="timer-chip">⏱&nbsp;<strong id="timer-value">0:00</strong></div>
+                    <div class="hud-chip hud-chip-timer hidden" id="timer-chip"><span class="timer-icon">⏱</span>{% if halloween %}<svg class="timer-icon chase-only" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M5.6 3.4 C2.4 6.6 2.5 12.4 6 15.2 C8.3 17 11.7 17 14 15.2 C17.5 12.4 17.6 6.6 14.4 3.4" fill="none" stroke="currentColor" stroke-width="3.3" stroke-linecap="round"/><g class="horseshoe-nails"><circle cx="3.9" cy="7.6" r=".75"/><circle cx="4.6" cy="11.8" r=".75"/><circle cx="16.1" cy="7.6" r=".75"/><circle cx="15.4" cy="11.8" r=".75"/><circle cx="7.4" cy="15.2" r=".75"/><circle cx="12.6" cy="15.2" r=".75"/></g></svg>{% endif %}&nbsp;<strong id="timer-value">0:00</strong></div>
                 </div>
             </div>
 
             <!-- Вернуться к стартовой точке панорамы (если далеко ушёл по стрелкам) -->
             <button class="pano-home" id="pano-home" title="Вернуться к началу" aria-label="Вернуться к началу панорамы">⌂</button>
+            {% if halloween %}
+            <!-- Звук погони: кнопка только в раунде погони, выбор помнит устройство -->
+            <button type="button" class="chase-sound chase-only" id="chase-sound-btn"
+                    aria-label="Звук погони" aria-pressed="true" title="Выключить звук"
+                    data-sound-base="{{ url_for('static', filename='audio/halloween/') }}"
+                    data-sound-version="{{ asset_version }}">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                    <path class="sound-speaker" d="M3.5 9.5h3.8L12 5.6v12.8l-4.7-3.9H3.5z"/>
+                    <path class="sound-waves" d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.4a8 8 0 0 1 0 11.2"/>
+                    <path class="sound-off" d="M15.6 9.4l5.2 5.2M20.8 9.4l-5.2 5.2"/>
+                </svg>
+            </button>
+            {% endif %}
 
             <!-- Карта для выбора: на десктопе разворачивается при наведении,
                  на мобильных — нижний лист с ручкой сворачивания -->
@@ -373,6 +424,31 @@
         <div id="pano-modal-player"></div>
         <button id="pano-modal-close" class="pano-modal-close" aria-label="Закрыть">✕</button>
     </div>
+
+    {% if halloween %}
+    <!-- Сцена «догнал»: на миг поверх всего, затем гаснет над результатом -->
+    <div class="chase-caught" id="chase-caught" aria-hidden="true">
+        <!-- src подставляет chaseCaught(): к этому моменту картинка уже в кэше -->
+        <img class="chase-caught-horseman" alt="" width="1090" height="1400" decoding="async">
+        <p class="chase-caught-title">Попался!</p>
+        <p class="chase-caught-quote">«…За ним повсюду Всадник Медный<br>с тяжёлым топотом скакал»</p>
+    </div>
+
+    <!-- Вход в режим: Нева выходит из берегов и смывает экран, а когда
+         вода уходит, стартовый экран уже в «Ночи Медного всадника» -->
+    <div class="chase-flood" id="chase-flood" aria-hidden="true">
+        <div class="chase-flood-wave">
+            <svg class="chase-flood-crest" viewBox="0 0 1200 90" preserveAspectRatio="none" focusable="false">
+                <path d="M0 50 Q75 10 150 50 T300 50 T450 50 T600 50 T750 50 T900 50 T1050 50 T1200 50 V90 H0 Z" fill="#0c294c"/>
+                <path d="M0 50 Q75 10 150 50 T300 50 T450 50 T600 50 T750 50 T900 50 T1050 50 T1200 50" fill="none" stroke="#da795e" stroke-width="5" vector-effect="non-scaling-stroke"/>
+            </svg>
+            <div class="chase-flood-body"></div>
+            <svg class="chase-flood-crest is-tail" viewBox="0 0 1200 90" preserveAspectRatio="none" focusable="false">
+                <path d="M0 40 Q75 80 150 40 T300 40 T450 40 T600 40 T750 40 T900 40 T1050 40 T1200 40 V0 H0 Z" fill="#0c294c"/>
+            </svg>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Всплывающее уведомление (копирование ссылки-вызова и т.п.) -->
     <div id="toast" class="toast hidden"></div>

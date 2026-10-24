@@ -50,6 +50,20 @@ def test_difficulty_percentile(app, app_module):
         assert difficulty_percentile(59.99, 30.49) is None
 
 
+def test_difficulty_percentile_on_rounding_tie(app, app_module):
+    """59.93205 × 10000 = 599320.5 ровно: round() в Python даёт 599320, а
+    round() в SQLite — 599321. Место не должно теряться между ключами."""
+    tie = (59.93205, 30.3123)
+    assert tie[0] * 10000 == 599320.5
+    _seed_point_with_misses(app_module, *tie, [5.0] * 3)
+    for i in range(3):
+        _seed_point_with_misses(app_module, 59.95 + i * 0.01, 30.35, [1.0] * 3)
+
+    from stats import difficulty_percentile
+    with app_module.app.app_context():
+        assert difficulty_percentile(*tie) == 100
+
+
 
 def _seed_easy_place_with_harder_background(app_module, lat, lon):
     _seed_point_with_misses(app_module, lat, lon, [1.0] * 3)

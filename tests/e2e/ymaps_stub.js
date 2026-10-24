@@ -95,8 +95,10 @@ class StubPlayer {
         this._destroyed = false;
         this._pano = panorama;
         this._handlers = {};
+        // Настоящий плеер рисует снимок на canvas — его фильтрует погоня.
         container.innerHTML =
-            '<div class="stub-pano" style="width:100%;height:100%;background:#445"></div>';
+            '<div class="stub-pano" style="width:100%;height:100%;background:#445">' +
+            '<canvas class="stub-canvas" style="width:100%;height:100%"></canvas></div>';
         this.events = {
             add: (name, cb) => {
                 (this._handlers[name] = this._handlers[name] || []).push(cb);

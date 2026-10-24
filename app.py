@@ -35,6 +35,7 @@ from pool import (choose_round_candidates, add_verified_point, is_pool_point,
                   mark_point_failed)
 from daily import DAILY_DIFFICULTY, MSK, today_msk, get_or_create_daily, daily_points
 from stats import difficulty_percentile
+from halloween import halloween_active
 from districts import (
     DISTRICTS_GEOJSON_PATH, DISTRICT_IDS, DISTRICT_NAMES, DistrictDataError, district_map,
     district_name, is_valid_district_id, point_in_city, point_in_district,
@@ -115,6 +116,8 @@ YANDEX_MAPS_API_KEY = os.environ.get('YANDEX_MAPS_API_KEY', '')
 ADMIN_KEY = os.environ.get('ADMIN_KEY', '')
 # Номер счётчика Яндекс Метрики; не задан — аналитика выключена.
 METRIKA_ID = os.environ.get('METRIKA_ID', '')
+# Сезонный режим «Ночь Медного всадника»: on/off, иначе по календарю.
+HALLOWEEN_MODE = os.environ.get('HALLOWEEN_MODE', '')
 
 db.init_app(app)
 MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
@@ -571,6 +574,12 @@ def inject_asset_version():
         'css/style.css', 'js/main.js', 'js/districts.js',
         'js/panorama.js', 'js/maps.js',
         'js/api.js', 'js/state.js', 'js/utils.js', 'js/sdk.js',
+        'js/halloween.js', 'js/halloween-sound.js',
+        'img/halloween/horseman-peek.webp', 'img/halloween/horseman-chase.webp',
+        'img/halloween/logo-night.svg',
+        'audio/halloween/water.mp3', 'audio/halloween/thud.mp3',
+        'audio/halloween/gong.mp3', 'audio/halloween/snort.mp3',
+        'audio/halloween/gallop.mp3', 'audio/halloween/heartbeat.mp3',
         'manifest.json', 'manifest-dev.json',
         'favicons/prod/favicon.svg', 'favicons/prod/favicon.ico',
         'favicons/dev/favicon.svg', 'favicons/dev/favicon.ico',
@@ -632,6 +641,7 @@ def index():
     return render_template('index.html',
                            yandex_api_key=YANDEX_MAPS_API_KEY,
                            metrika_id=METRIKA_ID,
+                           halloween=halloween_active(HALLOWEEN_MODE),
                            og_title=og_title,
                            og_description=og_description)
 

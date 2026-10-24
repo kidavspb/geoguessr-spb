@@ -4,15 +4,22 @@
 точкам пула (ключ — те же округлённые координаты, что и в дедупликации),
 получаем фактическую сложность каждого места: средний промах игроков.
 """
+from sqlalchemy import literal
+
 from models import db, GameRound
 
 # Минимум сыгранных раундов, чтобы судить о сложности точки
 MIN_GAMES_FOR_STATS = 3
 
 
-def _coord_key(lat, lon):
-    """Ключ точки — как в пуле (округление ~10 м)."""
-    return int(round(lat * 10000)), int(round(lon * 10000))
+def _key_columns(lat, lon):
+    """Ключ точки — округление ~10 м, как в пуле, но силами СУБД.
+
+    Ключи групп и ключ искомого места округляет одна функция: round() в
+    Python ведёт половину к чётному, а в SQLite — от нуля, и место с
+    координатой вроде 59.93205 (× 10000 = 599320.5) терялось между ключами.
+    """
+    return db.func.round(lat * 10000), db.func.round(lon * 10000)
 
 
 def point_difficulty_map():
@@ -24,10 +31,8 @@ def point_difficulty_map():
     # Агрегируем в СУБД, а не вытаскиваем всю историю раундов в Python на
     # каждый /guess. Объём переданных данных теперь пропорционален числу мест,
     # а не числу всех сыгранных раундов.
-    lat_key = GameRound.actual_latitude * 10000
-    lon_key = GameRound.actual_longitude * 10000
-    lat_key_rounded = db.func.round(lat_key)
-    lon_key_rounded = db.func.round(lon_key)
+    lat_key_rounded, lon_key_rounded = _key_columns(
+        GameRound.actual_latitude, GameRound.actual_longitude)
     rows = (GameRound.query
             .filter(GameRound.answered_at.isnot(None),
                     GameRound.distance_km.isnot(None),
@@ -53,8 +58,11 @@ def difficulty_percentile(lat, lon):
     75 означает «промахи здесь больше, чем у 75% изученных мест города».
     """
     stats = point_difficulty_map()
-    key = _coord_key(lat, lon)
-    if key not in stats or len(stats) < 4:
+    if len(stats) < 4:
+        return None
+    key = tuple(int(part) for part in db.session.query(
+        *_key_columns(literal(lat), literal(lon))).one())
+    if key not in stats:
         return None
     avg = stats[key][0]
     easier = sum(1 for k, (other_avg, _) in stats.items() if k != key and other_avg < avg)
