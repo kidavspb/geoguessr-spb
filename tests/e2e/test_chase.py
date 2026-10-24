@@ -311,6 +311,18 @@ def test_browser_bars_match_the_screen_in_chase_mode(page, halloween_server):
     expect(root).to_have_css('background-color', 'rgb(35, 28, 98)')
     expect(theme).to_have_attribute('content', '#231c62')
     expect(flood).to_have_css('display', 'none')
+    # Safari на iPhone красит нижнюю панель по элементу в 4px от нижнего края,
+    # не глядя на pointer-events (WebKit fixedContainerEdges). Там должна быть
+    # панорама, как в обычной игре, а не невидимый слой погони — с ним панель
+    # выходила кремовой.
+    assert page.evaluate("""() => {
+        const style = document.createElement('style');
+        style.textContent = '* { pointer-events: auto !important; }';
+        document.head.appendChild(style);
+        const probed = document.elementFromPoint(innerWidth / 2, innerHeight - 4);
+        style.remove();
+        return !!probed.closest('#panorama-player');
+    }""")
 
 
 def test_horseman_catches_player_and_next_round_starts_far_away(page, halloween_server):
