@@ -25,6 +25,10 @@ const FLOOD_SWITCH_MS = 700;
 const FLOOD_MS = 1450;
 const WHISPER_MS = 3200;
 const CAUGHT_MS = 1800;
+// Совпадает с transition гашения .chase-caught в CSS.
+const CAUGHT_FADE_MS = 400;
+// Синий обложки — цвет воды и фона режима (--night-blue в CSS).
+const NIGHT_BLUE = '#0c294c';
 
 const WHISPERS = [
     'Медный всадник сошёл с Гром-камня…',
@@ -67,13 +71,31 @@ export function initHalloween({ onModeChange }) {
 function runFlood(switchMode) {
     const flood = document.getElementById('chase-flood');
     if (flood.classList.contains('run')) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const switchAndTint = () => {
         switchMode();
+        setBrowserTint(chaseMode ? NIGHT_BLUE : getComputedStyle(document.documentElement)
+            .getPropertyValue('--navy').trim());
+    };
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        switchAndTint();
         return;
     }
-    flood.classList.add('run');
-    setTimeout(switchMode, FLOOD_SWITCH_MS);
+    // Пока вода поднимается, панели браузера — тоже вода: волна выходит из
+    // нижней панели Safari, а не из-за её края. После переключения панели
+    // снова берут цвет страницы, которая открывается снизу.
+    flood.classList.add('run', 'rising');
+    setBrowserTint(NIGHT_BLUE);
+    setTimeout(() => {
+        flood.classList.remove('rising');
+        switchAndTint();
+    }, FLOOD_SWITCH_MS);
     setTimeout(() => flood.classList.remove('run'), FLOOD_MS);
+}
+
+/** theme-color красит панели браузера в iOS до 26 и в Android. Safari 26 его
+ * не читает и берёт цвет у страницы — ему служит полоса .chase-flood-tint. */
+function setBrowserTint(color) {
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
 }
 
 function setChaseMode(on) {
@@ -131,8 +153,15 @@ export function chaseCaught() {
         image.src = document.getElementById('chase-horseman').src;
     }
     clearTimeout(caughtTimer);
+    // Закрытая сцена — display: none (см. CSS): сначала слой, затем, после
+    // перерасчёта стилей, проявление; при гашении — наоборот.
+    overlay.classList.add('open');
+    void overlay.offsetWidth;
     overlay.classList.add('show');
-    caughtTimer = setTimeout(() => overlay.classList.remove('show'), CAUGHT_MS);
+    caughtTimer = setTimeout(() => {
+        overlay.classList.remove('show');
+        caughtTimer = setTimeout(() => overlay.classList.remove('open'), CAUGHT_FADE_MS);
+    }, CAUGHT_MS);
     try {
         navigator.vibrate?.([90, 60, 180]);
     } catch (e) {
