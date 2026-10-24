@@ -11,10 +11,14 @@
 без деплоя (достаточно рестарта).
 
 Чтобы убрать режим совсем: этот модуль и tests/test_halloween.py,
-static/js/halloween.js, static/img/halloween/, блоки {% if halloween %} в
-templates/index.html, раздел «Хэллоуин» в static/css/style.css, вызовы из
-static/js/main.js, tests/e2e/test_chase.py, сервер halloween_server в
-tests/e2e/conftest.py и строки про режим в README, AGENTS и .env.example.
+static/js/halloween.js и halloween-sound.js, static/img/halloween/,
+static/audio/halloween/, блоки {% if halloween %} в templates/index.html (и
+обёртку логотипа .start-logo-wrap со значком ⏱ таймера там же), раздел
+«Хэллоуин» в static/css/style.css, вызовы из static/js/main.js и game.chase в
+static/js/state.js, импорт, HALLOWEEN_MODE и файлы режима в списке ассетов в
+app.py, tests/e2e/test_chase.py, test_chase_sound.py и audio_stub.js, сервер
+halloween_server в tests/e2e/conftest.py и строки про режим в README, AGENTS
+и .env.example.
 """
 from daily import today_msk
 

@@ -21,7 +21,7 @@ import {
 } from './districts.js';
 import {
     CHASE_TIME_LIMIT, initHalloween, chaseModeOn, setChaseGame,
-    resetChase, updateChase, chaseCaught, wasCaught
+    resetChase, updateChase, chaseCaught, endChase, wasCaught
 } from './halloween.js';
 
 const { settings, game } = state;
@@ -825,6 +825,7 @@ async function sendGuess(payload) {
     state.guessSubmitting = true;
     document.getElementById('guess-btn').disabled = true;
     stopRoundTimer();
+    if (game.chase) endChase();
 
     let retryTimedOut = false;
     const roundId = state.currentRoundId;

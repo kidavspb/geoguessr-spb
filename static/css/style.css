@@ -2508,6 +2508,60 @@ html.theme-chase #district-confirm-btn:not(:disabled) {
     }
 }
 
+/* Звук погони — такая же круглая кнопка, как «к началу панорамы» (⌂):
+   на десктопе над ней, на телефоне справа — под ⌂ там шепот погони.
+   Только в раунде погони. */
+.chase-sound {
+    position: absolute;
+    left: 16px;
+    bottom: 196px;
+    z-index: 20;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: #fff;
+    color: #333;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.chase-sound:hover {
+    background: var(--cream);
+}
+
+.game-stage.chase-mode .chase-sound.chase-only {
+    display: block;
+}
+
+.chase-sound svg {
+    display: block;
+    margin: auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.chase-sound .sound-speaker {
+    fill: currentColor;
+}
+
+.chase-sound[aria-pressed="true"] .sound-off,
+.chase-sound[aria-pressed="false"] .sound-waves {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .chase-sound {
+        bottom: auto;
+        top: 76px;
+        left: 62px;
+    }
+}
+
 /* Погоня поверх панорамы: над Player (1), под HUD и картой (10).
    --chase-p — доля прошедшего времени раунда, её задаёт тик таймера. */
 .chase-layer {
