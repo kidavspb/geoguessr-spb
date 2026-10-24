@@ -106,8 +106,9 @@ export function playFlood(entering) {
     decode('water').then(buffer => {
         const late = ctx.currentTime - start;
         if (!buffer || late > FLOOD_LATE) return;
-        // Опоздавший файл вступает с середины — в такт с волной.
-        play('water', ctx.currentTime, { gain: entering ? 0.7 : 0.4, offset: late });
+        // Опоздавший файл вступает с середины — в такт с волной. Вода — первый
+        // звук, который слышит игрок, и фон для удара бронзы: тихо, не пугает.
+        play('water', ctx.currentTime, { gain: entering ? 0.35 : 0.2, offset: late });
     });
     if (!entering) return;
     decode('thud').then(buffer => {
