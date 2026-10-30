@@ -216,7 +216,7 @@ def test_hint_speaks_while_horseman_peeks_and_opens_the_mode(page, halloween_ser
     """На демо всадника не находили — рядом с ним реплика, и по ней можно нажать."""
     page.goto(halloween_server)
     hint = page.locator('#horseman-hint')
-    expect(hint).to_have_text(re.compile(r'Убежишь\?\s*Нажми на меня'))
+    expect(hint).to_have_text(re.compile(r'Убежишь\?\s*Нажми на\sменя'))
 
     def hint_at(ms):
         return page.evaluate("""ms => {
@@ -242,19 +242,24 @@ def test_hint_is_gone_once_the_easter_egg_was_found(page, halloween_server):
 
 
 def test_hint_fits_beside_the_logo_on_any_screen(page, halloween_server):
+    """Ширина текста зависит от шрифтов машины (свой шрифт сайта не в git, в
+    CI шрифты другие): проверяем и с «расширенным» шрифтом — реплика должна
+    переноситься, а не вылезать за экран или на заголовок."""
     page.emulate_media(reduced_motion='reduce')
     page.goto(halloween_server)
-    for width in (320, 390, 1280):
-        page.set_viewport_size({'width': width, 'height': 800})
-        page.wait_for_function(
-            'width => innerWidth === width && document.documentElement.scrollWidth <= width',
-            arg=width)
-        hint = page.locator('#horseman-hint').bounding_box()
-        assert hint['x'] + hint['width'] <= width, width
-        for other in ('.brand-title:not(.chase-only)', LOGO):
-            box = page.locator(other).bounding_box()
-            assert (hint['y'] + hint['height'] <= box['y'] or hint['x'] >= box['x'] + box['width']), (
-                width, other)
+    for spacing in ('normal', '0.08em'):
+        page.add_style_tag(content=f'body {{ letter-spacing: {spacing}; }}')
+        for width in (320, 390, 1280):
+            page.set_viewport_size({'width': width, 'height': 800})
+            page.wait_for_function(
+                'width => innerWidth === width && document.documentElement.scrollWidth <= width',
+                arg=width, timeout=3000)
+            hint = page.locator('#horseman-hint').bounding_box()
+            assert hint['x'] + hint['width'] <= width, (spacing, width)
+            for other in ('.brand-title:not(.chase-only)', LOGO):
+                box = page.locator(other).bounding_box()
+                assert (hint['y'] + hint['height'] <= box['y']
+                        or hint['x'] >= box['x'] + box['width']), (spacing, width, other)
 
 
 def test_hover_reveal_is_desktop_only(browser, page, halloween_server):
