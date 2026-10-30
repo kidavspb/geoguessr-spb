@@ -11,7 +11,10 @@ from halloween import halloween_active
     (date(2026, 10, 20), True),
     (date(2026, 10, 31), True),
     (date(2026, 11, 1), True),
-    (date(2026, 11, 2), False),
+    # До выходных после годовщины наводнения 1824 года (19 ноября)
+    (date(2026, 11, 19), True),
+    (date(2026, 11, 22), True),
+    (date(2026, 11, 23), False),
     (date(2027, 6, 1), False),
     (date(2027, 10, 25), True),
 ])

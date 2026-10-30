@@ -13,7 +13,9 @@
  * Все слои — CSS поверх панорамы с pointer-events: none; второго Player или
  * карты режим не создаёт. Разметка есть только в сезон (см. halloween.py),
  * без неё функции ничего не делают. Режим не запоминается: каждый визит
- * всадника находят заново. Звук погони — halloween-sound.js.
+ * всадника находят заново. Запоминается только, что пасхалку уже открывали:
+ * тогда подсказка «Убежишь? Нажми на меня» рядом с всадником не нужна.
+ * Звук погони — halloween-sound.js.
  */
 
 import { initSound, playFlood, chaseSound, endChaseSound, caughtSound } from './halloween-sound.js';
@@ -27,6 +29,7 @@ const FLOOD_SWITCH_MS = 700;
 const FLOOD_MS = 1450;
 const WHISPER_MS = 3200;
 const CAUGHT_MS = 1800;
+const FOUND_KEY = 'halloween-found';
 
 const WHISPERS = [
     'Медный всадник сошёл с Гром-камня…',
@@ -51,10 +54,15 @@ export function initHalloween({ onModeChange }) {
     if (!peek) return;
     initSound();
 
-    // Переключатель — весь логотип вместе со всадником, и в обе стороны.
-    // Один обработчик на обёртке: клик по кнопке всадника всплывает сюда же
-    // и не переключает режим дважды. Клавиатура — через саму кнопку.
-    peek.closest('.start-logo-wrap').addEventListener('click', () => {
+    // Переключатель — весь логотип вместе со всадником и его подсказкой, и в
+    // обе стороны. Один обработчик на обёртке: клик по кнопке всадника
+    // всплывает сюда же и не переключает режим дважды. Клавиатура — через
+    // саму кнопку.
+    const wrap = peek.closest('.start-logo-wrap');
+    // Подсказка «Убежишь? Нажми на меня» — пока пасхалку на этом устройстве
+    // ни разу не открывали.
+    if (readFound()) wrap.classList.add('hint-seen');
+    wrap.addEventListener('click', () => {
         // Челлендж прячет всадника: своя игра автора важнее погони.
         if (peek.classList.contains('hidden')) return;
         const on = !chaseMode;
@@ -65,7 +73,27 @@ export function initHalloween({ onModeChange }) {
         });
         // Звук — прямо в клике: только этот жест разрешает браузеру играть.
         if (started) playFlood(on);
+        if (started && on) {
+            wrap.classList.add('hint-seen');
+            saveFound();
+        }
     });
+}
+
+function readFound() {
+    try {
+        return localStorage.getItem(FOUND_KEY) === '1';
+    } catch (e) {
+        return false;
+    }
+}
+
+function saveFound() {
+    try {
+        localStorage.setItem(FOUND_KEY, '1');
+    } catch (e) {
+        // приватный режим: подсказка вернётся после перезагрузки страницы
+    }
 }
 
 /** Волна на весь экран; switchMode срабатывает, пока экран закрыт.
