@@ -59,9 +59,12 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
     horseman = page.get_by_role('button', name=re.compile('Медный всадник'))
     expect(horseman).to_be_visible()
     expect(page.locator('#chase-title')).to_be_hidden()
+    # Ждём, а не проверяем мгновенно: правило reduced motion даёт всем
+    # элементам переход 0,01 мс, и сразу после смены ширины реплика всадника
+    # кадр держит прежнюю ширину. Настоящее переполнение не пройдёт и так.
     for width in [320, 390, 1280]:
         page.set_viewport_size({'width': width, 'height': 800})
-        assert page.evaluate(NO_HSCROLL)
+        page.wait_for_function(NO_HSCROLL, timeout=3000)
 
     # Кнопка всадника доступна с клавиатуры.
     horseman.focus()
@@ -83,7 +86,7 @@ def test_horseman_turns_start_screen_into_chase_mode(page, halloween_server):
     expect(page.get_by_role('button', name='Назад')).to_have_count(0)
     for width in [320, 390, 1280]:
         page.set_viewport_size({'width': width, 'height': 800})
-        assert page.evaluate(NO_HSCROLL)
+        page.wait_for_function(NO_HSCROLL, timeout=3000)
 
     # Цвет фона режима и в «вырезах» шкалы, и на экране выбора района.
     expect(page.locator('.territory-tick').first).to_have_css(
@@ -209,6 +212,51 @@ def test_logo_glitches_in_step_with_horseman(page, halloween_server):
     assert opacities_at(3000) == ['1', '1']
 
 
+def test_hint_speaks_while_horseman_peeks_and_opens_the_mode(page, halloween_server):
+    """На демо всадника не находили — рядом с ним реплика, и по ней можно нажать."""
+    page.goto(halloween_server)
+    hint = page.locator('#horseman-hint')
+    expect(hint).to_have_text(re.compile(r'Убежишь\?\s*Нажми на меня'))
+
+    def hint_at(ms):
+        return page.evaluate("""ms => {
+            document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms; });
+            const style = getComputedStyle(document.getElementById('horseman-hint'));
+            return [style.opacity, style.visibility];
+        }""", ms)
+
+    # Пока всадник не выглянул, невидимая реплика и клики не ловит.
+    assert hint_at(300) == ['0', 'hidden']
+    assert hint_at(3000) == ['1', 'visible']
+    hint.click()
+    expect(page.locator('#chase-title')).to_be_visible(timeout=3000)
+    expect(hint).to_be_hidden()
+
+
+def test_hint_is_gone_once_the_easter_egg_was_found(page, halloween_server):
+    _open_chase(page, halloween_server)
+    page.reload()
+    expect(page.locator('#chase-title')).to_be_hidden()
+    expect(page.locator('#horseman-peek')).to_be_visible()
+    expect(page.locator('#horseman-hint')).to_be_hidden()
+
+
+def test_hint_fits_beside_the_logo_on_any_screen(page, halloween_server):
+    page.emulate_media(reduced_motion='reduce')
+    page.goto(halloween_server)
+    for width in (320, 390, 1280):
+        page.set_viewport_size({'width': width, 'height': 800})
+        page.wait_for_function(
+            'width => innerWidth === width && document.documentElement.scrollWidth <= width',
+            arg=width)
+        hint = page.locator('#horseman-hint').bounding_box()
+        assert hint['x'] + hint['width'] <= width, width
+        for other in ('.brand-title:not(.chase-only)', LOGO):
+            box = page.locator(other).bounding_box()
+            assert (hint['y'] + hint['height'] <= box['y'] or hint['x'] >= box['x'] + box['width']), (
+                width, other)
+
+
 def test_hover_reveal_is_desktop_only(browser, page, halloween_server):
     """На телефоне тап сначала «наводит»: если от этого что-то проявится,
     iOS Safari не отправит клик. Поэтому подсказка наведением — только там,
@@ -332,10 +380,13 @@ def test_regular_timed_game_has_no_chase_in_season(page, halloween_server):
 
 def test_challenge_link_hides_the_horseman(page, halloween_server):
     token = _author_challenge_token(halloween_server, difficulty='center', time_limit=60)
+    # Без анимаций реплика видна всегда — скрыть её может только челлендж.
+    page.emulate_media(reduced_motion='reduce')
     page.goto(f'{halloween_server}/?challenge={token}')
     expect(page.locator('#challenge-banner')).to_contain_text('Автор')
     # Погоня — своя игра, а не способ сыграть чужой челлендж.
     expect(page.locator('#horseman-peek')).to_be_hidden()
+    expect(page.locator('#horseman-hint')).to_be_hidden()
     page.locator(LOGO).click()
     expect(page.locator('#chase-title')).to_be_hidden()
 
@@ -343,6 +394,6 @@ def test_challenge_link_hides_the_horseman(page, halloween_server):
 def test_off_season_page_has_no_halloween(page, server):
     page.goto(server)
     expect(page.locator('#start-btn')).to_be_visible()
-    for selector in ('#horseman-peek', '#chase-title', '#chase-flood', '#chase-layer'):
+    for selector in ('#horseman-peek', '#horseman-hint', '#chase-title', '#chase-flood', '#chase-layer'):
         expect(page.locator(selector)).to_have_count(0)
     expect(page.locator('html')).not_to_have_class(re.compile('theme-chase'))

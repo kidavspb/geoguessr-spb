@@ -2217,6 +2217,66 @@ h1, h2 {
     76%, 100% { opacity: 0; transform: rotate(55.37deg) translateY(20%); }
 }
 
+/* Реплика всадника «Убежишь? Нажми на меня» — справа от логотипа, под
+   всадником, хвостик смотрит на него. Демо показало, что глитча логотипа
+   мало: без подсказки пасхалку не находят. Ширина не больше места до края
+   экрана (на 320px — около 100px, отсюда две строки). Видна, пока всадник
+   выглянул; невидимая (visibility: hidden) не ловит клики. После первого
+   входа в режим на устройстве не показывается (.hint-seen, halloween.js). */
+.horseman-hint {
+    position: absolute;
+    top: 56%;
+    left: calc(100% + 4px);
+    z-index: 2;
+    max-width: calc(50vw - 50% - 8px);
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.75rem;
+    background: var(--cream);
+    color: var(--navy);
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: left;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    opacity: 0;
+    visibility: hidden;
+    animation: horseman-hint 7s ease-in-out infinite;
+}
+
+.horseman-hint::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 14px;
+    border: 7px solid transparent;
+    border-top: 0;
+    border-bottom-color: var(--cream);
+}
+
+@media (max-width: 360px) {
+    .horseman-hint {
+        padding: 0.3rem 0.45rem;
+        font-size: 0.72rem;
+    }
+}
+
+/* Появляется, когда всадник уже выглянул, и уходит чуть раньше него
+   (horseman-haunt: виден на 22–62%). */
+@keyframes horseman-hint {
+    0%, 24%   { opacity: 0; visibility: hidden; transform: translateY(4px); }
+    30%, 60%  { opacity: 1; visibility: visible; transform: none; }
+    68%, 100% { opacity: 0; visibility: hidden; transform: translateY(4px); }
+}
+
+#start-screen.is-chase .horseman-hint,
+.horseman-peek.hidden ~ .horseman-hint,
+.start-logo-wrap.hint-seen .horseman-hint {
+    display: none;
+}
+
 /* «Ночной» логотип лежит поверх обычного и проявляется глитчем, пока
    выглядывает всадник (тот же 7-секундный цикл), — видно, что логотип
    «живой» и на него можно нажать. Клики проходят к обычному логотипу:
@@ -2254,16 +2314,20 @@ h1, h2 {
    отправляет — первый тап по логотипу пропадал. */
 @media (hover: hover) {
     .start-logo-wrap:hover .horseman-peek,
-    .start-logo-wrap:hover .start-logo.chase-only {
+    .start-logo-wrap:hover .start-logo.chase-only,
+    .start-logo-wrap:hover .horseman-hint {
         animation: none;
         opacity: 1;
+        visibility: visible;
     }
 }
 
 .horseman-peek:focus-visible,
-.start-logo-wrap:has(.horseman-peek:focus-visible) .start-logo.chase-only {
+.start-logo-wrap:has(.horseman-peek:focus-visible) .start-logo.chase-only,
+.start-logo-wrap:has(.horseman-peek:focus-visible) .horseman-hint {
     animation: none;
     opacity: 1;
+    visibility: visible;
 }
 
 .horseman-peek:focus-visible {
@@ -2279,9 +2343,11 @@ h1, h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .horseman-peek {
+    .horseman-peek,
+    .horseman-hint {
         animation: none;
         opacity: 1;
+        visibility: visible;
     }
 
     .start-logo-wrap .start-logo.chase-only {
