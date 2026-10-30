@@ -247,6 +247,10 @@ def test_hint_fits_beside_the_logo_on_any_screen(page, halloween_server):
     переноситься, а не вылезать за экран или на заголовок."""
     page.emulate_media(reduced_motion='reduce')
     page.goto(halloween_server)
+    # Проверяем раскладку, а не анимацию: правило reduced motion даёт всем
+    # элементам переход 0,01 мс, и после смены ширины реплика кадр-другой
+    # ещё «едет» — в CI замер попадал на этот кадр.
+    page.add_style_tag(content='*, *::before, *::after { transition: none !important; }')
     for spacing in ('normal', '0.08em'):
         page.add_style_tag(content=f'body {{ letter-spacing: {spacing}; }}')
         for width in (320, 390, 1280):
